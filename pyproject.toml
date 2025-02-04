@@ -1,0 +1,33 @@
+[build-system]
+requires = ["setuptools>=64", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "adata-hf-datasets"
+version = "0.1.0"
+description = "A package for building multimodal omics datasets confirm with huggingface based on anndata. Furthermore there is an integration
+with cellxgene to get an anndata object with extra information based on the given dois."
+readme = "README.md"
+requires-python = ">=3.10,<3.13"
+license = { file = "LICENSE" }
+authors = [
+    { name = "Jonatan Menger", email = "jonatan.menger@gmail.com"},
+]
+dependencies = [
+    "anndata",
+    "requests",
+    "bs4",
+    "datasets",
+    "numpy",
+    "pandas",
+]
+
+[tool.uv.dependencies]
+dev = ["pre-commit", "pytest", "ruff", "twine"]
+test = ["coverage", "pytest"]
+doc = [
+    "sphinx",
+    "myst-nb",
+    "sphinx-book-theme",
+    "sphinx-autodoc-typehints",
+]
