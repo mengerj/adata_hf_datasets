@@ -259,7 +259,7 @@ class GeneformerEmbedder(BaseAnnDataEmbedder):
 
         # To keep track of the order of the sample we include an index
         # make a string "s0", "s1" .. for the index
-        adata.obs["sample_index"] = ["s" + str(i) for i in range(adata.shape[0])]
+        adata.obs["sample_index"] = range(adata.shape[0])
         adata.write_h5ad(self.tmp_adata_dir / "adata.h5ad")
 
         self.dataset_name = "geneformer"
