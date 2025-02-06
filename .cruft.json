@@ -1,0 +1,30 @@
+{
+  "template": "https://github.com/scverse/cookiecutter-scverse",
+  "commit": "0ed653c5570332539b7aadd359f1c398fd410aed",
+  "checkout": null,
+  "context": {
+    "cookiecutter": {
+      "project_name": "adata_hf_datasets",
+      "package_name": "adata_hf_datasets",
+      "project_description": "Align embeddings of multiple modalities through context embeddings on a sample level",
+      "author_full_name": "Jonatan Menger",
+      "author_email": "jonatan.menger@gmail.com",
+      "github_user": "mengerj",
+      "github_repo": "adata_hf_datasets",
+      "license": "MIT License",
+      "ide_integration": true,
+      "_copy_without_render": [
+        ".github/workflows/build.yaml",
+        ".github/workflows/test.yaml",
+        "docs/_templates/autosummary/**.rst"
+      ],
+      "_render_devdocs": false,
+      "_jinja2_env_vars": {
+        "lstrip_blocks": true,
+        "trim_blocks": true
+      },
+      "_template": "https://github.com/scverse/cookiecutter-scverse"
+    }
+  },
+  "directory": null
+}
