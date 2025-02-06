@@ -30,6 +30,8 @@ def create_small_adata():
     adata = anndata.AnnData(X)
     adata.var_names = var_names
     adata.obs_names = obs_names
+    # Save time by already adding ensembl ids
+    adata.var["ensembl_id"] = [f"ENSG{i}" for i in range(2048)]
     return adata
 
 
@@ -68,14 +70,29 @@ def test_geneformer_embedder_fit():
 
 def test_geneformer_embedder_embedding():
     """Test that embed() runs without errors and modifies the input AnnData."""
+    import pandas as pd
+
     embedder = GeneformerEmbedder()
     adata = create_small_adata()
+    # The embedding output is expected to be a dataframe with a column sample_index with values ordered from 0 to n_samples
+
+    n_samples = adata.n_obs  # Number of samples
+    embedding_dim = 512  # Embedding size
+
+    # Create a mock DataFrame for embeddings
+    mock_embeddings = pd.DataFrame(
+        np.random.rand(n_samples, embedding_dim),  # Random embeddings
+        columns=[f"dim_{i}" for i in range(embedding_dim)],
+    )
+    mock_embeddings["sample_index"] = np.arange(n_samples)
+    # randomly rearrange the order of sample_idx to test if the embeddings are correctly assigned to the samples
+    mock_embeddings["sample_index"] = np.random.permutation(
+        mock_embeddings["sample_index"]
+    )
 
     with (
         patch("geneformer.TranscriptomeTokenizer.tokenize_data", return_value=None),
-        patch(
-            "geneformer.EmbExtractor.extract_embs", return_value=np.random.rand(10, 512)
-        ),
+        patch("geneformer.EmbExtractor.extract_embs", return_value=mock_embeddings),
     ):
         embedder.embed(adata)
 
