@@ -6,3 +6,5 @@ data/
 .pybiomart*
 .vscode/
 /build
+*cache*
+/tmp*
