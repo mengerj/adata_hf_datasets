@@ -1,0 +1,3 @@
+[submodule "external"]
+	path = external/Geneformer
+	url = https://huggingface.co/ctheodoris/Geneformer
