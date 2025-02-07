@@ -1,5 +1,4 @@
 import logging
-from typing import Optional
 
 import anndata
 import scipy.sparse as sp
@@ -56,7 +55,7 @@ class BaseAnnDataEmbedder:
 class PCAEmbedder(BaseAnnDataEmbedder):
     """PCA-based embedding for single-cell data stored in AnnData."""
 
-    def __init__(self, embedding_dim: int = 50, **kwargs):
+    def __init__(self, embedding_dim: int = 64, **kwargs):
         """
         Initialize the PCA embedder.
 
@@ -82,7 +81,7 @@ class PCAEmbedder(BaseAnnDataEmbedder):
         )  # Pass kwargs to PCA
         self._pca_model.fit(X)
 
-    def embed(self, adata: anndata.AnnData, obsm_key: str = "X_pp", **kwargs) -> None:
+    def embed(self, adata: anndata.AnnData, obsm_key: str = "X_pca", **kwargs) -> None:
         """Transform the data via PCA and store in `adata.obsm[obsm_key]`."""
         if self._pca_model is None:
             raise RuntimeError("PCA model is not fit yet. Call `fit(adata)` first.")
@@ -94,7 +93,7 @@ class PCAEmbedder(BaseAnnDataEmbedder):
 class SCVIEmbedder(BaseAnnDataEmbedder):
     """SCVI Encoder."""
 
-    def __init__(self, embedding_dim: int = 50, **kwargs):
+    def __init__(self, embedding_dim: int = 64, **kwargs):
         super().__init__()
         self.embedding_dim = embedding_dim
         self.model = None
@@ -109,14 +108,15 @@ class SCVIEmbedder(BaseAnnDataEmbedder):
             raise ImportError("scvi-tools is not installed.")
 
         logger.info("Setting up scVI model with embedding_dim=%d", self.embedding_dim)
-        adata = adata.copy()
+        if not adata.layers[layer_key]:
+            adata.layers[layer_key] = adata.X.copy()
         scvi.model.SCVI.setup_anndata(adata, layer=layer_key, batch_key=batch_key)
         self.model = scvi.model.SCVI(adata, n_latent=self.embedding_dim, **kwargs)
 
         logger.info("Training scVI model.")
         self.model.train()
 
-    def embed(self, adata: anndata.AnnData, obsm_key: str = "X_pp", **kwargs) -> None:
+    def embed(self, adata: anndata.AnnData, obsm_key: str = "X_scvi", **kwargs) -> None:
         """Use the trained scVI model to compute latent embeddings for each cell."""
         if self.model is None:
             raise RuntimeError("scVI model not trained. Call `fit(adata)` first.")
@@ -155,6 +155,7 @@ class GeneformerEmbedder(BaseAnnDataEmbedder):
         """
         super().__init__()
         self.model = None
+        self.embedding_dim = 512  # geneformer embeddings are always 512. Not enforced but used for documentation.
         if model_input_size not in [2048, 4096]:
             raise ValueError(
                 "Only embedding dimensions of 2048 and 4096 are supported for geneformer initial embeddings."
@@ -233,7 +234,7 @@ class GeneformerEmbedder(BaseAnnDataEmbedder):
         logging.info("Geneformer model is pretrained and does not require fitting.")
         pass
 
-    def embed(self, adata, obsm_key: str = "X_pp") -> None:
+    def embed(self, adata, obsm_key: str = "X_geneformer") -> None:
         """Calling the embedding function of geneformer, based on the previously tokenized dataset and the chosen model configurations.
         If you encoder memory issues, try lowering the batch_size. Default is 10.
 
@@ -260,7 +261,10 @@ class GeneformerEmbedder(BaseAnnDataEmbedder):
         # To keep track of the order of the sample we include an index
         # make a string "s0", "s1" .. for the index
         adata.obs["sample_index"] = range(adata.shape[0])
+        # Should improve this as it is inefficient to save the data again for large files
+        # Don't like to overwrite the original dataset though
         adata.write_h5ad(self.tmp_adata_dir / "adata.h5ad")
+        del adata
 
         self.dataset_name = "geneformer"
         if not os.path.exists(f"{self.tmp_dir}/{self.dataset_name}.dataset"):
@@ -300,7 +304,9 @@ class GeneformerEmbedder(BaseAnnDataEmbedder):
         # reorder the embeddings after the index in embs["sample_index"]
         embs_sorted = embs.loc[embs["sample_index"].sort_values().index]
         embs_matrix = embs_sorted.drop(columns=["sample_index"]).values
+        adata = anndata.read_h5ad(self.tmp_adata_dir / "adata.h5ad")
         adata.obsm[obsm_key] = embs_matrix
+        return adata
         # Clean up the tmp files and processes
         self._kill_process()
         # Clean up the tmp files
@@ -321,8 +327,7 @@ class InitialEmbedder:
     def __init__(
         self,
         method: str = "pca",
-        embedding_dim: int = 50,
-        precomputed_key: Optional[str] = None,
+        embedding_dim: int = 64,
         **init_kwargs,
     ):
         """
@@ -334,8 +339,6 @@ class InitialEmbedder:
             The embedding method to use.
         embedding_dim : int
             Dimensionality of the output embedding space.
-        precomputed_key : str, optional
-            If provided, the embeddings will be copied from adata.obsm[precomputed].
         init_kwargs : dict, optional
             Additional keyword arguments to pass to the embedding method initializer. Checkout the specific embedder for available options.
             Especially useful for geneformer.
@@ -343,7 +346,6 @@ class InitialEmbedder:
         self.method = method
         self.embedding_dim = embedding_dim
         self.init_kwargs = init_kwargs or {}
-        self.precomputed_key = precomputed_key
 
         # Dispatch to the correct embedder class
         embedder_classes = {
@@ -370,17 +372,12 @@ class InitialEmbedder:
         fit_kwargs : dict
             Additional keyword arguments for fitting. Check the specific embedder for available options.
         """
-        if self.precomputed_key:
-            logger.info("No fitting required for precomputed embeddings.")
-            return
         logger.info(
             "Fitting method '%s' with embedding_dim=%d", self.method, self.embedding_dim
         )
         self.embedder.fit(adata=adata, **fit_kwargs)
 
-    def embed(
-        self, adata: anndata.AnnData, obsm_key: str = "X_pp", **embed_kwargs
-    ) -> None:
+    def embed(self, adata: anndata.AnnData, **embed_kwargs) -> None:
         """
         Transform the data into the learned embedding space.
 
@@ -393,14 +390,7 @@ class InitialEmbedder:
         embed_kwargs : dict
             Additional keyword arguments for embedding. Check the specific embedder for available options.
         """
-        if self.precomputed_key:
-            logger.info(
-                "Using precomputed embeddings. Copying from adata.obsm['%s'] to adata.obsm['%s']",
-                self.precomputed_key,
-                obsm_key,
-            )
-            adata.obsm[obsm_key] = adata.obsm[self.precomputed_key]
-            return
-
-        logger.info("Embedding data using method '%s'.", self.method)
-        self.embedder.embed(adata, obsm_key=obsm_key, **embed_kwargs)
+        logger.info(
+            f"Embedding data using method {self.method}. Storing embeddings in X_{self.method}."
+        )
+        self.embedder.embed(adata, obsm_key=f"X_{self.method}", **embed_kwargs)
