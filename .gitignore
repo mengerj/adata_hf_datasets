@@ -8,3 +8,4 @@ data/
 /build
 *cache*
 /tmp*
+*logs*
