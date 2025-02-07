@@ -20,9 +20,6 @@ class AnnDataSetConstructor:
         negatives_per_sample: int = 1,
         store_nextcloud: bool = False,
         nextcloud_config: Optional[dict] = None,
-        push_to_hf: bool = False,
-        dataset_name: str | None = None,
-        hf_username: str | None = None,
     ):
         """
         Initialize the AnnDataSetConstructor.
@@ -55,12 +52,6 @@ class AnnDataSetConstructor:
         self.negatives_per_sample = negatives_per_sample
         self.store_nextcloud = store_nextcloud
         self.nextcloud_config = nextcloud_config if store_nextcloud else None
-        self.push_to_hf = push_to_hf
-        if push_to_hf and (dataset_name is None or hf_username is None):
-            raise ValueError(
-                "Please provide a hf_username and a dataset_name for push_to_hf=True."
-            )
-        self.dataset_name = dataset_name
         self.anndata_files = []
         self.sample_id_keys = {}
         self.dataset = []
@@ -339,9 +330,6 @@ class AnnDataSetConstructor:
                         }
                     )
         hf_dataset = Dataset.from_list(hf_data)
-        if self.push_to_hf:
-            hf_dataset.push_to_hub(f"jo-mengr/{self.dataset_name}", private=True)
-        logger.info("Created %d examples for Hugging Face dataset.", len(hf_data))
         return hf_dataset
 
     def get_inference_dataset(
