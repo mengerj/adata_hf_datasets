@@ -184,6 +184,7 @@ def annotate_and_push_dataset(
     readme_template_name: str | None = None,
     embedding_generation: str | None = None,
     caption_generation: str | None = None,
+    dataset_type_explanation: str | None = None,
 ) -> None:
     """Annotates and pushes the dataset to Hugging Face.
 
@@ -202,6 +203,8 @@ def annotate_and_push_dataset(
         A description of how the embeddings stored in .obsm of the adata files were generated.
     caption_generation (str, optional):
         A description of how the captions stored in .obs of the adata files were generated.
+    dataset_type_explanation (str, optional):
+        A description of the dataset type. E.g. "pairs" or "multiplets".
     """
 
     # Create a temporary directory
@@ -216,6 +219,7 @@ def annotate_and_push_dataset(
                     repo_id=repo_id,
                     embedding_generation=embedding_generation,
                     caption_generation=caption_generation,
+                    dataset_type_explanation=dataset_type_explanation,
                 )
             )
 
