@@ -30,7 +30,6 @@ dependencies = [
 
 optional-dependencies.dev = [
     "pre-commit", 
-    "pytest", 
     "ruff", 
     "twine"
 ]
