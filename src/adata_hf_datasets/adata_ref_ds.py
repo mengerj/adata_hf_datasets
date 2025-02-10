@@ -17,7 +17,7 @@ class AnnDataSetConstructor:
 
     Data is sourced from AnnData files (.zarr or .h5ad) that are added via `add_anndata`.
     The generated dataset can be created in one of three formats:
-    
+
     - "pairs": Each record is a pair (positive example and, optionally, separate negative examples).
     - "multiplets": Each record contains an anchor, a positive, and a list of negative examples.
     - "single": Each record contains only a single caption (useful for inference).
@@ -57,12 +57,12 @@ class AnnDataSetConstructor:
                 - 'username' (str): Username for Nextcloud.
                 - 'password' (str): Password for Nextcloud.
                 - 'remote_path' (str): Remote path in Nextcloud where the file will be uploaded.
-        
+
         Raises
         ------
         ValueError
             If `dataset_format` is not one of "pairs", "multiplets", or "single".
-        
+
         Notes
         -----
         Data is sourced from AnnData files (either .zarr or .h5ad) that are added via `add_anndata`.
@@ -71,7 +71,9 @@ class AnnDataSetConstructor:
         self.negatives_per_sample = negatives_per_sample
         self.dataset_format = dataset_format.lower()
         if self.dataset_format not in ("pairs", "multiplets", "single"):
-            error_msg = "dataset_format must be one of 'pairs', 'multiplets', or 'single'."
+            error_msg = (
+                "dataset_format must be one of 'pairs', 'multiplets', or 'single'."
+            )
             logger.error(error_msg)
             raise ValueError(error_msg)
         self.store_nextcloud = store_nextcloud
@@ -168,7 +170,9 @@ class AnnDataSetConstructor:
         if self.is_h5ad:
             adata = anndata.read_h5ad(file_path)
         self.local_path = file_path  # Store local path for reference
-        path_for_dataset = file_path  # Default: store the local path for dataset creation
+        path_for_dataset = (
+            file_path  # Default: store the local path for dataset creation
+        )
         self._check_sample_id_uniqueness(adata, file_path, sample_id_key)
 
         # Upload to Nextcloud if enabled
@@ -323,13 +327,13 @@ class AnnDataSetConstructor:
             - caption: Caption text (positive or negative).
             - label: 1.0 for positive examples, 0.0 for negatives.
           Negative examples are generated as separate records per positive sample.
-        
+
         - "multiplets": Each record is a multiplet with keys:
             - anndata_ref: JSON string with file_path and sample_id.
             - anchor: The caption from the current sample.
             - positive: Duplicate of the caption (serving as the positive example).
             - negatives: List of negative captions (length defined by negatives_per_sample).
-        
+
         - "single": Each record contains only the caption (and its reference) suitable for inference.
             - anndata_ref: JSON string with file_path and sample_id.
             - caption: Caption text.
@@ -361,7 +365,9 @@ class AnnDataSetConstructor:
             caption_dict = all_captions[file_path]
 
             for sample_id, caption in caption_dict.items():
-                ref_json = json.dumps({"file_path": dataset_path, "sample_id": sample_id})
+                ref_json = json.dumps(
+                    {"file_path": dataset_path, "sample_id": sample_id}
+                )
                 if self.dataset_format == "pairs":
                     # Positive example
                     hf_data.append(
@@ -373,11 +379,15 @@ class AnnDataSetConstructor:
                             dataset_path, sample_id, caption, all_captions
                         )
                         hf_data.append(
-                            {"anndata_ref": neg_ref, "caption": neg_caption, "label": neg_label}
+                            {
+                                "anndata_ref": neg_ref,
+                                "caption": neg_caption,
+                                "label": neg_label,
+                            }
                         )
                 elif self.dataset_format == "multiplets":
                     entry = {
-                        "anndata_ref": ref_json, # The anchor
+                        "anndata_ref": ref_json,  # The anchor
                         "positive": caption,
                     }
                     for idx in range(1, self.negatives_per_sample + 1):
@@ -391,9 +401,7 @@ class AnnDataSetConstructor:
                     # Only include the anndata ref
                     hf_data.append({"anndata_ref": ref_json})
                 else:
-                    error_msg = (
-                        "Invalid dataset_format. Choose from 'pairs', 'multiplets', or 'single'."
-                    )
+                    error_msg = "Invalid dataset_format. Choose from 'pairs', 'multiplets', or 'single'."
                     logger.error(error_msg)
                     raise ValueError(error_msg)
 
@@ -452,9 +460,54 @@ class AnnDataSetConstructor:
     def clear(self) -> None:
         """
         Clear all stored data in the constructor.
-        
+
         This removes all added AnnData files, sample ID keys, and any cached dataset entries.
         """
         self.anndata_files.clear()
         self.sample_id_keys.clear()
         self.dataset.clear()
+
+
+class SimpleCaptionConstructor:
+    """Construct captions for each sample by concatenating values from specified obs keys"""
+
+    def __init__(self, obs_keys: list[str], separator: str = " "):
+        """
+        Initialize the SimpleCaptionConstructor.
+
+        Args:
+            obs_keys: List of keys from adata.obs to include in the caption
+            separator: String to use between concatenated values (default: space)
+        """
+        self.obs_keys = obs_keys
+        self.separator = separator
+
+    def construct_captions(self, adata: anndata.AnnData) -> None:
+        """Include captions for each sample
+
+        Construct captions by concatenating values from specified obs keys.
+        Adds a 'caption' column to adata.obs.
+
+        Args:
+            adata: AnnData object to process
+
+        Raises
+        ------
+            KeyError: If any of the specified obs_keys is not found in adata.obs
+        """
+        # Verify all keys exist
+        missing_keys = [key for key in self.obs_keys if key not in adata.obs.columns]
+        if missing_keys:
+            raise KeyError(
+                f"The following keys were not found in adata.obs: {missing_keys}"
+            )
+
+        # Convert all values to strings and replace NaN with empty string
+        str_values = [
+            adata.obs[key].astype(str).replace("nan", "") for key in self.obs_keys
+        ]
+
+        # Concatenate the values
+        adata.obs["caption"] = pd.DataFrame(str_values).T.agg(
+            self.separator.join, axis=1
+        )
