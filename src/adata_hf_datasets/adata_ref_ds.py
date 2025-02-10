@@ -12,12 +12,22 @@ logger = logging.getLogger(__name__)
 
 
 class AnnDataSetConstructor:
-    """Class to generate a dataset compatible with the SentenceTransformer library from anndata files."""
+    """
+    Class to generate a dataset compatible with the SentenceTransformer library from AnnData files.
+
+    Data is sourced from AnnData files (.zarr or .h5ad) that are added via `add_anndata`.
+    The generated dataset can be created in one of three formats:
+    
+    - "pairs": Each record is a pair (positive example and, optionally, separate negative examples).
+    - "multiplets": Each record contains an anchor, a positive, and a list of negative examples.
+    - "single": Each record contains only a single caption (useful for inference).
+    """
 
     def __init__(
         self,
         caption_constructor,
         negatives_per_sample: int = 1,
+        dataset_format: str = "pairs",
         store_nextcloud: bool = False,
         nextcloud_config: Optional[dict] = None,
     ):
@@ -26,30 +36,44 @@ class AnnDataSetConstructor:
 
         Parameters
         ----------
-        caption_constructor
-            Constructor for creating captions
-        negatives_per_sample
-            Number of negative examples to create per positive example
-        store_nextcloud
+        caption_constructor : callable
+            Constructor for creating captions from AnnData files.
+        negatives_per_sample : int, optional
+            Number of negative examples to create per positive example (applies to "pairs" and "multiplets"
+            formats). A value of 0 is allowed.
+        dataset_format : str, optional
+            The format of the dataset to construct. Allowed values are:
+              - "pairs": Each record is a pair with one positive example and, per sample,
+                         `negatives_per_sample` negative records are generated.
+              - "multiplets": Each record is a multiplet consisting of an anchor, a positive, and a list
+                              of negatives (the number of negatives equals `negatives_per_sample`).
+              - "single": Each record contains only a single caption (suitable for inference).
+            Default is "pairs".
+        store_nextcloud : bool, optional
             If True, upload AnnData files to Nextcloud and store share links instead of local paths.
-        nextcloud_config (dict, optional):
-        Configuration dictionary for Nextcloud which contains:
-            'url' (str): URL to the Nextcloud server.
-            'username' (str): Username for Nextcloud.
-            'password' (str): Password for Nextcloud.
-            'remote_path' (str): Remote path in Nextcloud where the file will be uploaded.
-
-        Example
-        ---------
-        nextcloud_config={
-            'url': 'https://nxc-fredato.imbi.uni-freiburg.de',
-            'username': 'your_username',
-            'password': 'your_password',
-            'remote_path': '/path/on/nextcloud/file.h5ad.gz'}
-
+        nextcloud_config : dict, optional
+            Configuration dictionary for Nextcloud which must contain:
+                - 'url' (str): URL to the Nextcloud server.
+                - 'username' (str): Username for Nextcloud.
+                - 'password' (str): Password for Nextcloud.
+                - 'remote_path' (str): Remote path in Nextcloud where the file will be uploaded.
+        
+        Raises
+        ------
+        ValueError
+            If `dataset_format` is not one of "pairs", "multiplets", or "single".
+        
+        Notes
+        -----
+        Data is sourced from AnnData files (either .zarr or .h5ad) that are added via `add_anndata`.
         """
         self.caption_constructor = caption_constructor
         self.negatives_per_sample = negatives_per_sample
+        self.dataset_format = dataset_format.lower()
+        if self.dataset_format not in ("pairs", "multiplets", "single"):
+            error_msg = "dataset_format must be one of 'pairs', 'multiplets', or 'single'."
+            logger.error(error_msg)
+            raise ValueError(error_msg)
         self.store_nextcloud = store_nextcloud
         self.nextcloud_config = nextcloud_config if store_nextcloud else None
         self.anndata_files = []
@@ -60,20 +84,21 @@ class AnnDataSetConstructor:
         self, adata: anndata.AnnData, file_path: str, sample_id_key: str | None
     ) -> None:
         """
-        Check if sample IDs are unique for the given anndata object.
+        Check if sample IDs are unique for the given AnnData object.
 
         Parameters
         ----------
-        adata
-            AnnData object to check
-        file_path
-            Path to the anndata file (for error message)
-        sample_id_key
-            Key in adata.obs to use for sample IDs, if None uses adata.obs.index
+        adata : anndata.AnnData
+            AnnData object to check.
+        file_path : str
+            Path to the AnnData file (for error messages).
+        sample_id_key : str or None
+            Key in adata.obs to use for sample IDs; if None, uses adata.obs.index.
 
         Raises
         ------
-            ValueError: If sample IDs are not unique
+        ValueError
+            If duplicate sample IDs are found.
         """
         sample_ids = (
             adata.obs.index if sample_id_key is None else adata.obs[sample_id_key]
@@ -102,14 +127,19 @@ class AnnDataSetConstructor:
 
     def add_anndata(self, file_path: str, sample_id_key: str | None = None) -> None:
         """
-        Add an anndata file to the constructor.
+        Add an AnnData file to the constructor.
 
         Parameters
         ----------
-        file_path
-            Path to the anndata file
-        sample_id_key
-            Optional key in adata.obs to use for sample IDs. If None, uses adata.obs.index
+        file_path : str
+            Path to the AnnData file.
+        sample_id_key : str or None, optional
+            Optional key in adata.obs to use for sample IDs. If None, uses adata.obs.index.
+
+        Raises
+        ------
+        ValueError
+            If the file format is unsupported or if the file has already been added.
         """
         self.is_zarr = False
         self.is_h5ad = False
@@ -119,7 +149,7 @@ class AnnDataSetConstructor:
         elif file_path.endswith(".h5ad"):
             self.is_h5ad = True
         else:
-            logger.error("Unsupported anndata format for file: %s", file_path)
+            logger.error("Unsupported AnnData format for file: %s", file_path)
             raise ValueError(
                 f"File {file_path} does not appear to be .zarr or .h5ad format."
             )
@@ -138,7 +168,7 @@ class AnnDataSetConstructor:
         if self.is_h5ad:
             adata = anndata.read_h5ad(file_path)
         self.local_path = file_path  # Store local path for reference
-        path_for_dataset = file_path  # Store path for dataset creation
+        path_for_dataset = file_path  # Default: store the local path for dataset creation
         self._check_sample_id_uniqueness(adata, file_path, sample_id_key)
 
         # Upload to Nextcloud if enabled
@@ -157,17 +187,22 @@ class AnnDataSetConstructor:
 
         self.anndata_files.append(
             {"local_path": file_path, "dataset_path": path_for_dataset}
-        )  # First is needed to load the data now for captions, second is stored in dataset later download
+        )
         self.sample_id_keys[file_path] = sample_id_key
-        logger.info("Successfully added anndata file: %s", file_path)
+        logger.info("Successfully added AnnData file: %s", file_path)
 
     def buildCaption(self, file_path: str) -> None:
         """
-        Build captions for an anndata file using the provided caption constructor.
+        Build captions for an AnnData file using the provided caption constructor.
 
-        Args:
-            file_path: Path to the anndata file
-            caption_constructor: Instance of a caption constructor class
+        Parameters
+        ----------
+        file_path : str
+            Path to the AnnData file.
+
+        Notes
+        -----
+        Captions are constructed and added to the AnnData object's .obs["caption"] column.
         """
         if self.is_zarr:
             adata = anndata.read_zarr(file_path)
@@ -181,14 +216,22 @@ class AnnDataSetConstructor:
 
     def getCaption(self, file_path: str) -> dict[str, str]:
         """
-        Get a dictionary mapping sample IDs to captions from an anndata file.
+        Get a dictionary mapping sample IDs to captions from an AnnData file.
 
-        Args:
-            file_path: Path to the anndata file
+        Parameters
+        ----------
+        file_path : str
+            Path to the AnnData file.
 
         Returns
         -------
-            Dict mapping sample IDs to captions
+        dict
+            Dictionary mapping sample IDs to captions.
+
+        Raises
+        ------
+        ValueError
+            If no "caption" column is found in the AnnData file.
         """
         if self.is_zarr:
             adata = anndata.read_zarr(file_path)
@@ -212,51 +255,57 @@ class AnnDataSetConstructor:
         all_captions: dict[str, dict[str, str]],
     ) -> tuple[str, str, float]:
         """
-        Create a negative example by finding a caption that doesn't match the current sample.
+        Create a negative example by finding a caption that does not match the current sample.
 
         Parameters
         ----------
         current_dataset_path : str
-            Path used to reference the current file
+            Path used to reference the current file.
         current_sample : str
-            ID of the current sample
+            ID of the current sample.
         current_caption : str
-            Caption of the current sample
+            Caption of the current sample.
         all_captions : dict
-            Nested dict mapping file paths to {sample_id: caption} dicts
+            Nested dict mapping file paths to {sample_id: caption} dictionaries.
 
         Returns
         -------
-        sentence_1 : str
-            JSON string containing file_path and sample_id
-        sentence_2 : str
-            The negative caption
-        label : float
-            0.0 for negative
+        tuple
+            A tuple (sentence_1, sentence_2, label) where:
+              - sentence_1 : JSON string containing file_path and sample_id (of the current sample).
+              - sentence_2 : The negative caption.
+              - label : 0.0 (indicating a negative example).
         """
         while True:
             # Randomly choose a file
-            neg_file = random.choice(self.anndata_files)
-            neg_file = neg_file["local_path"]
+            neg_file = random.choice(self.anndata_files)["local_path"]
             # Randomly choose a sample from that file
             neg_sample = random.choice(list(all_captions[neg_file].keys()))
             neg_caption = all_captions[neg_file][neg_sample]
 
             # Check if this is actually a negative example
             if neg_caption != current_caption:
-                # store metadata in JSON so we keep a single string
                 sentence_1 = json.dumps(
                     {"file_path": current_dataset_path, "sample_id": current_sample}
                 )
-                # sentence_1 = {"file_path": current_file, "sample_id": current_sample}
                 sentence_2 = neg_caption
                 label = 0.0
                 return (sentence_1, sentence_2, label)
 
-    def _check_sharelink(self, share_link: str) -> anndata.AnnData:
-        """This is mainly to validate that the share link is working."""
+    def _check_sharelink(self, share_link: str) -> bool:
+        """
+        Validate that the Nextcloud share link is working.
 
-        # create a temporary file to download the file
+        Parameters
+        ----------
+        share_link : str
+            The share link URL.
+
+        Returns
+        -------
+        bool
+            True if the share link is working; False otherwise.
+        """
         with tempfile.NamedTemporaryFile(suffix=".h5ad") as temp_file:
             if download_file_from_share_link(share_link, temp_file.name):
                 return True
@@ -265,102 +314,115 @@ class AnnDataSetConstructor:
 
     def get_dataset(self) -> Dataset:
         """
-        Create and return a Hugging Face Dataset containing pairs of sentences and a label.
+        Create and return a Hugging Face Dataset in the specified format.
 
-        The resulting dataset has these columns:
-        - sentence_1: JSON-serialized string with file_path and sample_id
-        - sentence_2: caption string
-        - label: float (1.0 or 0.0)
+        Depending on `self.dataset_format`, the returned dataset structure varies:
+
+        - "pairs": Each record is a pair with keys:
+            - anndata_ref: JSON string with file_path and sample_id.
+            - caption: Caption text (positive or negative).
+            - label: 1.0 for positive examples, 0.0 for negatives.
+          Negative examples are generated as separate records per positive sample.
+        
+        - "multiplets": Each record is a multiplet with keys:
+            - anndata_ref: JSON string with file_path and sample_id.
+            - anchor: The caption from the current sample.
+            - positive: Duplicate of the caption (serving as the positive example).
+            - negatives: List of negative captions (length defined by negatives_per_sample).
+        
+        - "single": Each record contains only the caption (and its reference) suitable for inference.
+            - anndata_ref: JSON string with file_path and sample_id.
+            - caption: Caption text.
 
         Returns
         -------
         datasets.Dataset
-            A Hugging Face Dataset with columns [sentence_1, sentence_2, label].
+            A Hugging Face Dataset constructed from the AnnData files.
 
         Notes
         -----
-        1. This method automatically calls `buildCaption(...)` on each file
-           and ensures the 'caption' column is present.
-        2. The data is sourced from .zarr files previously added via `add_anndata`.
-        3. The dataset is not tokenized; you can apply tokenization separately.
+        Captions are built using the provided `caption_constructor` and are sourced from AnnData files added via
+        `add_anndata`.
         """
-        # import json
-
-        # Prepare a list of dicts suitable for HF Dataset
         hf_data = []
         all_captions = {}  # Nested dict: {file_path: {sample_id: caption}}
 
         # Build & retrieve captions for each file
         for files in self.anndata_files:
             file_path = files["local_path"]
+            dataset_path = files["dataset_path"]
             self.buildCaption(file_path)
             all_captions[file_path] = self.getCaption(file_path)
 
-        # Create positive and negative examples
+        # Build dataset entries based on the selected format
         for files in self.anndata_files:
             file_path = files["local_path"]
             dataset_path = files["dataset_path"]
             caption_dict = all_captions[file_path]
 
             for sample_id, caption in caption_dict.items():
-                # Positive example
-                sentence_1 = json.dumps(
-                    {"file_path": dataset_path, "sample_id": sample_id}
-                )
-                # sentence_1 = {"file_path": file_path, "sample_id": sample_id}
-                sentence_2 = caption
-                label = 1.0
-
-                hf_data.append(
-                    {"anndata_ref": sentence_1, "caption": sentence_2, "label": label}
-                )
-
-                # Negative examples
-                for _ in range(self.negatives_per_sample):
-                    neg_sentence_1, neg_sentence_2, neg_label = (
-                        self._create_negative_example(
+                ref_json = json.dumps({"file_path": dataset_path, "sample_id": sample_id})
+                if self.dataset_format == "pairs":
+                    # Positive example
+                    hf_data.append(
+                        {"anndata_ref": ref_json, "caption": caption, "label": 1.0}
+                    )
+                    # Negative examples (if any)
+                    for _ in range(self.negatives_per_sample):
+                        neg_ref, neg_caption, neg_label = self._create_negative_example(
                             dataset_path, sample_id, caption, all_captions
                         )
+                        hf_data.append(
+                            {"anndata_ref": neg_ref, "caption": neg_caption, "label": neg_label}
+                        )
+                elif self.dataset_format == "multiplets":
+                    entry = {
+                        "anndata_ref": ref_json, # The anchor
+                        "positive": caption,
+                    }
+                    for idx in range(1, self.negatives_per_sample + 1):
+                        # Generate a negative example and add it as a separate column
+                        _, neg_caption, _ = self._create_negative_example(
+                            dataset_path, sample_id, caption, all_captions
+                        )
+                        entry[f"negative_{idx}"] = neg_caption
+                    hf_data.append(entry)
+                elif self.dataset_format == "single":
+                    # Only include the anndata ref
+                    hf_data.append({"anndata_ref": ref_json})
+                else:
+                    error_msg = (
+                        "Invalid dataset_format. Choose from 'pairs', 'multiplets', or 'single'."
                     )
-                    hf_data.append(
-                        {
-                            "anndata_ref": neg_sentence_1,
-                            "caption": neg_sentence_2,
-                            "label": neg_label,
-                        }
-                    )
+                    logger.error(error_msg)
+                    raise ValueError(error_msg)
+
         hf_dataset = Dataset.from_list(hf_data)
         return hf_dataset
 
     def get_inference_dataset(
         self,
     ) -> tuple[list[dict[str, str]], list[str], list[str]]:
-        """Build a dataset from an anndata file suitable for SentenceTransformer.encode.
+        """
+        Build a dataset from AnnData files suitable for SentenceTransformer.encode.
 
-        Build and return separate lists for inference: a list of metadata dicts, a list of captions,
-        and a parallel list of sample IDs (all in the same order).
-
-        The method reads each .zarr file (adding captions if not already present via `buildCaption`),
-        then extracts sample IDs and captions. This is useful for inference scenarios where you
-        need to maintain the exact order of samples for external reference.
+        The method returns parallel lists: a metadata list (with JSON strings of file_path and sample_id),
+        a captions list, and a sample_ids list. This is useful for inference scenarios where the exact order of
+        samples must be maintained.
 
         Returns
         -------
         metadata_list : list of dict
-            Each dictionary contains ``{"file_path": <path_to_zarr>, "sample_id": <sample_id>}``.
-            This is useful if you need to retrieve the file path and sample ID for downstream processing.
+            Each dictionary is a JSON-encoded string with keys {"file_path", "sample_id"}.
         captions_list : list of str
-            A list of caption strings corresponding to each sample in the dataset.
+            A list of caption strings corresponding to each sample.
         sample_ids : list of str
-            A list of sample IDs in the same index order as the captions_list.
+            A list of sample IDs in the same order as the captions.
 
         Notes
         -----
-        - This method internally calls ``buildCaption(file_path)`` to ensure each file
-        is annotated with a ``"caption"`` column. If the column already exists, the
-        constructor logic may simply overwrite or skip as needed.
-        - The data is sourced from the .zarr files previously added via ``add_anndata``.
-        - Logging messages are issued at various points to indicate progress.
+        Captions are built using the provided `caption_constructor` and are sourced from AnnData files added via
+        `add_anndata`.
         """
         metadata_list = []
         captions_list = []
@@ -371,9 +433,7 @@ class AnnDataSetConstructor:
             file_path = files["local_path"]
             dataset_path = files["dataset_path"]
             logger.info("Building caption for inference from file: %s", file_path)
-            self.buildCaption(
-                file_path
-            )  # This will overwrite the .zarr file if new captions were generated
+            self.buildCaption(file_path)
 
             logger.info("Retrieving captions for inference from file: %s", file_path)
             caption_dict = self.getCaption(file_path)
@@ -390,53 +450,11 @@ class AnnDataSetConstructor:
         return metadata_list, captions_list, sample_ids
 
     def clear(self) -> None:
-        """Clear all stored data in the constructor."""
+        """
+        Clear all stored data in the constructor.
+        
+        This removes all added AnnData files, sample ID keys, and any cached dataset entries.
+        """
         self.anndata_files.clear()
         self.sample_id_keys.clear()
         self.dataset.clear()
-
-
-class SimpleCaptionConstructor:
-    """Construct captions for each sample by concatenating values from specified obs keys"""
-
-    def __init__(self, obs_keys: list[str] | str, separator: str = " "):
-        """
-        Initialize the SimpleCaptionConstructor.
-
-        Args:
-            obs_keys: List of keys from adata.obs to include in the caption
-            separator: String to use between concatenated values (default: space)
-        """
-        if isinstance(obs_keys, str):
-            obs_keys = [obs_keys]
-        self.obs_keys = obs_keys
-        self.separator = separator
-
-    def construct_captions(self, adata: anndata.AnnData) -> None:
-        """Include captions for each sample
-
-        Construct captions by concatenating values from specified obs keys.
-        Adds a 'caption' column to adata.obs.
-
-        Args:
-            adata: AnnData object to process
-
-        Raises
-        ------
-            KeyError: If any of the specified obs_keys is not found in adata.obs
-        """
-        missing_keys = [key for key in self.obs_keys if key not in adata.obs.columns]
-        if missing_keys:
-            raise KeyError(
-                f"The following keys were not found in adata.obs: {missing_keys}"
-            )
-
-        # Convert all values to strings and replace NaN with empty string
-        str_values = [
-            adata.obs[key].astype(str).replace("nan", "") for key in self.obs_keys
-        ]
-
-        # Concatenate the values
-        adata.obs["caption"] = pd.DataFrame(str_values).T.agg(
-            self.separator.join, axis=1
-        )

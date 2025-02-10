@@ -416,3 +416,58 @@ def test_duplicate_sample_ids_in_custom_key(dataset_constructor, tmp_path):
     assert "duplicate sample IDs" in err_msg
     assert "Currently using adata.obs['custom_id']" in err_msg
     assert "Example duplicates: ['ID1', 'ID2']" in err_msg
+
+def test_get_dataset_multiplets(dataset_constructor, ann_data_file_1, ann_data_file_2):
+    """
+    Test that get_dataset returns records with separate negative columns
+    when dataset_format is set to "multiplets".
+    """
+    # Configure the constructor for multiplets with 2 negatives per sample
+    dataset_constructor.dataset_format = "multiplets"
+    dataset_constructor.negatives_per_sample = 2
+
+    dataset_constructor.add_anndata(ann_data_file_1)
+    dataset_constructor.add_anndata(ann_data_file_2)
+    
+    ds = dataset_constructor.get_dataset()
+    ds_list = ds[:]  # Convert Dataset to a list of dicts
+
+    for entry in ds_list:
+        # Check required columns
+        assert "anndata_ref" in entry
+        assert "positive" in entry
+        # The negatives should appear as separate columns: negative_1 and negative_2
+        assert "negative_1" in entry
+        assert "negative_2" in entry
+        # Optionally, check that anchor equals positive (if that is the intended behavior)
+
+def test_get_dataset_single(dataset_constructor, ann_data_file_1):
+    """
+    Test that get_dataset returns records with only 'anndata_ref'
+    when dataset_format is set to "single".
+    """
+    dataset_constructor.dataset_format = "single"
+    dataset_constructor.add_anndata(ann_data_file_1)
+    
+    ds = dataset_constructor.get_dataset()
+    ds_list = ds[:]  # Convert Dataset to a list of dicts
+
+    for entry in ds_list:
+        # Only 'anndata_ref' and 'caption' should be present
+        assert "anndata_ref" in entry
+        # There should be no extra keys like 'anchor', 'positive', or negatives
+        assert len(entry.keys()) == 1
+
+def test_invalid_dataset_format(mock_caption_constructor):
+    """
+    Test that providing an invalid dataset_format during construction raises a ValueError.
+    """
+    from adata_hf_datasets.adata_ref_ds import AnnDataSetConstructor
+
+    with pytest.raises(ValueError) as excinfo:
+        AnnDataSetConstructor(
+            caption_constructor=mock_caption_constructor,
+            negatives_per_sample=1,
+            dataset_format="invalid_format"
+        )
+    assert "dataset_format must be one of" in str(excinfo.value)
