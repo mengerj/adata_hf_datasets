@@ -5,6 +5,8 @@ import scipy.sparse as sp
 from pathlib import Path
 import os
 import psutil
+import anndata
+import scanpy as sc
 
 logger = logging.getLogger(__name__)
 
@@ -52,6 +54,67 @@ class BaseAnnDataEmbedder:
         raise NotImplementedError
 
 
+logger = logging.getLogger(__name__)
+
+class HighlyVariableGenesEmbedder(BaseAnnDataEmbedder):
+    """
+    Selects the top `n_top` highly variable genes from an AnnData object and uses them as an embedding.
+    """
+
+    def __init__(self, n_top: int = 2000, **kwargs):
+        """
+        Parameters
+        ----------
+        n_top : int, optional
+            The number of highly variable genes to select.
+        kwargs : dict
+            Additional keyword arguments. Not used.
+        """
+        super().__init__(**kwargs)
+        self.n_top = n_top
+
+    def fit(self, adata: anndata.AnnData, **kwargs) -> None:
+        """
+        Identifies the top `n_top` highly variable genes in `adata`.
+
+        Parameters
+        ----------
+        adata : anndata.AnnData
+            The single-cell data to analyze.
+        kwargs : dict
+            Additional keyword arguments for `scanpy.pp.highly_variable_genes`.
+        """
+        logger.info("Normalizing and log-transforming data before HVG selection.")
+        sc.pp.normalize_total(adata, target_sum=1e4)
+        sc.pp.log1p(adata)
+        logger.info("Selecting top %d highly variable genes.", self.n_top)
+        sc.pp.highly_variable_genes(adata, n_top_genes=self.n_top, **kwargs)
+        
+        if "highly_variable" not in adata.var:
+            raise ValueError("Failed to compute highly variable genes.")
+        logger.info("Successfully identified highly variable genes.")
+
+    def embed(self, adata: anndata.AnnData, obsm_key: str = "X_hvg", **kwargs) -> None:
+        """
+        Stores the expression of the selected highly variable genes as an embedding in `adata.obsm`.
+
+        Parameters
+        ----------
+        adata : anndata.AnnData
+            The single-cell data containing highly variable genes.
+        obsm_key : str, optional
+            The key under which the embedding will be stored in `adata.obsm`.
+        kwargs : dict
+            Additional keyword arguments. Not used.
+        """
+        if "highly_variable" not in adata.var:
+            raise RuntimeError("Highly variable genes not computed. Call `fit(adata)` first.")
+        
+        hvg_mask = adata.var["highly_variable"].values
+        X = adata.X.toarray() if sp.issparse(adata.X) else adata.X
+        adata.obsm[obsm_key] = X[:, hvg_mask]
+        logger.info("Stored highly variable gene expression in adata.obsm[%s]", obsm_key)
+
 class PCAEmbedder(BaseAnnDataEmbedder):
     """PCA-based embedding for single-cell data stored in AnnData."""
 
@@ -75,6 +138,10 @@ class PCAEmbedder(BaseAnnDataEmbedder):
         logger.info("Fitting PCA with %d components.", self.embedding_dim)
         from sklearn.decomposition import PCA
 
+        logger.info("Normalizing and log-transforming data before PCA.")
+        sc.pp.normalize_total(adata, target_sum=1e4)
+        sc.pp.log1p(adata)
+        sc.pp.scale(adata)
         X = adata.X.toarray() if sp.issparse(adata.X) else adata.X
         self._pca_model = PCA(
             n_components=self.embedding_dim, **kwargs
@@ -108,7 +175,7 @@ class SCVIEmbedder(BaseAnnDataEmbedder):
             raise ImportError("scvi-tools is not installed.")
 
         logger.info("Setting up scVI model with embedding_dim=%d", self.embedding_dim)
-        if not adata.layers[layer_key]:
+        if adata.layers[layer_key] is None:
             adata.layers[layer_key] = adata.X.copy()
         scvi.model.SCVI.setup_anndata(adata, layer=layer_key, batch_key=batch_key)
         self.model = scvi.model.SCVI(adata, n_latent=self.embedding_dim, **kwargs)
@@ -349,6 +416,7 @@ class InitialEmbedder:
 
         # Dispatch to the correct embedder class
         embedder_classes = {
+            "hvg": HighlyVariableGenesEmbedder,
             "pca": PCAEmbedder,
             "scvi": SCVIEmbedder,
             "geneformer": GeneformerEmbedder,
