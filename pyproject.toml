@@ -25,6 +25,7 @@ dependencies = [
     "ipywidgets>=8.1.5",
     "python-dotenv>=1.0.1",
     "huggingface-hub>=0.28.1",
+    "scvi-tools>=1.2.2.post2",
 ]
 
 optional-dependencies.dev = [
