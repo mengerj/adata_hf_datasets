@@ -399,7 +399,7 @@ class AnnDataSetConstructor:
 class SimpleCaptionConstructor:
     """Construct captions for each sample by concatenating values from specified obs keys"""
 
-    def __init__(self, obs_keys: list[str], separator: str = " "):
+    def __init__(self, obs_keys: list[str] | str, separator: str = " "):
         """
         Initialize the SimpleCaptionConstructor.
 
@@ -407,6 +407,8 @@ class SimpleCaptionConstructor:
             obs_keys: List of keys from adata.obs to include in the caption
             separator: String to use between concatenated values (default: space)
         """
+        if isinstance(obs_keys, str):
+            obs_keys = [obs_keys]
         self.obs_keys = obs_keys
         self.separator = separator
 
@@ -423,7 +425,6 @@ class SimpleCaptionConstructor:
         ------
             KeyError: If any of the specified obs_keys is not found in adata.obs
         """
-        # Verify all keys exist
         missing_keys = [key for key in self.obs_keys if key not in adata.obs.columns]
         if missing_keys:
             raise KeyError(
