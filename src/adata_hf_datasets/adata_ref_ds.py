@@ -25,7 +25,7 @@ class AnnDataSetConstructor:
 
     def __init__(
         self,
-        caption_constructor,
+        caption_constructor=None,
         negatives_per_sample: int = 1,
         dataset_format: str = "pairs",
         store_nextcloud: bool = False,
@@ -67,6 +67,10 @@ class AnnDataSetConstructor:
         -----
         Data is sourced from AnnData files (either .zarr or .h5ad) that are added via `add_anndata`.
         """
+        if caption_constructor is None and dataset_format != "single":
+            error_msg = "caption_constructor must be provided for dataset formats other than 'single'."
+            logger.error(error_msg)
+            raise ValueError(error_msg)
         self.caption_constructor = caption_constructor
         self.negatives_per_sample = negatives_per_sample
         self.dataset_format = dataset_format.lower()
@@ -326,17 +330,17 @@ class AnnDataSetConstructor:
             - anndata_ref: JSON string with file_path and sample_id.
             - caption: Caption text (positive or negative).
             - label: 1.0 for positive examples, 0.0 for negatives.
-          Negative examples are generated as separate records per positive sample.
+        Negative examples are generated as separate records per positive sample.
 
         - "multiplets": Each record is a multiplet with keys:
-            - anndata_ref: JSON string with file_path and sample_id.
-            - anchor: The caption from the current sample.
-            - positive: Duplicate of the caption (serving as the positive example).
-            - negatives: List of negative captions (length defined by negatives_per_sample).
+            - anndata_ref: JSON string with file_path and sample_id. (anchor)
+            - positive: The caption of the current sample (serving as the positive example).
+            - negative_1: A negative caption
+            - negative_2: ...
+            - negative_n: ...
 
-        - "single": Each record contains only the caption (and its reference) suitable for inference.
+        - "single": Each record contains only the AnnData reference (suitable for inference).
             - anndata_ref: JSON string with file_path and sample_id.
-            - caption: Caption text.
 
         Returns
         -------
@@ -346,37 +350,54 @@ class AnnDataSetConstructor:
         Notes
         -----
         Captions are built using the provided `caption_constructor` and are sourced from AnnData files added via
-        `add_anndata`.
+        `add_anndata`. However, captions are **not generated** for the `"single"` dataset format.
         """
         hf_data = []
+
         all_captions = {}  # Nested dict: {file_path: {sample_id: caption}}
 
-        # Build & retrieve captions for each file
-        for files in self.anndata_files:
-            file_path = files["local_path"]
-            dataset_path = files["dataset_path"]
-            self.buildCaption(file_path)
-            all_captions[file_path] = self.getCaption(file_path)
+        # Skip caption construction for "single" dataset format
+        if self.dataset_format != "single":
+            for files in self.anndata_files:
+                file_path = files["local_path"]
+                self.buildCaption(file_path)  # Build captions only if needed
+                all_captions[file_path] = self.getCaption(file_path)
 
         # Build dataset entries based on the selected format
         for files in self.anndata_files:
             file_path = files["local_path"]
             dataset_path = files["dataset_path"]
-            caption_dict = all_captions[file_path]
 
-            for sample_id, caption in caption_dict.items():
+            # No caption retrieval for "single" dataset format
+            caption_dict = (
+                all_captions.get(file_path, {})
+                if self.dataset_format != "single"
+                else {}
+            )
+
+            for sample_id in (
+                caption_dict.keys()
+                if self.dataset_format != "single"
+                else self._get_sample_ids(file_path)
+            ):
                 ref_json = json.dumps(
                     {"file_path": dataset_path, "sample_id": sample_id}
                 )
+
                 if self.dataset_format == "pairs":
                     # Positive example
                     hf_data.append(
-                        {"anndata_ref": ref_json, "caption": caption, "label": 1.0}
+                        {
+                            "anndata_ref": ref_json,
+                            "caption": caption_dict[sample_id],
+                            "label": 1.0,
+                        }
                     )
+
                     # Negative examples (if any)
                     for _ in range(self.negatives_per_sample):
                         neg_ref, neg_caption, neg_label = self._create_negative_example(
-                            dataset_path, sample_id, caption, all_captions
+                            dataset_path, sample_id, caption_dict, all_captions
                         )
                         hf_data.append(
                             {
@@ -385,21 +406,23 @@ class AnnDataSetConstructor:
                                 "label": neg_label,
                             }
                         )
+
                 elif self.dataset_format == "multiplets":
                     entry = {
-                        "anndata_ref": ref_json,  # The anchor
-                        "positive": caption,
+                        "anndata_ref": ref_json,
+                        "positive": caption_dict[sample_id],
                     }
                     for idx in range(1, self.negatives_per_sample + 1):
-                        # Generate a negative example and add it as a separate column
                         _, neg_caption, _ = self._create_negative_example(
-                            dataset_path, sample_id, caption, all_captions
+                            dataset_path, sample_id, caption_dict, all_captions
                         )
                         entry[f"negative_{idx}"] = neg_caption
                     hf_data.append(entry)
+
                 elif self.dataset_format == "single":
-                    # Only include the anndata ref
+                    # Only include the anndata ref, no captions
                     hf_data.append({"anndata_ref": ref_json})
+
                 else:
                     error_msg = "Invalid dataset_format. Choose from 'pairs', 'multiplets', or 'single'."
                     logger.error(error_msg)
@@ -408,70 +431,32 @@ class AnnDataSetConstructor:
         hf_dataset = Dataset.from_list(hf_data)
         return hf_dataset
 
-    def get_inference_dataset(
-        self,
-    ) -> tuple[list[dict[str, str]], list[str], list[str]]:
+    def _get_sample_ids(self, file_path):
         """
-        Build a dataset from AnnData files suitable for SentenceTransformer.encode.
+        Retrieve sample IDs from an AnnData file for 'single' dataset format.
 
-        The method returns parallel lists: a metadata list (with JSON strings of file_path and sample_id),
-        a captions list, and a sample_ids list. This is useful for inference scenarios where the exact order of
-        samples must be maintained.
+        Parameters
+        ----------
+        file_path : str
+            Path to the AnnData file.
 
         Returns
         -------
-        metadata_list : list of dict
-            Each dictionary is a JSON-encoded string with keys {"file_path", "sample_id"}.
-        captions_list : list of str
-            A list of caption strings corresponding to each sample.
-        sample_ids : list of str
-            A list of sample IDs in the same order as the captions.
-
-        Notes
-        -----
-        Captions are built using the provided `caption_constructor` and are sourced from AnnData files added via
-        `add_anndata`.
+        list
+            List of sample IDs.
         """
-        metadata_list = []
-        captions_list = []
-        sample_ids = []
+        import anndata
 
-        # For each file, ensure captions are built and then retrieved
-        for files in self.anndata_files:
-            file_path = files["local_path"]
-            dataset_path = files["dataset_path"]
-            logger.info("Building caption for inference from file: %s", file_path)
-            self.buildCaption(file_path)
-
-            logger.info("Retrieving captions for inference from file: %s", file_path)
-            caption_dict = self.getCaption(file_path)
-
-            # Gather data into parallel lists
-            for sid, caption in caption_dict.items():
-                metadata_list.append(
-                    json.dumps({"file_path": dataset_path, "sample_id": sid})
-                )
-                captions_list.append(caption)
-                sample_ids.append(sid)
-
-        logger.info("Constructed inference dataset with %d samples.", len(sample_ids))
-        return metadata_list, captions_list, sample_ids
-
-    def clear(self) -> None:
-        """
-        Clear all stored data in the constructor.
-
-        This removes all added AnnData files, sample ID keys, and any cached dataset entries.
-        """
-        self.anndata_files.clear()
-        self.sample_id_keys.clear()
-        self.dataset.clear()
+        adata = anndata.read_h5ad(file_path)
+        return (
+            adata.obs.index.tolist()
+        )  # Assuming sample IDs are stored in adata.obs.index
 
 
 class SimpleCaptionConstructor:
     """Construct captions for each sample by concatenating values from specified obs keys"""
 
-    def __init__(self, obs_keys: list[str], separator: str = " "):
+    def __init__(self, obs_keys: list[str] | str, separator: str = " "):
         """
         Initialize the SimpleCaptionConstructor.
 
@@ -479,6 +464,8 @@ class SimpleCaptionConstructor:
             obs_keys: List of keys from adata.obs to include in the caption
             separator: String to use between concatenated values (default: space)
         """
+        if isinstance(obs_keys, str):
+            obs_keys = [obs_keys]
         self.obs_keys = obs_keys
         self.separator = separator
 
