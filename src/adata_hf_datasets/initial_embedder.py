@@ -5,7 +5,6 @@ import scipy.sparse as sp
 from pathlib import Path
 import os
 import psutil
-import anndata
 import scanpy as sc
 
 logger = logging.getLogger(__name__)
@@ -56,6 +55,7 @@ class BaseAnnDataEmbedder:
 
 logger = logging.getLogger(__name__)
 
+
 class HighlyVariableGenesEmbedder(BaseAnnDataEmbedder):
     """
     Selects the top `n_top` highly variable genes from an AnnData object and uses them as an embedding.
@@ -88,8 +88,8 @@ class HighlyVariableGenesEmbedder(BaseAnnDataEmbedder):
         sc.pp.normalize_total(adata, target_sum=1e4)
         sc.pp.log1p(adata)
         logger.info("Selecting top %d highly variable genes.", self.n_top)
-        sc.pp.highly_variable_genes(adata, n_top_genes=self.n_top, **kwargs)
-        
+        sc.pp.highly_variable_genes(adata, n_top_genes=self.n_top)
+
         if "highly_variable" not in adata.var:
             raise ValueError("Failed to compute highly variable genes.")
         logger.info("Successfully identified highly variable genes.")
@@ -108,12 +108,18 @@ class HighlyVariableGenesEmbedder(BaseAnnDataEmbedder):
             Additional keyword arguments. Not used.
         """
         if "highly_variable" not in adata.var:
-            raise RuntimeError("Highly variable genes not computed. Call `fit(adata)` first.")
-        
+            raise RuntimeError(
+                "Highly variable genes not computed. Call `fit(adata)` first."
+            )
+
         hvg_mask = adata.var["highly_variable"].values
         X = adata.X.toarray() if sp.issparse(adata.X) else adata.X
         adata.obsm[obsm_key] = X[:, hvg_mask]
-        logger.info("Stored highly variable gene expression in adata.obsm[%s]", obsm_key)
+        logger.info(
+            "Stored highly variable gene expression in adata.obsm[%s]", obsm_key
+        )
+        return adata
+
 
 class PCAEmbedder(BaseAnnDataEmbedder):
     """PCA-based embedding for single-cell data stored in AnnData."""
@@ -143,9 +149,7 @@ class PCAEmbedder(BaseAnnDataEmbedder):
         sc.pp.log1p(adata)
         sc.pp.scale(adata)
         X = adata.X.toarray() if sp.issparse(adata.X) else adata.X
-        self._pca_model = PCA(
-            n_components=self.embedding_dim, **kwargs
-        )  # Pass kwargs to PCA
+        self._pca_model = PCA(n_components=self.embedding_dim)  # Pass kwargs to PCA
         self._pca_model.fit(X)
 
     def embed(self, adata: anndata.AnnData, obsm_key: str = "X_pca", **kwargs) -> None:
@@ -155,6 +159,7 @@ class PCAEmbedder(BaseAnnDataEmbedder):
 
         X = adata.X.toarray() if sp.issparse(adata.X) else adata.X
         adata.obsm[obsm_key] = self._pca_model.transform(X)
+        return adata
 
 
 class SCVIEmbedder(BaseAnnDataEmbedder):
@@ -175,19 +180,25 @@ class SCVIEmbedder(BaseAnnDataEmbedder):
             raise ImportError("scvi-tools is not installed.")
 
         logger.info("Setting up scVI model with embedding_dim=%d", self.embedding_dim)
-        if adata.layers[layer_key] is None:
+        try:
+            _ = adata.layers[layer_key]
+        except KeyError:
             adata.layers[layer_key] = adata.X.copy()
+        # Replace NaN values with "other"
+        adata.obs[batch_key] = adata.obs[batch_key].cat.add_categories("other")
+        adata.obs[batch_key] = adata.obs[batch_key].fillna("other")
         scvi.model.SCVI.setup_anndata(adata, layer=layer_key, batch_key=batch_key)
         self.model = scvi.model.SCVI(adata, n_latent=self.embedding_dim, **kwargs)
 
         logger.info("Training scVI model.")
-        self.model.train()
+        self.model.train(max_epochs=10)
 
     def embed(self, adata: anndata.AnnData, obsm_key: str = "X_scvi", **kwargs) -> None:
         """Use the trained scVI model to compute latent embeddings for each cell."""
         if self.model is None:
             raise RuntimeError("scVI model not trained. Call `fit(adata)` first.")
         adata.obsm[obsm_key] = self.model.get_latent_representation(adata)
+        return adata
 
 
 class GeneformerEmbedder(BaseAnnDataEmbedder):
@@ -282,8 +293,8 @@ class GeneformerEmbedder(BaseAnnDataEmbedder):
                 "sample_index"
             ],  # This should not be changed if you want sample based embeddings
             "labels_to_plot": None,
-            "forward_batch_size": 32,
-            "nproc": 1,
+            "forward_batch_size": 16,
+            "nproc": 8,
             "summary_stat": None,
             "token_dictionary_file": self.token_dictionary_file,
         }
@@ -347,12 +358,11 @@ class GeneformerEmbedder(BaseAnnDataEmbedder):
                 self.tmp_adata_dir,  # This has to point to the directory not a file
                 self.tmp_dir,
                 self.dataset_name,
-                output_torch_embs=False,
                 file_format="h5ad",
             )
             logger.info(
-                "Tokenized geneformer dataset created and stored in %s",
-                self.out_dataset_dir,
+                "Tokenized geneformer dataset created and stored in tempory directory%s",
+                self.tmp_dir,
             )
         else:
             logger.info(
@@ -373,10 +383,12 @@ class GeneformerEmbedder(BaseAnnDataEmbedder):
         embs_matrix = embs_sorted.drop(columns=["sample_index"]).values
         adata = anndata.read_h5ad(self.tmp_adata_dir / "adata.h5ad")
         adata.obsm[obsm_key] = embs_matrix
-        return adata
         # Clean up the tmp files and processes
-        self._kill_process()
+        # self._kill_process()
         # Clean up the tmp files
+        # remove the tmp files
+        os.system(f"rm -r {self.tmp_dir}")
+        return adata
 
     def _kill_process(self):
         """Had issues with stalling processes after first exection. This function kills all child processes."""
@@ -461,4 +473,5 @@ class InitialEmbedder:
         logger.info(
             f"Embedding data using method {self.method}. Storing embeddings in X_{self.method}."
         )
-        self.embedder.embed(adata, obsm_key=f"X_{self.method}", **embed_kwargs)
+        adata = self.embedder.embed(adata, obsm_key=f"X_{self.method}", **embed_kwargs)
+        return adata
