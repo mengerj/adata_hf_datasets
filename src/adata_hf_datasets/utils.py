@@ -63,6 +63,13 @@ def add_ensembl_ids(
         "Gene symbols are exptected to be found in .var_names. An example gene symbol: %s",
         adata.var_names[0],
     )
+    # if entries in .var_names are ensmebl ids, directly store them in the ensembl_col
+    if adata.var_names[0].startswith("ENSG"):
+        adata.var[ensembl_col] = adata.var_names
+        logger.info(
+            f"Directly storing Ensembl IDs from row index in adata.var['{ensembl_col}']."
+        )
+        return
 
     logger.info("Fetching biomart annotations from Ensembl. This may take a moment...")
     biomart_df = sc.queries.biomart_annotations(
@@ -237,7 +244,11 @@ def annotate_and_push_dataset(
 
 
 def _generate_readme(
-    readme_template_name, repo_id, embedding_generation, caption_generation=None
+    readme_template_name,
+    repo_id,
+    embedding_generation,
+    caption_generation=None,
+    dataset_type_explanation=None,
 ) -> str:
     """
     Fills the README template with dataset-specific details.
@@ -262,6 +273,7 @@ def _generate_readme(
         repo_id=repo_id,
         embedding_generation=embedding_generation,
         caption_generation=caption_info,
+        dataset_type_explanation=dataset_type_explanation,
     )
     return readme_filled
 
