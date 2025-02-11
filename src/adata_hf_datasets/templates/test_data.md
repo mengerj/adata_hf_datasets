@@ -13,7 +13,8 @@ task_categories:
 ---
 
 ## Description
-This dataset contains **RNA sequencing data** (or actually references to anndata files stored on a cloud). It is a dataset supposed to be used for testing and held-out from training. 
+
+This dataset contains **RNA sequencing data** (or actually references to anndata files stored on a cloud). It is a dataset supposed to be used for testing and held-out from training.
 
 The Test data is partly taken from the cellwhisperer project (bowel disease dataset) and from Luecken et. al.
 It was processed and converted into a Hugging Face dataset using the [adata_hf_datasets](https://github.com/mengerj/adata_hf_datasets) Python package.
@@ -34,9 +35,8 @@ $caption_info
   Bowel Disease: _Parikh, Kaushal, Agne Antanaviciute, David Fawkner-Corbett, Marta Jagielowicz, Anna Aulicino, Christoffer Lagerholm, Simon Davis, et al. 2019. “Colonic Epithelial Cell Diversity in Health and Inflammatory Bowel Disease.” Nature 567 (7746): 49–55_
   [GEO accession](https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE116222)
 
-  Other Test Data: Luecken, Malte D., M. Büttner, K. Chaichoompu, A. Danese, M. Interlandi, M. F. Mueller, D. C. Strobl, et al. “Benchmarking Atlas-Level Data Integration in Single-Cell Genomics.” Nature Methods 19, no. 1 (January 2022): 41–50. 
+  Other Test Data: Luecken, Malte D., M. Büttner, K. Chaichoompu, A. Danese, M. Interlandi, M. F. Mueller, D. C. Strobl, et al. “Benchmarking Atlas-Level Data Integration in Single-Cell Genomics.” Nature Methods 19, no. 1 (January 2022): 41–50.
   [Publication](https://doi.org/10.1038/s41592-021-01336-8).
-
 
 - **Annotated Data:**
   Cell Whisperer: _Multimodal learning of transcriptomes and text enables interactive single-cell RNA-seq data exploration with natural-language chats_
@@ -63,12 +63,14 @@ dataset = load_dataset("$repo_id")
 ```
 
 The anndata reference is a json string which contains a share_link to the remotly stored anndata object. It can be obtained like this:
+
 ```python
 import json
 import anndata
 import requests
 
-adata_ref = json.load(dataset["anndata_ref"][0])
+# hf makes a
+adata_ref = json.loads(dataset["train]["anndata_ref"][0])
 caption = dataset["caption"] #For dataset_type "pairs"
 #caption = dataset["positive"] #For dataset_type "multiplet"
 share_link = adata_ref["file_path"]
@@ -84,7 +86,8 @@ else:
 
 adata = anndata.read_h5ad(save_path)
 # The dataset contains several pre-computed embeddings. Lets for example get the embeddings computed with "scvi":
-sample_embedding = adata.obsm["X_scvi"][sample_id]
+sample_idx = adata.obs.index == sample_id
+sample_embedding = adata.obsm["X_scvi"][sample_idx]
 # This sample embedding is described the the caption (loaded above)
 # Note that you can cache your anndata files so you don't need to reload the anndata object if the filepath is still the same.
 ```
