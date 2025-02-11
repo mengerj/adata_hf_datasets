@@ -5,10 +5,10 @@ Process test AnnData files to create and push Hugging Face datasets for each fil
 Each test file is processed with the InitialEmbedder methods using a batch key specified
 in a JSON file (batch_keys.json) stored in the same directory as the test data. The resulting
 datasets are created in "single" mode and pushed to separate repositories.
-    
+
 Data Sources:
     - Test files: All .h5ad files in the designated test folder.
-    
+
 JSON Mapping:
     - A JSON file (batch_keys.json) in the test directory maps each file name to its batch key.
       Example content:
@@ -32,14 +32,17 @@ from pathlib import Path
 from dotenv import load_dotenv
 import anndata
 from adata_hf_datasets.initial_embedder import InitialEmbedder
-from adata_hf_datasets.adata_ref_ds import AnnDataSetConstructor, SimpleCaptionConstructor
+from adata_hf_datasets.adata_ref_ds import AnnDataSetConstructor
 from adata_hf_datasets.utils import setup_logging, annotate_and_push_dataset
 import logging
 
 # Use the predefined logger per instructions
 logger = logging.getLogger(__name__)
 
-def process_test_file(file_path, batch_key, methods, caption_key, nextcloud_config, negatives_per_sample):
+
+def process_test_file(
+    file_path, batch_key, methods, nextcloud_config, negatives_per_sample
+):
     """
     Process a test AnnData file: apply embeddings using the provided batch_key,
     and create a Hugging Face dataset of type "single".
@@ -52,8 +55,6 @@ def process_test_file(file_path, batch_key, methods, caption_key, nextcloud_conf
         The key in the AnnData object to use for batch correction.
     methods : list of str
         List of embedding methods to apply.
-    caption_key : str
-        Observation key used for generating captions.
     nextcloud_config : dict
         Configuration dictionary for Nextcloud storage.
     negatives_per_sample : int
@@ -81,7 +82,7 @@ def process_test_file(file_path, batch_key, methods, caption_key, nextcloud_conf
         logger.info("Applying embedding method '%s' on test file %s", method, file_path)
         embedder = InitialEmbedder(method=method)
         embedder.fit(adata, batch_key=batch_key)
-        embedder.embed(adata)
+        adata = embedder.embed(adata)
         # The embedder is assumed to store its embedding in adata.obsm (e.g., adata.obsm[f'X_{method}'])
 
     # Save the processed test file to disk
@@ -94,61 +95,60 @@ def process_test_file(file_path, batch_key, methods, caption_key, nextcloud_conf
 
     # Create the dataset for the test file (always in "single" mode)
     nextcloud_config["remote_path"] = f"datasets/test/{Path(file_path).stem}.h5ad"
-    caption_constructor = SimpleCaptionConstructor(obs_keys=caption_key)
     constructor = AnnDataSetConstructor(
-        caption_constructor=caption_constructor,
         store_nextcloud=True,
         nextcloud_config=nextcloud_config,
         negatives_per_sample=negatives_per_sample,
+        dataset_format="single",
     )
-    constructor.dataset_type = "single"
     constructor.add_anndata(file_path=test_processed_path)
     test_dataset = constructor.get_dataset()
     return Path(file_path).stem, test_dataset
 
+
 def main():
     """
     Main function to process all test files in the test directory and push each as a separate repository.
-    
+
     The function loads the batch key mapping from a JSON file (batch_keys.json) located in the test directory.
     It then loops over all .h5ad files, processes each file using its specified batch key, and pushes
     the resulting dataset to its respective repository.
     """
     setup_logging()
     load_dotenv(override=True)
-    
+
     # Define directories and parameters
     project_dir = Path(__file__).resolve().parents[1]
     test_dir = project_dir / "data" / "RNA" / "raw" / "test"
     processed_test_dir = project_dir / "data" / "RNA" / "processed" / "test"
     os.makedirs(processed_test_dir, exist_ok=True)
-    
+
     # Path to JSON file containing batch key mappings
     batch_keys_json = test_dir / "batch_keys.json"
     if not batch_keys_json.exists():
         logger.error("Batch keys JSON file not found at: %s", batch_keys_json)
         return
-    
+
     with open(batch_keys_json, "r") as f:
         batch_keys_mapping = json.load(f)
-    
-    methods = ["hvg", "pca", "scvi", "geneformer"]
-    caption_key = "natural_language_annotation"
+
+    methods = ["hvg", "pca"]  # , "scvi", "geneformer"]
+    # caption_key = "natural_language_annotation"
     negatives_per_sample = 2
-    
+
     nextcloud_config = {
         "url": "https://nxc-fredato.imbi.uni-freiburg.de",
         "username": "NEXTCLOUD_USER",  # To be obtained from environment variables in practice
         "password": "NEXTCLOUD_PASSWORD",
         "remote_path": "",
     }
-    
+
     # Process only .h5ad files in the test directory
     test_files = sorted(test_dir.glob("*.h5ad"))
     if not test_files:
         logger.error("No .h5ad test files found in: %s", test_dir)
         return
-    
+
     for file_path in test_files:
         file_name = file_path.name
         # Get the batch key for this file from the JSON mapping.
@@ -158,34 +158,35 @@ def main():
             file_path=file_path,
             batch_key=batch_key,
             methods=methods,
-            caption_key=caption_key,
             nextcloud_config=nextcloud_config,
             negatives_per_sample=negatives_per_sample,
         )
-        logger.info("Processed test file '%s' with batch key '%s'", file_name, batch_key)
-        
-        # Compose metadata for annotation
-        caption_generation = (
-            f"Captions were generated with the SimpleCaptionConstructor class. "
-            f"Obs_keys concatenated: {caption_key}."
+        logger.info(
+            "Processed test file '%s' with batch key '%s'", file_name, batch_key
         )
+
         embedding_generation = (
             f"Embeddings were generated with the InitialEmbedder class for methods: {methods}. "
             "Each method stored its embeddings in the corresponding adata.obsm key."
         )
-        dataset_type_explanation = f"Test dataset for file: {test_name} (dataset_type 'single')."
-        
+        dataset_type_explanation = (
+            f"Test dataset for file: {test_name} (dataset_type 'single')."
+        )
+
         # Push the dataset for this test file to a separate repository
-        repo_id = f"jo-mengr/test_{test_name}"
+        repo_id = f"jo-mengr/{test_name}_single"
         annotate_and_push_dataset(
             dataset=test_dataset,
-            caption_generation=caption_generation,
             embedding_generation=embedding_generation,
             dataset_type_explanation=dataset_type_explanation,
             repo_id=repo_id,
             readme_template_name="test_data",
         )
-        logger.info("Test dataset '%s' pushed successfully to repo: %s", test_name, repo_id)
+        logger.info(
+            "Test dataset '%s' pushed successfully to repo: %s", test_name, repo_id
+        )
+        break  # For testing purposes, only process the first file
+
 
 if __name__ == "__main__":
     main()

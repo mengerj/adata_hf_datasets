@@ -5,25 +5,32 @@ from adata_hf_datasets.utils import split_anndata
 import os
 from pathlib import Path
 from dotenv import load_dotenv
-from adata_hf_datasets.adata_ref_ds import AnnDataSetConstructor
-from adata_hf_datasets.adata_ref_ds import SimpleCaptionConstructor
+from adata_hf_datasets.adata_ref_ds import (
+    AnnDataSetConstructor,
+    SimpleCaptionConstructor,
+)
 from adata_hf_datasets.utils import annotate_and_push_dataset
-from datasets import DatasetDict
+from datasets import DatasetDict, concatenate_datasets
+import logging
 
-methods = ["hvg","pca","scvi","geneformer"]
-geo_n = "7k" # amount of samples to take from the GEO dataset
-cellxgene_n = "3_5K" # amount of samples to take from the cellxgene dataset
-raw_full_data = {"geo": f"geo_{geo_n}", "cellxgene": f"cellxgene_pseudo_bulk_{cellxgene_n}"} #This data will be used to create train and val datasets
-
+# Define project parameters and paths
 project_dir = Path(__file__).resolve().parents[1]
-test_dir = f"{project_dir}/data/RNA/raw/test" # All data in this folder will be used to create test datasets
+
+geo_n = "0_2k"
+cellxgene_n = "0_2k"  # amount of samples to take from the cellxgene dataset
+raw_full_data = {
+    "geo": f"geo_{geo_n}",
+    "cellxgene": f"cellxgene_pseudo_bulk_{cellxgene_n}",
+}
+methods = ["geneformer"]  # ["hvg", "pca", "scvi", "geneformer"]
+dataset_types = ["pairs", "multiplets"]
+negatives_per_sample = 2
+batch_keys = {"geo": "study", "cellxgene": "assay"}
 caption_key = "natural_language_annotation"
-#caption_key = "cluster_label"
-batch_keys = {"geo": "batch","cellxgene": "assay"}
 
 nextcloud_config = {
     "url": "https://nxc-fredato.imbi.uni-freiburg.de",
-    "username": "NEXTCLOUD_USER",  # env will we obtained within code
+    "username": "NEXTCLOUD_USER",  # Retrieved from environment variables in practice
     "password": "NEXTCLOUD_PASSWORD",
     "remote_path": "",
 }
@@ -42,21 +49,20 @@ References:
     - Hugging Face datasets: https://huggingface.co/docs/datasets
 """
 
-import os
-from pathlib import Path
-from dotenv import load_dotenv
-import anndata
-from datasets import DatasetDict, concatenate_datasets
-from adata_hf_datasets.utils import setup_logging, split_anndata, annotate_and_push_dataset
-from adata_hf_datasets.initial_embedder import InitialEmbedder
-from adata_hf_datasets.adata_ref_ds import AnnDataSetConstructor, SimpleCaptionConstructor
-import logging
-
 # Use the predefined logger per instructions
-logger = logging.get_logger(__name__)
+logger = logging.getLogger(__name__)
 
 
-def process_file_to_dataset(file_path, methods, batch_key, caption_key, processed_paths, nextcloud_config, dataset_types, negatives_per_sample):
+def process_file_to_dataset(
+    file_path,
+    methods,
+    batch_key,
+    caption_key,
+    processed_paths,
+    nextcloud_config,
+    dataset_types,
+    negatives_per_sample,
+):
     """
     Process a single AnnData file: apply embeddings, split the data, and create Hugging Face datasets.
 
@@ -101,7 +107,7 @@ def process_file_to_dataset(file_path, methods, batch_key, caption_key, processe
         logger.info("Applying embedding method '%s' on %s", method, file_path)
         embedder = InitialEmbedder(method=method)
         embedder.fit(adata, batch_key=batch_key)
-        embedder.embed(adata)
+        adata = embedder.embed(adata)
         # Each embedder is assumed to store its embedding in adata.obsm (e.g., adata.obsm[f'X_{method}'])
 
     # Split the data into training and validation sets
@@ -116,7 +122,7 @@ def process_file_to_dataset(file_path, methods, batch_key, caption_key, processe
     val_adata.write_h5ad(val_path)
     logger.info("Saved processed files to: %s and %s", train_path, val_path)
 
-    datasets_all = {} # These will be pushed as seperate datasets
+    datasets_all = {}  # These will be pushed as seperate datasets
     if isinstance(dataset_types, str):
         dataset_types = [dataset_types]
     for dataset_type in dataset_types:
@@ -124,20 +130,22 @@ def process_file_to_dataset(file_path, methods, batch_key, caption_key, processe
         local_dataset = {}
         for split, path in zip(["train", "val"], [train_path, val_path]):
             # Update remote_path in nextcloud_config for the current split (if needed)
-            nextcloud_config["remote_path"] = f"datasets/{split}/{Path(file_path).stem}.h5ad"
+            nextcloud_config["remote_path"] = (
+                f"datasets/{split}/{Path(file_path).stem}.h5ad"
+            )
             caption_constructor = SimpleCaptionConstructor(obs_keys=caption_key)
             constructor = AnnDataSetConstructor(
                 caption_constructor=caption_constructor,
                 store_nextcloud=True,
                 nextcloud_config=nextcloud_config,
                 negatives_per_sample=negatives_per_sample,
+                dataset_format=dataset_type,
             )
-            constructor.dataset_type = dataset_type
             constructor.add_anndata(file_path=path)
             dataset = constructor.get_dataset()
             local_dataset[split] = dataset
         datasets_all[dataset_type] = local_dataset
-    return local_dataset
+    return datasets_all
 
 
 def main():
@@ -150,36 +158,22 @@ def main():
     setup_logging()
     load_dotenv(override=True)
 
-    # Define project parameters and paths
-    project_dir = Path(__file__).resolve().parents[1]
-    raw_full_data = {"geo": "geo_7k", "cellxgene": "cellxgene_pseudo_bulk_1_7K"}
-    methods = ["hvg", "pca", "scvi", "geneformer"]
-    dataset_types = ["pairs","multiplets","single"]
-    negatives_per_sample = 2
-    batch_keys = {"geo": "batch", "cellxgene": "assay"}
-    caption_key = "natural_language_annotation"
-
-    nextcloud_config = {
-        "url": "https://nxc-fredato.imbi.uni-freiburg.de",
-        "username": "NEXTCLOUD_USER",  # Retrieved from environment variables in practice
-        "password": "NEXTCLOUD_PASSWORD",
-        "remote_path": "",
-    }
-
-    # Initialize an empty DatasetDict to accumulate datasets for each split
-    hf_dataset = DatasetDict()
-
     # Process each raw file and concatenate its dataset with previous ones split-wise
     for key, data_name in raw_full_data.items():
         file_path = project_dir / "data" / "RNA" / "raw" / "train" / f"{data_name}.h5ad"
         if not file_path.exists():
             logger.error("File not found: %s", file_path)
+            raise FileNotFoundError(f"File not found: {file_path}")
             continue
 
-        # Loop over 
+        # Loop over
         processed_paths = {
-            "train": str(project_dir / "data" / "RNA" / "processed" / data_name / "train.h5ad"),
-            "val": str(project_dir / "data" / "RNA" / "processed" / data_name / "val.h5ad"),
+            "train": str(
+                project_dir / "data" / "RNA" / "processed" / data_name / "train.h5ad"
+            ),
+            "val": str(
+                project_dir / "data" / "RNA" / "processed" / data_name / "val.h5ad"
+            ),
         }
         # Process the file and obtain datasets for the train and val splits
         local_ds = process_file_to_dataset(
@@ -189,19 +183,31 @@ def main():
             caption_key=caption_key,
             processed_paths=processed_paths,
             nextcloud_config=nextcloud_config,
+            dataset_types=dataset_types,
+            negatives_per_sample=negatives_per_sample,
         )
 
+    for dataset_type in local_ds.keys():
         # Concatenate the new dataset with any previously processed dataset for each split
+        # publish a new dataset for each type ("pairs", "multiplets", "single")
+        hf_dataset = DatasetDict()
+        type_ds = local_ds[dataset_type]
         for split in ["train", "val"]:
             if split in hf_dataset:
-                hf_dataset[split] = concatenate_datasets([hf_dataset[split], local_ds[split]])
-                logger.info("Concatenated %s dataset with new data from %s", split, file_path)
+                hf_dataset[split] = concatenate_datasets(
+                    [hf_dataset[split], type_ds[split]]
+                )
+                logger.info(
+                    "Concatenated %s - %s dataset with new data from %s",
+                    dataset_type,
+                    split,
+                    file_path,
+                )
             else:
-                hf_dataset[split] = local_ds[split]
-                logger.info("Initialized %s dataset with data from %s", split, file_path)
-
-    for dataset_type in hf_dataset.keys():
-        
+                hf_dataset[split] = type_ds[split]
+                logger.info(
+                    "Initialized %s dataset with data from %s", split, file_path
+                )
         # Compose metadata descriptions for dataset annotation
         caption_generation = (
             f"Captions were generated with the SimpleCaptionConstructor class. "
@@ -211,13 +217,12 @@ def main():
             f"Embeddings were generated with the InitialEmbedder class for methods: {methods}. "
             "Each method stored its embeddings in the corresponding adata.obsm key."
         )
-        dataset_type_explanation = (f"""Dataset type: {dataset_type}. This can be used for several loss functions from the 
-                                    sentence_transformers library.""")
-    
+        dataset_type_explanation = f"""Dataset type: {dataset_type}. This can be used for several loss functions from the
+                                    sentence_transformers library."""
 
         # Annotate and push the concatenated dataset
         annotate_and_push_dataset(
-            dataset=hf_dataset[dataset_type],
+            dataset=hf_dataset,
             caption_generation=caption_generation,
             embedding_generation=embedding_generation,
             dataset_type_explanation=dataset_type_explanation,
