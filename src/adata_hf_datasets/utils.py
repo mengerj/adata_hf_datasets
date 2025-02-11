@@ -90,9 +90,9 @@ def add_ensembl_ids(
         else:
             ensembl_ids.append("")
     # check that ensembl_ids contain "ENSG" IDs and are of same length adata
-    if not all(ensembl_id.startswith("ENS") for ensembl_id in ensembl_ids):
+    if not check_ensembl_ids(ensembl_ids):
         raise ValueError(
-            "Not all Ensembl IDs are in the expected format. Please check the gene symbols."
+            "Ensembl IDs are not valid. Please check the index column or provide a correct {ensembl_col} column."
         )
     adata.var[ensembl_col] = ensembl_ids
 
@@ -108,6 +108,34 @@ def add_ensembl_ids(
         f"Total genes with mapped IDs: {(~pd.isna(adata.var[ensembl_col])).sum()}/"
         f"{len(adata.var)}."
     )
+
+
+def check_ensembl_ids(ensembl_ids):
+    """
+    Checks if all Ensembl gene IDs start with "ENS" and logs a warning for missing IDs.
+
+    Parameters
+    ----------
+    ensembl_ids : list of str
+        A list of Ensembl gene IDs.
+
+    Returns
+    -------
+    bool
+        True if all non-empty IDs start with "ENS", False otherwise.
+    """
+    missing_count = sum(1 for eid in ensembl_ids if eid in ("", None))
+    invalid_count = sum(1 for eid in ensembl_ids if eid and not eid.startswith("ENS"))
+
+    if missing_count > 0:
+        logger.warning(
+            f"{missing_count} genes do not have an Ensembl ID (empty or None)."
+        )
+
+    if invalid_count > 0:
+        logger.warning(f"{invalid_count} genes have IDs that do not start with 'ENS'.")
+
+    return invalid_count == 0  # Returns True if all valid IDs start with "ENS"
 
 
 def split_anndata(adata: anndata.AnnData, train_size: float = 0.8):
