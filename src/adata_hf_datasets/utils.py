@@ -64,7 +64,7 @@ def add_ensembl_ids(
         adata.var_names[0],
     )
     # if entries in .var_names are ensmebl ids, directly store them in the ensembl_col
-    if adata.var_names[0].startswith("ENSG"):
+    if adata.var_names[0].startswith("ENS"):
         adata.var[ensembl_col] = adata.var_names
         logger.info(
             f"Directly storing Ensembl IDs from row index in adata.var['{ensembl_col}']."
@@ -89,7 +89,11 @@ def add_ensembl_ids(
             ensembl_ids.append(biomart_df.loc[symbol, "ensembl_gene_id"])
         else:
             ensembl_ids.append("")
-
+    # check that ensembl_ids contain "ENSG" IDs and are of same length adata
+    if not all(ensembl_id.startswith("ENS") for ensembl_id in ensembl_ids):
+        raise ValueError(
+            "Not all Ensembl IDs are in the expected format. Please check the gene symbols."
+        )
     adata.var[ensembl_col] = ensembl_ids
 
     # Optionally drop rows (genes) with missing Ensembl IDs:
