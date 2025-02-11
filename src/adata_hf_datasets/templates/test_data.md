@@ -71,8 +71,6 @@ import requests
 
 # hf makes a
 adata_ref = json.loads(dataset["train]["anndata_ref"][0])
-caption = dataset["caption"] #For dataset_type "pairs"
-#caption = dataset["positive"] #For dataset_type "multiplet"
 share_link = adata_ref["file_path"]
 sample_id = adata_ref["sample_id"]
 save_path = "data"

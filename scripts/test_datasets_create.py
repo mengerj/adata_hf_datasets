@@ -132,7 +132,7 @@ def main():
     with open(batch_keys_json, "r") as f:
         batch_keys_mapping = json.load(f)
 
-    methods = ["hvg", "pca"]  # , "scvi", "geneformer"]
+    methods = ["hvg", "pca", "scvi", "geneformer"]
     # caption_key = "natural_language_annotation"
     negatives_per_sample = 2
 
@@ -185,7 +185,6 @@ def main():
         logger.info(
             "Test dataset '%s' pushed successfully to repo: %s", test_name, repo_id
         )
-        break  # For testing purposes, only process the first file
 
 
 if __name__ == "__main__":
