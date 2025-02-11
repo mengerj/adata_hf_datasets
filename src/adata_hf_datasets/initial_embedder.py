@@ -7,6 +7,7 @@ import os
 import psutil
 import scanpy as sc
 from datetime import datetime
+
 logger = logging.getLogger(__name__)
 
 
@@ -148,6 +149,8 @@ class PCAEmbedder(BaseAnnDataEmbedder):
         sc.pp.normalize_total(adata, target_sum=1e4)
         sc.pp.log1p(adata)
         sc.pp.scale(adata)
+        # transfer adata.X back to sparse matrix after scaling
+        adata.X = sp.csr_matrix(adata.X)
         X = adata.X.toarray() if sp.issparse(adata.X) else adata.X
         self._pca_model = PCA(n_components=self.embedding_dim)  # Pass kwargs to PCA
         self._pca_model.fit(X)
