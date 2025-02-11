@@ -6,7 +6,7 @@ from pathlib import Path
 import os
 import psutil
 import scanpy as sc
-
+from datetime import datetime
 logger = logging.getLogger(__name__)
 
 
@@ -302,7 +302,8 @@ class GeneformerEmbedder(BaseAnnDataEmbedder):
 
         # geneformer by defaults reads from an anndata file and writes the embeddings to a csv. We want to work with the embeddings directly.
         # We define a tmp dir for all those files
-        self.tmp_dir = Path(project_dir) / "tmp_geneformer"
+        time_tag = datetime.now().strftime("%Y%m%d_%H%M%S")
+        self.tmp_dir = Path(project_dir) / f"tmp_geneformer_{time_tag}"
         self.tmp_adata_dir = self.tmp_dir / "adata"
         self.tmp_dir.mkdir(exist_ok=True)
         self.tmp_adata_dir.mkdir(exist_ok=True)
