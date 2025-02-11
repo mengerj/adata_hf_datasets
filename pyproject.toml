@@ -1,45 +1,52 @@
 [build-system]
-requires = ["setuptools>=64", "wheel"]
 build-backend = "setuptools.build_meta"
+
+requires = [ "setuptools>=64", "wheel" ]
 
 [project]
 name = "adata-hf-datasets"
 version = "0.1.0"
-description = """A package for building multimodal omics datasets confirm with huggingface based on anndata. Furthermore there is an integration
-with cellxgene to get an anndata object with extra information based on the given dois."""
+description = "A package for building multimodal omics datasets confirm with huggingface based on anndata. Furthermore there is an integration with cellxgene to get an anndata object with extra information based on the given dois."
 readme = "README.md"
-requires-python = ">=3.10,<3.13"
 license = { file = "LICENSE" }
 authors = [
-    { name = "Jonatan Menger", email = "jonatan.menger@gmail.com"},
+  { name = "Jonatan Menger", email = "jonatan.menger@gmail.com" },
+]
+requires-python = ">=3.10,<3.13"
+classifiers = [
+  "Programming Language :: Python :: 3 :: Only",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
 ]
 dependencies = [
-    "anndata",
-    "requests",
-    "bs4",
-    "datasets",
-    "numpy",
-    "pandas",
-    "pybiomart>=0.2.0",
-    "jupyter>=1.1.1",
-    "ipywidgets>=8.1.5",
-    "python-dotenv>=1.0.1",
-    "huggingface-hub>=0.28.1",
-    "scvi-tools>=1.2.2.post2",
+  "anndata",
+  "bs4",
+  "datasets",
+  "huggingface-hub>=0.28.1",
+  "ipywidgets>=8.1.5",
+  "jupyter>=1.1.1",
+  "numpy",
+  "pandas",
+  "pybiomart>=0.2",
+  "python-dotenv>=1.0.1",
+  "requests",
+  "scanpy>=1.10.4",
+  "scvi-tools>=1.2.2.post2",
 ]
 
 optional-dependencies.dev = [
-    "pre-commit", 
-    "ruff", 
-    "twine"
+  "pre-commit",
+  "ruff",
+  "twine",
+]
+optional-dependencies.doc = [
+  "myst-nb",
+  "sphinx",
+  "sphinx-autodoc-typehints",
+  "sphinx-book-theme",
 ]
 optional-dependencies.test = [
-    "coverage", 
-    "pytest"
-    ]
-optional-dependencies.doc = [
-    "sphinx",
-    "myst-nb",
-    "sphinx-book-theme",
-    "sphinx-autodoc-typehints",
+  "coverage",
+  "pytest",
 ]
