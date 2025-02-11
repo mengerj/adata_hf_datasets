@@ -11,3 +11,4 @@ data/
 *logs*
 *.err
 *.out
+*.DS_Store
