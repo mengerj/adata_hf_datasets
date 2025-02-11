@@ -4,6 +4,54 @@ import logging
 import requests
 from requests.auth import HTTPBasicAuth
 import xml.etree.ElementTree as ET
+from tqdm import tqdm
+import json
+import anndata as ad
+
+
+def download_from_link(url, save_path):
+    """
+    Download a file with a progress bar.
+
+    Parameters
+    ----------
+    url : str
+        The direct URL to the file.
+    save_path : str
+        The local file path to save the downloaded file.
+
+    Returns
+    -------
+    bool
+        True if the download was successful, False otherwise.
+    """
+    try:
+        response = requests.get(url, stream=True)
+        response.raise_for_status()  # Raise an error for failed requests (e.g., 404, 403)
+
+        # Get total file size from headers
+        total_size = int(response.headers.get("content-length", 0))
+
+        # Download with progress bar
+        with (
+            open(save_path, "wb") as file,
+            tqdm(
+                desc=save_path,
+                total=total_size,
+                unit="B",
+                unit_scale=True,
+                unit_divisor=1024,
+            ) as bar,
+        ):
+            for chunk in response.iter_content(chunk_size=8192):
+                file.write(chunk)
+                bar.update(len(chunk))  # Update progress bar
+
+        print(f"\nDownload complete: {save_path}")
+        return True
+    except requests.exceptions.RequestException as e:
+        print(f"\nDownload failed: {e}")
+        return False
 
 
 def save_and_upload_adata(
@@ -225,3 +273,123 @@ def download_file_from_share_link(share_link, save_path):
             f"Failed to download the file: {response.status_code} - {response.reason}"
         )
         return False
+
+
+logger = logging.getLogger(__name__)
+
+
+def download_figshare_file(url: str, download_dir: str, file_name: str) -> str:
+    """
+    Download data from a Figshare link with a progress bar and save to the specified directory.
+
+    Parameters
+    ----------
+    url : str
+        The Figshare URL of the dataset.
+    download_dir : str
+        The directory to save the downloaded file.
+
+    Returns
+    -------
+    str
+        Path to the downloaded file.
+    """
+    logger.info("Starting download from Figshare...")
+    response = requests.get(url, stream=True)
+    if response.status_code != 200:
+        logger.error(f"Failed to fetch the data. Status code: {response.status_code}")
+        raise ValueError("Failed to download data from Figshare.")
+
+    os.makedirs(download_dir, exist_ok=True)
+    file_path = os.path.join(download_dir, file_name)
+    # check if file already exists and skip download
+    if os.path.exists(file_path):
+        logger.info(f"File already exists at {file_path}. Skipping download.")
+        return file_path
+    # Total file size in bytes
+    total_size = int(response.headers.get("content-length", 0))
+    block_size = 1024  # 1 Kibibyte
+
+    with (
+        open(file_path, "wb") as f,
+        tqdm(total=total_size, unit="iB", unit_scale=True, desc="Downloading") as t,
+    ):
+        for chunk in response.iter_content(chunk_size=block_size):
+            t.update(len(chunk))
+            f.write(chunk)
+
+    logger.info(f"Data downloaded successfully and saved to {file_path}.")
+    return file_path
+
+
+def download_figshare_data(
+    download_dir: str = ".",
+    figshare_id: str = "12420968",
+    base_url="https://api.figshare.com/v2",
+    out_format: str = "h5ad",
+    wanted_file_name: str | None = None,
+):
+    """Download the data from Figshare and split it into train and test sets.
+
+    Parameters
+    ----------
+    download_dir : str, optional
+        The folder to where the data will be downloaded.
+    figshare_id : str, optional
+        The Figshare ID of the dataset.
+    base_url : str, optional
+        The base URL of the Figshare API.
+    out_format : str, optional
+        The format to save the data, either "h5ad" or "zarr".
+    wanted_file_name: str, optional
+        If you only want to download a certain file. Otherwise all files in the remote directory will be downloaded.
+    """
+    # Configure the logger
+    logging.basicConfig(level=logging.INFO)
+    os.makedirs(download_dir, exist_ok=True)
+
+    # Step 1: Download the data
+
+    r = requests.get(base_url + "/articles/" + figshare_id)
+    # Load the metadata as JSON
+    if r.status_code != 200:
+        raise ValueError("Request to figshare failed:", r.content)
+    else:
+        metadata = json.loads(r.text)
+    # View metadata:
+    files_meta = metadata["files"]
+    data_paths = {}
+    for file_meta in files_meta:
+        download_url = file_meta["download_url"]
+        file_size = file_meta["size"]
+        file_name = file_meta["name"]
+        if wanted_file_name is not None and file_name != wanted_file_name:
+            continue
+        # Format size in GB for readability
+        file_size_gb = file_size / 1024**3
+        logger.info(f"Downloading File: {file_name}, Size: {file_size_gb:.2f} GB")
+        try:
+            data_paths[file_name] = download_figshare_file(
+                download_url, download_dir, file_name=file_name
+            )
+        except ValueError as e:
+            logger.error(e)
+            return
+    for file_name in data_paths.keys():
+        # Step 2: Load the data (assuming extracted files)
+        data_path = data_paths[file_name]
+        if not os.path.exists(data_path):
+            logger.error(f"File {data_path} not found.")
+            return
+        if data_path.endswith(".h5ad"):
+            data = ad.read_h5ad(data_path)
+        elif data_path.endswith(".zarr"):
+            data = ad.read_zarr(data_path)
+        else:
+            logger.error(f"Unsupported file format: {data_path}")
+            return
+
+        logger.info(
+            f"Loaded AnnData object with {data.shape[0]} samples and {data.shape[1]} features."
+        )
+        return
