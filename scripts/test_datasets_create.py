@@ -151,6 +151,8 @@ def main():
 
     for file_path in test_files:
         file_name = file_path.name
+        if file_name != "bowel_disease.h5ad":
+            continue
         # Get the batch key for this file from the JSON mapping.
         # If not provided, you can choose a default (here, "tech")
         batch_key = batch_keys_mapping.get(file_name, "batch")
