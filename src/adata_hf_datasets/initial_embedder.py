@@ -116,6 +116,8 @@ class HighlyVariableGenesEmbedder(BaseAnnDataEmbedder):
         hvg_mask = adata.var["highly_variable"].values
         X = adata.X.toarray() if sp.issparse(adata.X) else adata.X
         adata.obsm[obsm_key] = X[:, hvg_mask]
+        # return to sparse matrix
+        adata.obsm[obsm_key] = sp.csr_matrix(adata.obsm[obsm_key])
         logger.info(
             "Stored highly variable gene expression in adata.obsm[%s]", obsm_key
         )
@@ -190,6 +192,8 @@ class SCVIEmbedder(BaseAnnDataEmbedder):
         # Replace NaN values with "other"
         adata.obs[batch_key] = adata.obs[batch_key].cat.add_categories("other")
         adata.obs[batch_key] = adata.obs[batch_key].fillna("other")
+
+        sc.pp.normalize_total(adata, target_sum=1e4)
         scvi.model.SCVI.setup_anndata(adata, layer=layer_key, batch_key=batch_key)
         self.model = scvi.model.SCVI(adata, n_latent=self.embedding_dim, **kwargs)
 

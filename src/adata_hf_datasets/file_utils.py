@@ -230,7 +230,7 @@ def get_share_link(nextcloud_url, username, password, remote_path):
         return None
 
 
-def download_file_from_share_link(share_link, save_path):
+def download_file_from_share_link(share_link, save_path, chunk_size=8192):
     """
     Downloads a file from a Nextcloud share link and checks if it's a valid .h5ad file.
 
@@ -247,32 +247,40 @@ def download_file_from_share_link(share_link, save_path):
         print("Download successful:", success)
     """
     # Send a GET request to the share link
-    response = requests.get(share_link)
-    if response.status_code == 200:
-        # Write the content of the response to a local file
-        with open(save_path, "wb") as file:
-            file.write(response.content)
+    try:
+        # Step 1: Stream download the file
+        with requests.get(share_link, stream=True) as response:
+            response.raise_for_status()
 
-        # Attempt to open the file with h5py
+            with open(save_path, "wb") as file:
+                for chunk in response.iter_content(chunk_size=chunk_size):
+                    file.write(chunk)
+
+        # Step 2: Validate the file structure
         try:
             with h5py.File(save_path, "r") as h5_file:
-                # Check for key 'X' which is common in .h5ad files
-                if "X" in h5_file:
-                    print("File is a valid .h5ad file.")
+                # Check if required keys exist in the HDF5 structure
+                required_keys = ["X", "obs", "var"]  # Common in .h5ad files
+                if all(key in h5_file for key in required_keys):
+                    print("✅ File is a valid .h5ad file.")
                     return True
                 else:
-                    print("File does not appear to be a valid .h5ad file.")
+                    print("⚠️ File is an HDF5 file but missing required .h5ad keys.")
+                    return False
         except Exception as e:
-            print(f"Error while checking the file: {e}")
+            print(f"❌ Error while checking the file: {e}")
+            return False
 
-        # If the checks fail, consider the download unsuccessful
+    except requests.exceptions.RequestException as e:
+        print(f"❌ Failed to download the file: {e}")
         return False
-    else:
-        # Print or log the error
-        print(
-            f"Failed to download the file: {response.status_code} - {response.reason}"
-        )
-        return False
+
+    finally:
+        # Optional: Delete file if invalid
+        if not os.path.exists(save_path) or not h5py.is_hdf5(save_path):
+            print("❌ Deleting invalid file.")
+            os.remove(save_path)
+            return False
 
 
 logger = logging.getLogger(__name__)

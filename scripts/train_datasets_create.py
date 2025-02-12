@@ -12,12 +12,13 @@ from adata_hf_datasets.adata_ref_ds import (
 from adata_hf_datasets.utils import annotate_and_push_dataset
 from datasets import DatasetDict, concatenate_datasets
 import logging
+import argparse
 import psutil
 
 # Define project parameters and paths
 project_dir = Path(__file__).resolve().parents[1]
 
-methods = ["hvg", "pca", "scvi", "geneformer"]
+methods = ["hvg"]  # ["hvg", "pca", "scvi", "geneformer"]
 dataset_types = ["pairs", "multiplets"]
 negatives_per_sample = 2
 batch_keys = {"geo": "study", "cellxgene": "assay"}
@@ -47,7 +48,6 @@ References:
 # Use the predefined logger per instructions
 logger = logging.getLogger(__name__)
 
-import argparse
 
 def parse_arguments():
     """
@@ -58,18 +58,25 @@ def parse_arguments():
     argparse.Namespace
         Parsed arguments containing geo_n and cellxgene_n.
     """
-    parser = argparse.ArgumentParser(description="Generate training datasets with different dataset sizes.")
-    
+    parser = argparse.ArgumentParser(
+        description="Generate training datasets with different dataset sizes."
+    )
+
     parser.add_argument(
-        "--geo_n", type=str, default="0_2k",
-        help="Number of samples to take from the GEO dataset (default: '0_2k')"
+        "--geo_n",
+        type=str,
+        default="0_2k",
+        help="Number of samples to take from the GEO dataset (default: '0_2k')",
     )
     parser.add_argument(
-        "--cellxgene_n", type=str, default="0_2k",
-        help="Number of samples to take from the Cellxgene dataset (default: '0_2k')"
+        "--cellxgene_n",
+        type=str,
+        default="0_2k",
+        help="Number of samples to take from the Cellxgene dataset (default: '0_2k')",
     )
 
     return parser.parse_args()
+
 
 def process_file_to_dataset(
     file_path,
@@ -188,9 +195,9 @@ def main():
     geo_n = args.geo_n
     cellxgene_n = args.cellxgene_n
     raw_full_data = {
-    "geo": f"geo_{geo_n}",
-    "cellxgene": f"cellxgene_pseudo_bulk_{cellxgene_n}",
-}
+        "geo": f"geo_{geo_n}",
+        "cellxgene": f"cellxgene_pseudo_bulk_{cellxgene_n}",
+    }
     # Process each raw file and concatenate its dataset with previous ones split-wise
     for key, data_name in raw_full_data.items():
         file_path = project_dir / "data" / "RNA" / "raw" / "train" / f"{data_name}.h5ad"
