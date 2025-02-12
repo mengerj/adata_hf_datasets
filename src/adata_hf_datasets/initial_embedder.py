@@ -188,16 +188,17 @@ class SCVIEmbedder(BaseAnnDataEmbedder):
         try:
             _ = adata.layers[layer_key]
         except KeyError:
-            adata.layers[layer_key] = adata.X
+            adata.layers[layer_key] = adata.X.copy()
         # Replace NaN values with "other"
         adata.obs[batch_key] = adata.obs[batch_key].cat.add_categories("other")
         adata.obs[batch_key] = adata.obs[batch_key].fillna("other")
+
+        sc.pp.normalize_total(adata, target_sum=1e4)
         scvi.model.SCVI.setup_anndata(adata, layer=layer_key, batch_key=batch_key)
         self.model = scvi.model.SCVI(adata, n_latent=self.embedding_dim, **kwargs)
 
         logger.info("Training scVI model.")
         self.model.train(max_epochs=10)
-        del adata.layers[layer_key]
 
     def embed(self, adata: anndata.AnnData, obsm_key: str = "X_scvi", **kwargs) -> None:
         """Use the trained scVI model to compute latent embeddings for each cell."""
