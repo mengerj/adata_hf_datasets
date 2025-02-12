@@ -116,6 +116,8 @@ class HighlyVariableGenesEmbedder(BaseAnnDataEmbedder):
         hvg_mask = adata.var["highly_variable"].values
         X = adata.X.toarray() if sp.issparse(adata.X) else adata.X
         adata.obsm[obsm_key] = X[:, hvg_mask]
+        # return to sparse matrix
+        adata.obsm[obsm_key] = sp.csr_matrix(adata.obsm[obsm_key])
         logger.info(
             "Stored highly variable gene expression in adata.obsm[%s]", obsm_key
         )
@@ -186,7 +188,7 @@ class SCVIEmbedder(BaseAnnDataEmbedder):
         try:
             _ = adata.layers[layer_key]
         except KeyError:
-            adata.layers[layer_key] = adata.X.copy()
+            adata.layers[layer_key] = adata.X
         # Replace NaN values with "other"
         adata.obs[batch_key] = adata.obs[batch_key].cat.add_categories("other")
         adata.obs[batch_key] = adata.obs[batch_key].fillna("other")
@@ -195,6 +197,7 @@ class SCVIEmbedder(BaseAnnDataEmbedder):
 
         logger.info("Training scVI model.")
         self.model.train(max_epochs=10)
+        del adata.layers[layer_key]
 
     def embed(self, adata: anndata.AnnData, obsm_key: str = "X_scvi", **kwargs) -> None:
         """Use the trained scVI model to compute latent embeddings for each cell."""
