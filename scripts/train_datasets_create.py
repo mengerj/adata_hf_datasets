@@ -9,7 +9,11 @@ from adata_hf_datasets.adata_ref_ds import (
     AnnDataSetConstructor,
     SimpleCaptionConstructor,
 )
-from adata_hf_datasets.utils import annotate_and_push_dataset
+from adata_hf_datasets.utils import (
+    annotate_and_push_dataset,
+    remove_zero_variance_cells,
+    remove_zero_variance_genes,
+)
 from datasets import DatasetDict, concatenate_datasets
 import logging
 import argparse
@@ -18,7 +22,7 @@ import psutil
 # Define project parameters and paths
 project_dir = Path(__file__).resolve().parents[1]
 
-methods = ["hvg"]  # ["hvg", "pca", "scvi", "geneformer"]
+methods = ["hvg", "pca", "scvi", "geneformer"]
 dataset_types = ["pairs", "multiplets"]
 negatives_per_sample = 2
 batch_keys = {"geo": "study", "cellxgene": "assay"}
@@ -119,6 +123,7 @@ def process_file_to_dataset(
     """
     logger.info("Processing file: %s", file_path)
     adata = anndata.read_h5ad(file_path)
+<<<<<<< HEAD
     # Log the current amount of memory in GB
     used_mem = psutil.virtual_memory().percent / (1024 ** 3)
     free_mem = psutil.virtual_memory().available / (1024 ** 3)
@@ -126,6 +131,13 @@ def process_file_to_dataset(
     logger.info(f"Memory usage: {used_mem}GB, Free memory: {free_mem}GB")
     
         # Clean up unnecessary fields to free up memory
+=======
+    # Remove zero variance cells and genes
+    adata = remove_zero_variance_cells(adata)
+    adata = remove_zero_variance_genes(adata)
+
+    # Clean up unnecessary fields to free up memory
+>>>>>>> ab8b870a1e3db124efc256f7f8b52fbfa43b27cb
     if "natural_language_annotation_replicates" in adata.obsm:
         del adata.obsm["natural_language_annotation_replicates"]
     if hasattr(adata, "layers"):

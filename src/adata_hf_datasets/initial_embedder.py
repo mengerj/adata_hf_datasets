@@ -86,6 +86,8 @@ class HighlyVariableGenesEmbedder(BaseAnnDataEmbedder):
             Additional keyword arguments for `scanpy.pp.highly_variable_genes`.
         """
         logger.info("Normalizing and log-transforming data before HVG selection.")
+        # First save the raw counts as a layer
+        adata.layers["counts"] = adata.X.copy()
         sc.pp.normalize_total(adata, target_sum=1e4)
         sc.pp.log1p(adata)
         logger.info("Selecting top %d highly variable genes.", self.n_top)
@@ -193,7 +195,6 @@ class SCVIEmbedder(BaseAnnDataEmbedder):
         adata.obs[batch_key] = adata.obs[batch_key].cat.add_categories("other")
         adata.obs[batch_key] = adata.obs[batch_key].fillna("other")
 
-        sc.pp.normalize_total(adata, target_sum=1e4)
         scvi.model.SCVI.setup_anndata(adata, layer=layer_key, batch_key=batch_key)
         self.model = scvi.model.SCVI(adata, n_latent=self.embedding_dim, **kwargs)
 

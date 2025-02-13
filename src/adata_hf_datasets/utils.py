@@ -13,6 +13,7 @@ import importlib
 from huggingface_hub import HfApi
 import tempfile
 from string import Template
+import scipy.sparse as sp
 
 logger = logging.getLogger(__name__)
 
@@ -326,3 +327,136 @@ def _load_readme_template(readme_template_name) -> str:
         raise ValueError(
             f"Template {readme_template_name} not found in package resources"
         )
+
+
+'''
+import gc
+import sys
+import logging
+from typing import List, Tuple
+
+def get_top_n_memory_objects(n: int = 5) -> List[Tuple[str, int]]:
+    """
+    Retrieve the top-n objects by memory usage (in bytes),
+    as seen by Python's garbage collector and sys.getsizeof.
+
+    Parameters
+    ----------
+    n : int, optional
+        Number of objects to return (sorted from largest to smallest),
+        by default 5.
+
+    Returns
+    -------
+    list of tuple
+        A list of (type_name, size_in_bytes), sorted by size in descending order.
+
+    Notes
+    -----
+    - sys.getsizeof does not account for nested object references, so
+      these numbers can be incomplete for complex objects.
+    - Some objects might raise TypeError when calling sys.getsizeof.
+      Such objects are simply skipped.
+    """
+    all_objs = gc.get_objects()
+    objects_and_sizes = []
+
+    for obj in all_objs:
+        try:
+            size = sys.getsizeof(obj)
+            type_name = type(obj).__name__
+            objects_and_sizes.append((type_name, size))
+        except TypeError:
+            # Some objects (especially extension types) might not work with getsizeof
+            pass
+
+    # Sort descending by size
+    objects_and_sizes.sort(key=lambda x: x[1], reverse=True)
+
+    # Return only top-n
+    return objects_and_sizes[:n]
+
+
+def log_top_n_memory_objects(n: int = 5) -> None:
+    """
+    Log (using Python's logging) the top-n objects by memory usage.
+
+    Parameters
+    ----------
+    n : int, optional
+        Number of objects to log, by default 5
+
+    Returns
+    -------
+    None
+    """
+    top_objs = get_top_n_memory_objects(n=n)
+    logger.info("Top %d objects by approximate memory usage (sys.getsizeof):", n)
+    for rank, (type_name, size_bytes) in enumerate(top_objs, start=1):
+        logger.info("%d) %s: %.2f MB", rank, type_name, size_bytes / (1024 * 1024))
+
+
+def log_top_n_objects_pympler(n: int = 5):
+    """
+    Log the top-n objects by deep memory usage using Pympler's asizeof.
+    """
+    all_objs = gc.get_objects()
+    objects_and_sizes = []
+    for obj in all_objs:
+        try:
+            size = asizeof.asizeof(obj)
+            objects_and_sizes.append((type(obj).__name__, size, obj))
+        except Exception:
+            # Some extension objects might still fail
+            pass
+
+    objects_and_sizes.sort(key=lambda x: x[1], reverse=True)
+    top_n = objects_and_sizes[:n]
+    logger.info("Top %d objects by deep memory usage (Pympler):", n)
+    for i, (type_name, size_bytes, obj_ref) in enumerate(top_n, start=1):
+        logger.info("%d) %s: %.2f MB [object reference: %r]",
+                    i, type_name, size_bytes / (1024*1024), obj_ref)
+'''
+
+
+def remove_zero_variance_genes(adata):
+    """Remove genes with zero variance from an AnnData object."""
+    logger = logging.getLogger(__name__)
+    if sp.issparse(adata.X):
+        # For sparse matrices
+        gene_variances = np.array(
+            adata.X.power(2).mean(axis=0) - np.square(adata.X.mean(axis=0))
+        ).flatten()
+    else:
+        # For dense matrices
+        gene_variances = np.var(adata.X, axis=0)
+    zero_variance_genes = gene_variances == 0
+    num_zero_variance_genes = np.sum(zero_variance_genes)
+
+    if np.any(zero_variance_genes):
+        adata = adata[:, ~zero_variance_genes]
+        logger.info(f"Removed {num_zero_variance_genes} genes with zero variance.")
+        return adata
+    else:
+        logger.info("No genes with zero variance found.")
+        return adata
+
+
+def remove_zero_variance_cells(adata):
+    """Check for cells with zero variance in an AnnData object."""
+    logger = logging.getLogger(__name__)
+    if sp.issparse(adata.X):
+        cell_variances = np.array(
+            adata.X.power(2).mean(axis=1) - np.square(adata.X.mean(axis=1))
+        ).flatten()
+    else:
+        cell_variances = np.var(adata.X, axis=1)
+    zero_variance_cells = cell_variances == 0
+    num_zero_variance_cells = np.sum(zero_variance_cells)
+    if np.any(zero_variance_cells):
+        adata = adata[~zero_variance_cells, :]
+        logger.info(f"Removed {num_zero_variance_cells} cells with zero variance.")
+        return adata
+    else:
+        logger.info("No cells with zero variance found.")
+        return adata
