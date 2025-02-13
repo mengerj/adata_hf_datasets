@@ -9,7 +9,11 @@ from adata_hf_datasets.adata_ref_ds import (
     AnnDataSetConstructor,
     SimpleCaptionConstructor,
 )
-from adata_hf_datasets.utils import annotate_and_push_dataset
+from adata_hf_datasets.utils import (
+    annotate_and_push_dataset,
+    remove_zero_variance_cells,
+    remove_zero_variance_genes,
+)
 from datasets import DatasetDict, concatenate_datasets
 import logging
 import argparse
@@ -17,7 +21,7 @@ import argparse
 # Define project parameters and paths
 project_dir = Path(__file__).resolve().parents[1]
 
-methods = ["hvg"]  # ["hvg", "pca", "scvi", "geneformer"]
+methods = ["hvg", "pca", "scvi", "geneformer"]
 dataset_types = ["pairs", "multiplets"]
 negatives_per_sample = 2
 batch_keys = {"geo": "study", "cellxgene": "assay"}
@@ -117,7 +121,10 @@ def process_file_to_dataset(
         Data is ultimately sourced from the file at `file_path`.
     """
     logger.info("Processing file: %s", file_path)
-    adata = anndata.read_h5ad(file_path, backed="r+")
+    adata = anndata.read_h5ad(file_path)
+    # Remove zero variance cells and genes
+    adata = remove_zero_variance_cells(adata)
+    adata = remove_zero_variance_genes(adata)
 
     # Clean up unnecessary fields to free up memory
     if "natural_language_annotation_replicates" in adata.obsm:
