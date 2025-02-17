@@ -34,14 +34,13 @@ import anndata
 from adata_hf_datasets.initial_embedder import InitialEmbedder
 from adata_hf_datasets.adata_ref_ds import AnnDataSetConstructor
 from adata_hf_datasets.utils import setup_logging, annotate_and_push_dataset
+from adata_hf_datasets.sys_monitor import SystemMonitor
 import logging
 
-# Use the predefined logger per instructions
-logger = logging.getLogger(__name__)
-
+logger = setup_logging()
 
 def process_test_file(
-    file_path, batch_key, methods, nextcloud_config, negatives_per_sample
+    file_path, batch_key, methods, nextcloud_config, negatives_per_sample, monitor,
 ):
     """
     Process a test AnnData file: apply embeddings using the provided batch_key,
@@ -69,22 +68,23 @@ def process_test_file(
     """
     logger.info("Processing test file: %s with batch key: %s", file_path, batch_key)
     adata = anndata.read_h5ad(file_path)
-
+    monitor.log_event(f"Loaded test file: {file_path}")
     # Remove unnecessary fields to free up memory
     if "natural_language_annotation_replicates" in adata.obsm:
         del adata.obsm["natural_language_annotation_replicates"]
     if hasattr(adata, "layers"):
         del adata.layers
-    adata.layers = {"counts": adata.X.copy()}
 
     # Apply each embedding method using the provided batch key
     for method in methods:
         logger.info("Applying embedding method '%s' on test file %s", method, file_path)
         embedder = InitialEmbedder(method=method)
         embedder.fit(adata, batch_key=batch_key)
+        monitor.log_event(f"Fitting completed for method {method}")
         adata = embedder.embed(adata)
         # The embedder is assumed to store its embedding in adata.obsm (e.g., adata.obsm[f'X_{method}'])
 
+    monitor.log_event("Embeddings generated for all methods")
     # Save the processed test file to disk
     project_dir = Path(__file__).resolve().parents[1]
     test_processed_dir = project_dir / "data" / "RNA" / "processed" / "test"
@@ -92,7 +92,7 @@ def process_test_file(
     test_processed_path = str(test_processed_dir / f"{Path(file_path).stem}.h5ad")
     adata.write_h5ad(test_processed_path)
     logger.info("Saved processed test file to: %s", test_processed_path)
-
+    del adata
     # Create the dataset for the test file (always in "single" mode)
     nextcloud_config["remote_path"] = f"datasets/test/{Path(file_path).stem}.h5ad"
     constructor = AnnDataSetConstructor(
@@ -114,8 +114,9 @@ def main():
     It then loops over all .h5ad files, processes each file using its specified batch key, and pushes
     the resulting dataset to its respective repository.
     """
-    setup_logging()
     load_dotenv(override=True)
+    monitor = SystemMonitor(logger=logger)
+    monitor.start()
 
     # Define directories and parameters
     project_dir = Path(__file__).resolve().parents[1]
@@ -151,7 +152,7 @@ def main():
 
     for file_path in test_files:
         file_name = file_path.name
-        if file_name != "bowel_disease.h5ad":
+        if file_name not in ["tabula_sapiens.h5ad"]:
             continue
         # Get the batch key for this file from the JSON mapping.
         # If not provided, you can choose a default (here, "tech")
@@ -162,6 +163,7 @@ def main():
             methods=methods,
             nextcloud_config=nextcloud_config,
             negatives_per_sample=negatives_per_sample,
+            monitor=monitor,
         )
         logger.info(
             "Processed test file '%s' with batch key '%s'", file_name, batch_key
@@ -174,7 +176,7 @@ def main():
         dataset_type_explanation = (
             f"Test dataset for file: {test_name} (dataset_type 'single')."
         )
-
+        monitor.log_event("Pushing dataset")
         # Push the dataset for this test file to a separate repository
         repo_id = f"jo-mengr/{test_name}_single"
         annotate_and_push_dataset(
@@ -187,6 +189,9 @@ def main():
         logger.info(
             "Test dataset '%s' pushed successfully to repo: %s", test_name, repo_id
         )
+        monitor.stop()
+        monitor.save("out")
+        monitor.plot_metrics("out")
 
 
 if __name__ == "__main__":
