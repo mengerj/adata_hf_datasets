@@ -17,6 +17,7 @@ from adata_hf_datasets.utils import (
 from datasets import DatasetDict, concatenate_datasets
 import logging
 import argparse
+import psutil
 
 # Define project parameters and paths
 project_dir = Path(__file__).resolve().parents[1]
@@ -131,17 +132,23 @@ def process_file_to_dataset(
         del adata.obsm["natural_language_annotation_replicates"]
     if hasattr(adata, "layers"):
         del adata.layers
+
     # Apply each embedding method; embeddings are stored in adata.obsm
     for method in methods:
         logger.info("Applying embedding method '%s' on %s", method, file_path)
         embedder = InitialEmbedder(method=method)
         embedder.fit(adata, batch_key=batch_key)
         adata = embedder.embed(adata)
+        # Log the current amount of memory in GB
+        used_mem = psutil.virtual_memory().percent / (1024 ** 3)
+        free_mem = psutil.virtual_memory().available / (1024 ** 3)
+        # Log in GB
+        logger.info(f"Memory usage: {used_mem}GB, Free memory: {free_mem}GB")
         # Each embedder is assumed to store its embedding in adata.obsm (e.g., adata.obsm[f'X_{method}'])
 
     # Split the data into training and validation sets
     train_adata, val_adata = split_anndata(adata, train_size=0.9)
-
+    del adata  # Free up memory
     # Save the processed AnnData objects to disk
     train_path = processed_paths["train"]
     val_path = processed_paths["val"]
@@ -150,9 +157,7 @@ def process_file_to_dataset(
     train_adata.write_h5ad(train_path)
     val_adata.write_h5ad(val_path)
     logger.info("Saved processed files to: %s and %s", train_path, val_path)
-    del adata
-    del train_adata
-    del val_adata
+    del train_adata, val_adata  # Free up memory
     datasets_all = {}  # These will be pushed as seperate datasets
     if isinstance(dataset_types, str):
         dataset_types = [dataset_types]

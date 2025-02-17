@@ -4,7 +4,8 @@
 #SBATCH --error=test_dataset.err
 #SBATCH --partition=gpu
 #SBATCH --gres=gpu:1            # Request amount of GPUs
-#SBATCH --time=02:00:00         # Max job time of 1 hour
+#SBATCH --mem=400G               # Request amount of memory
+#SBATCH --time=04:00:00         # Max job time of 1 hour
 
 echo "Starting job"
 # Source the setup script to ensure the environment is ready

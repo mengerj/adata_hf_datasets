@@ -7,7 +7,7 @@ import os
 import psutil
 import scanpy as sc
 from datetime import datetime
-
+import numpy as np
 logger = logging.getLogger(__name__)
 
 
@@ -144,18 +144,20 @@ class PCAEmbedder(BaseAnnDataEmbedder):
         self.embedding_dim = embedding_dim
         self._pca_model = None
 
-    def fit(self, adata: anndata.AnnData, **kwargs) -> None:
+    def fit(self, adata: anndata.AnnData, n_cells = 5000, **kwargs) -> None:
         """Fit a PCA model to the AnnData object's .X matrix."""
-        logger.info("Fitting PCA with %d components.", self.embedding_dim)
+        logger.info("Fitting PCA with %d components on %d.", self.embedding_dim, n_cells)
         from sklearn.decomposition import PCA
-
+        adata_sub = adata.copy()
+        #get a random subset of cells with random
+        adata_sub = adata_sub[np.random.choice(adata_sub.shape[0], n_cells, replace=False), :]
         logger.info("Normalizing and log-transforming data before PCA.")
-        sc.pp.normalize_total(adata, target_sum=1e4)
-        sc.pp.log1p(adata)
-        sc.pp.scale(adata)
+        sc.pp.normalize_total(adata_sub, target_sum=1e4)
+        sc.pp.log1p(adata_sub)
+        sc.pp.scale(adata_sub)
         # transfer adata.X back to sparse matrix after scaling
-        adata.X = sp.csr_matrix(adata.X)
-        X = adata.X.toarray() if sp.issparse(adata.X) else adata.X
+        adata_sub.X = sp.csr_matrix(adata_sub.X)
+        X = adata_sub.X.toarray() if sp.issparse(adata_sub.X) else adata_sub.X
         self._pca_model = PCA(n_components=self.embedding_dim)  # Pass kwargs to PCA
         self._pca_model.fit(X)
 
@@ -178,28 +180,29 @@ class SCVIEmbedder(BaseAnnDataEmbedder):
         self.model = None
 
     def fit(
-        self, adata: anndata.AnnData, batch_key, layer_key="counts", **kwargs
+        self, adata: anndata.AnnData, batch_key, layer_key="counts", n_cells = 5000, **kwargs
     ) -> None:
         """Set up scVI model and train on the data."""
         try:
             import scvi
         except ImportError:
             raise ImportError("scvi-tools is not installed.")
-
         logger.info("Setting up scVI model with embedding_dim=%d", self.embedding_dim)
+        adata_sub = adata.copy()
+        adata_sub = adata_sub[np.random.choice(adata_sub.shape[0], n_cells, replace=False), :]
         try:
-            _ = adata.layers[layer_key]
+            _ = adata_sub.layers[layer_key]
         except KeyError:
-            adata.layers[layer_key] = adata.X.copy()
+            adata_sub.layers[layer_key] = adata_sub.X.copy()
         # Replace NaN values with "other"
-        adata.obs[batch_key] = adata.obs[batch_key].cat.add_categories("other")
-        adata.obs[batch_key] = adata.obs[batch_key].fillna("other")
+        adata_sub.obs[batch_key] = adata_sub.obs[batch_key].cat.add_categories("other")
+        adata_sub.obs[batch_key] = adata_sub.obs[batch_key].fillna("other")
 
-        scvi.model.SCVI.setup_anndata(adata, layer=layer_key, batch_key=batch_key)
-        self.model = scvi.model.SCVI(adata, n_latent=self.embedding_dim, **kwargs)
+        scvi.model.SCVI.setup_anndata(adata_sub, layer=layer_key, batch_key=batch_key)
+        self.model = scvi.model.SCVI(adata_sub, n_latent=self.embedding_dim, **kwargs)
 
         logger.info("Training scVI model.")
-        self.model.train(max_epochs=10)
+        self.model.train(max_epochs=400)
 
     def embed(self, adata: anndata.AnnData, obsm_key: str = "X_scvi", **kwargs) -> None:
         """Use the trained scVI model to compute latent embeddings for each cell."""
