@@ -144,7 +144,7 @@ class PCAEmbedder(BaseAnnDataEmbedder):
         self.embedding_dim = embedding_dim
         self._pca_model = None
 
-    def fit(self, adata: anndata.AnnData, **kwargs, n_cells = 5000) -> None:
+    def fit(self, adata: anndata.AnnData, n_cells = 5000, **kwargs) -> None:
         """Fit a PCA model to the AnnData object's .X matrix."""
         logger.info("Fitting PCA with %d components on %d.", self.embedding_dim, n_cells)
         from sklearn.decomposition import PCA
