@@ -6,7 +6,12 @@ import anndata
 from datasets import Dataset
 from typing import Optional
 import tempfile
-from .file_utils import save_and_upload_adata, download_file_from_share_link
+from .file_utils import (
+    save_and_upload_adata,
+    download_file_from_share_link,
+    save_embedding_data,
+)
+import os
 
 logger = logging.getLogger(__name__)
 
@@ -131,7 +136,12 @@ class AnnDataSetConstructor:
             logger.error(error_msg)
             raise ValueError(error_msg)
 
-    def add_anndata(self, file_path: str, sample_id_key: str | None = None) -> None:
+    def add_anndata(
+        self,
+        file_path: str,
+        sample_id_key: str | None = None,
+        obsm_keys: Optional[list[str]] = None,
+    ) -> None:
         """
         Add an AnnData file to the constructor.
 
@@ -141,6 +151,9 @@ class AnnDataSetConstructor:
             Path to the AnnData file.
         sample_id_key : str or None, optional
             Optional key in adata.obs to use for sample IDs. If None, uses adata.obs.index.
+        obsm_keys : list of str, optional
+            List of .obsm keys to extract from the AnnData object.
+            Each extracted layer is stored separately and its reference is added to the dataset record.
 
         Raises
         ------
@@ -193,11 +206,68 @@ class AnnDataSetConstructor:
                 logger.error("Failed to upload file to Nextcloud: %s", file_path)
                 raise ValueError(f"Nextcloud upload failed for {file_path}")
 
-        self.anndata_files.append(
-            {"local_path": file_path, "dataset_path": path_for_dataset}
-        )
+        # Create a record for this file.
+        file_record = {"local_path": file_path, "dataset_path": path_for_dataset}
+
+        # If obsm keys are provided, extract and save the embedding objects.
+        if obsm_keys:
+            extracted = self.extract_obsm_layers(adata, obsm_keys)
+            file_record["embeddings"] = {}
+            for key, df in extracted.items():
+                # Construct a local file name for the embedding.
+                embedding_local_path = (
+                    f"{os.path.splitext(file_path)[0]}_{key}_embedding.npz"
+                )
+                share_link = None
+                share_link = save_embedding_data(
+                    df,
+                    embedding_local_path,
+                    self.nextcloud_config if self.store_nextcloud else None,
+                    create_share_link=True if self.store_nextcloud else False,
+                )
+                # Store the share link if available, otherwise the local path.
+                file_record["embeddings"][key] = (
+                    share_link if share_link else embedding_local_path
+                )
+
+        self.anndata_files.append(file_record)
         self.sample_id_keys[file_path] = sample_id_key
         logger.info("Successfully added AnnData file: %s", file_path)
+
+    def extract_obsm_layers(
+        adata: anndata.AnnData, obsm_keys: list[str]
+    ) -> dict[str, pd.DataFrame]:
+        """
+        Extract specified .obsm layers from an AnnData object and return each as a pandas DataFrame.
+
+        Parameters
+        ----------
+        adata : anndata.AnnData
+            AnnData object containing .obsm layers.
+        obsm_keys : list of str
+            List of keys corresponding to the .obsm layers to extract.
+
+        Returns
+        -------
+        dict of {str: pd.DataFrame}
+            Dictionary mapping each obsm key to a DataFrame. Each DataFrame uses adata.obs.index as its index,
+            and its rows are the numeric vectors from the corresponding obsm layer.
+
+        Raises
+        ------
+        KeyError
+            If any provided obsm key is not found in adata.obsm.
+        """
+        extracted = {}
+        for key in obsm_keys:
+            if key not in adata.obsm.keys():
+                error_msg = f"obsm key '{key}' not found in the AnnData object."
+                logger.error(error_msg)
+                raise KeyError(error_msg)
+            # Create a DataFrame: rows are samples (using adata.obs.index) and columns are the embedding dimensions.
+            df = pd.DataFrame(adata.obsm[key], index=adata.obs.index)
+            extracted[key] = df
+        return extracted
 
     def buildCaption(self, file_path: str) -> None:
         """

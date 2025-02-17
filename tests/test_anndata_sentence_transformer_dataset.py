@@ -6,7 +6,7 @@ import anndata
 import numpy as np
 import pandas as pd
 import pytest
-
+import os
 # If your class is in a separate module, you'd import from there, e.g.:
 # from my_package.my_module import AnnDataSetConstructor
 
@@ -134,6 +134,32 @@ def dataset_constructor(mock_caption_constructor):
     return AnnDataSetConstructor(
         caption_constructor=mock_caption_constructor, negatives_per_sample=1
     )
+
+
+@pytest.fixture
+def ann_data_file_with_obsm(tmp_path):
+    """
+    Create an AnnData object with a defined .obsm layer ("X_emb") and write it to a .h5ad file.
+
+    The "X_emb" layer will be a random numeric matrix of shape (3, 4) and the sample IDs will be the index.
+
+    Returns
+    -------
+    str
+        The path to the .h5ad file.
+    """
+    # Create a small AnnData with an obsm embedding layer
+    obs_data = pd.DataFrame(index=[f"S{i}" for i in range(3)])
+    var_data = pd.DataFrame(index=[f"G{i}" for i in range(6)])
+    X = np.random.rand(3, 6)
+    adata = anndata.AnnData(X=X, obs=obs_data, var=var_data)
+
+    # Create an embedding layer "X_emb" with shape (3, 4)
+    adata.obsm["X_emb"] = np.random.rand(3, 4)
+
+    file_path = str(tmp_path / "test_with_obsm.h5ad")
+    adata.write_h5ad(file_path)
+    return file_path
 
 
 def test_add_anndata_success(dataset_constructor, ann_data_file_1, ann_data_file_2):
@@ -417,6 +443,7 @@ def test_duplicate_sample_ids_in_custom_key(dataset_constructor, tmp_path):
     assert "Currently using adata.obs['custom_id']" in err_msg
     assert "Example duplicates: ['ID1', 'ID2']" in err_msg
 
+
 def test_get_dataset_multiplets(dataset_constructor, ann_data_file_1, ann_data_file_2):
     """
     Test that get_dataset returns records with separate negative columns
@@ -428,7 +455,7 @@ def test_get_dataset_multiplets(dataset_constructor, ann_data_file_1, ann_data_f
 
     dataset_constructor.add_anndata(ann_data_file_1)
     dataset_constructor.add_anndata(ann_data_file_2)
-    
+
     ds = dataset_constructor.get_dataset()
     ds_list = ds[:]  # Convert Dataset to a list of dicts
 
@@ -441,6 +468,7 @@ def test_get_dataset_multiplets(dataset_constructor, ann_data_file_1, ann_data_f
         assert "negative_2" in entry
         # Optionally, check that anchor equals positive (if that is the intended behavior)
 
+
 def test_get_dataset_single(dataset_constructor, ann_data_file_1):
     """
     Test that get_dataset returns records with only 'anndata_ref'
@@ -448,7 +476,7 @@ def test_get_dataset_single(dataset_constructor, ann_data_file_1):
     """
     dataset_constructor.dataset_format = "single"
     dataset_constructor.add_anndata(ann_data_file_1)
-    
+
     ds = dataset_constructor.get_dataset()
     ds_list = ds[:]  # Convert Dataset to a list of dicts
 
@@ -457,6 +485,7 @@ def test_get_dataset_single(dataset_constructor, ann_data_file_1):
         assert "anndata_ref" in entry
         # There should be no extra keys like 'anchor', 'positive', or negatives
         assert len(entry.keys()) == 1
+
 
 def test_invalid_dataset_format(mock_caption_constructor):
     """
@@ -468,6 +497,92 @@ def test_invalid_dataset_format(mock_caption_constructor):
         AnnDataSetConstructor(
             caption_constructor=mock_caption_constructor,
             negatives_per_sample=1,
-            dataset_format="invalid_format"
+            dataset_format="invalid_format",
         )
     assert "dataset_format must be one of" in str(excinfo.value)
+
+
+def test_obsm_extraction_and_storage(
+    dataset_constructor, ann_data_file_with_obsm, tmp_path
+):
+    """
+    Test that when providing obsm_keys to add_anndata:
+
+    - The file record contains an "embeddings" key with a mapping for each obsm key.
+    - The stored embedding file is saved locally.
+    - Loading the embedding file returns an npz file containing "data" and "sample_ids"
+      with expected shape and type.
+    """
+    logger.info("Testing extraction and storage of obsm layers.")
+
+    # Use a temporary directory to store embedding files
+    # (nextcloud is not configured in this test so local saving is used)
+    obsm_keys = ["X_emb"]
+    dataset_constructor.add_anndata(ann_data_file_with_obsm, obsm_keys=obsm_keys)
+
+    # Retrieve the file record for the added anndata file.
+    file_record = dataset_constructor.anndata_files[0]
+    assert "embeddings" in file_record, (
+        "Expected an 'embeddings' key in the file record."
+    )
+    assert "X_emb" in file_record["embeddings"], (
+        "Expected key 'X_emb' in embeddings record."
+    )
+
+    embedding_path = file_record["embeddings"]["X_emb"]
+    # Check that the file exists locally.
+    assert os.path.exists(embedding_path), (
+        f"Embedding file {embedding_path} does not exist."
+    )
+
+    # Load the saved npz file.
+    loaded = np.load(embedding_path)
+    # The saved file should have arrays 'data' and 'sample_ids'
+    assert "data" in loaded, "Expected 'data' key in saved embedding file."
+    assert "sample_ids" in loaded, "Expected 'sample_ids' key in saved embedding file."
+
+    # Verify the shape of the embedding matrix.
+    # Our obsm["X_emb"] was of shape (3, 4)
+    data_array = loaded["data"]
+    sample_ids = loaded["sample_ids"]
+    assert data_array.shape == (3, 4), f"Expected shape (3, 4), got {data_array.shape}."
+
+    # Verify that sample_ids match the AnnData obs index
+    adata = anndata.read_h5ad(ann_data_file_with_obsm)
+    expected_ids = adata.obs.index.astype(str).to_numpy()
+    # In case the sample_ids were saved as bytes (depending on numpy version), decode if needed.
+    if sample_ids.dtype.type is np.bytes_:
+        sample_ids = np.array([s.decode("utf-8") for s in sample_ids])
+    np.testing.assert_array_equal(sample_ids, expected_ids)
+
+
+def test_dataset_includes_embedding_reference(
+    dataset_constructor, ann_data_file_with_obsm
+):
+    """
+    Test that get_dataset returns records where the anndata_ref JSON includes the original file path.
+
+    Although the embeddings are stored separately, the dataset record should still reference the
+    original AnnData file (or its share link) so downstream tasks can retrieve full objects if needed.
+    """
+    logger.info(
+        "Testing dataset records include the full AnnData reference even when embeddings are extracted."
+    )
+
+    # Add anndata with obsm extraction.
+    obsm_keys = ["X_emb"]
+    dataset_constructor.add_anndata(ann_data_file_with_obsm, obsm_keys=obsm_keys)
+
+    # Build the dataset.
+    ds = dataset_constructor.get_dataset()
+    ds_list = ds[:]  # Convert to list of dicts
+
+    # Check each record for the "anndata_ref" key and that it contains a valid JSON with "file_path"
+    for record in ds_list:
+        assert "anndata_ref" in record, "Dataset record missing 'anndata_ref'."
+        metadata = json.loads(record["anndata_ref"])
+        assert "file_path" in metadata, "Metadata missing 'file_path'."
+        # Optionally, check that the file_path is the one we added.
+        assert metadata["file_path"] == ann_data_file_with_obsm, (
+            f"Expected file_path to be {ann_data_file_with_obsm}, got {metadata['file_path']}."
+        )
