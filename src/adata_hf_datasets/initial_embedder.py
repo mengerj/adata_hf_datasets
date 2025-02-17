@@ -145,7 +145,7 @@ class PCAEmbedder(BaseAnnDataEmbedder):
         self.embedding_dim = embedding_dim
         self._pca_model = None
 
-    def fit(self, adata: anndata.AnnData, n_cells=5000, **kwargs) -> None:
+    def fit(self, adata: anndata.AnnData, n_cells=10000, **kwargs) -> None:
         """Fit a PCA model to the AnnData object's .X matrix."""
         logger.info(
             "Fitting PCA with %d components on %d.", self.embedding_dim, n_cells
@@ -212,7 +212,7 @@ class SCVIEmbedder(BaseAnnDataEmbedder):
         # setup while adata for inference
 
         logger.info("Training scVI model.")
-        self.model.train(max_epochs=10)
+        self.model.train(max_epochs=50)
 
     def embed(self, adata: anndata.AnnData, obsm_key: str = "X_scvi", **kwargs) -> None:
         """Use the trained scVI model to compute latent embeddings for each cell."""
