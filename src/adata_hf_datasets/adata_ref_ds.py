@@ -327,7 +327,8 @@ class AnnDataSetConstructor:
 
     def _create_negative_example(
         self,
-        current_dataset_path: str,
+        current_file_path: str,
+        current_file_record: str,
         current_sample: str,
         current_caption: str,
         all_captions: dict[str, dict[str, str]],
@@ -337,8 +338,10 @@ class AnnDataSetConstructor:
 
         Parameters
         ----------
-        current_dataset_path : str
+        current_file_path : str
             Path used to reference the current file.
+        current_file_record : str
+            Dictionary containing the paths to the whole file and the embedding matrices of the current sample.
         current_sample : str
             ID of the current sample.
         current_caption : str
@@ -364,7 +367,7 @@ class AnnDataSetConstructor:
             # Check if this is actually a negative example
             if neg_caption != current_caption:
                 sentence_1 = json.dumps(
-                    {"file_path": current_dataset_path, "sample_id": current_sample}
+                    {"file_record": current_file_record, "sample_id": current_sample}
                 )
                 sentence_2 = neg_caption
                 label = 0.0
@@ -436,7 +439,9 @@ class AnnDataSetConstructor:
         # Build dataset entries based on the selected format
         for files in self.anndata_files:
             file_path = files["local_path"]
-            dataset_path = files["dataset_path"]
+            file_record = {
+                k: v for k, v in files.items() if k != "local_path"
+            }  # create a new dict to avoid in place modification
 
             # No caption retrieval for "single" dataset format
             caption_dict = (
@@ -451,7 +456,7 @@ class AnnDataSetConstructor:
                 else self._get_sample_ids(file_path)
             ):
                 ref_json = json.dumps(
-                    {"file_path": dataset_path, "sample_id": sample_id}
+                    {"file_record": file_record, "sample_id": sample_id}
                 )
 
                 if self.dataset_format == "pairs":
@@ -467,7 +472,11 @@ class AnnDataSetConstructor:
                     # Negative examples (if any)
                     for _ in range(self.negatives_per_sample):
                         neg_ref, neg_caption, neg_label = self._create_negative_example(
-                            dataset_path, sample_id, caption_dict, all_captions
+                            file_path,
+                            file_record,
+                            sample_id,
+                            caption_dict,
+                            all_captions,
                         )
                         hf_data.append(
                             {
@@ -484,7 +493,11 @@ class AnnDataSetConstructor:
                     }
                     for idx in range(1, self.negatives_per_sample + 1):
                         _, neg_caption, _ = self._create_negative_example(
-                            dataset_path, sample_id, caption_dict, all_captions
+                            file_path,
+                            file_record,
+                            sample_id,
+                            caption_dict,
+                            all_captions,
                         )
                         entry[f"negative_{idx}"] = neg_caption
                     hf_data.append(entry)
