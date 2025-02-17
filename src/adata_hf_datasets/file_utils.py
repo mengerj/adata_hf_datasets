@@ -149,6 +149,14 @@ def save_embedding_data(
     # Save using NumPy compressed format.
     np.savez_compressed(local_path, data=data.values, sample_ids=data.index.values)
     logger.info("Embedding data saved locally at %s", local_path)
+    # extract the filename and the last dir name from the local path
+    filename = os.path.basename(local_path)
+    last_dir = os.path.basename(os.path.dirname(local_path))
+    # replace the filename from the remotepath with the dir and the new filename
+    old_file_name = os.path.basename(nextcloud_config["remote_path"])
+    remote_path = nextcloud_config["remote_path"].replace(
+        old_file_name, last_dir + "/" + filename
+    )
 
     # Upload to Nextcloud if configured.
     if nextcloud_config:
@@ -160,22 +168,23 @@ def save_embedding_data(
                 get_share_link,
             )
 
+            # create a remote path by replacing
             create_nested_directories(
                 nextcloud_config["url"],
                 os.getenv(nextcloud_config["username"]),
                 os.getenv(nextcloud_config["password"]),
-                nextcloud_config["remote_path"],
+                remote_path,
             )
             response = upload_file_to_nextcloud(
                 local_path,
                 nextcloud_config["url"],
                 os.getenv(nextcloud_config["username"]),
                 os.getenv(nextcloud_config["password"]),
-                nextcloud_config["remote_path"],
+                remote_path,
             )
             logger.info(
                 "Embedding file uploaded to Nextcloud at %s with status code %s",
-                nextcloud_config["remote_path"],
+                remote_path,
                 response.status_code,
             )
         except Exception as e:
@@ -186,7 +195,7 @@ def save_embedding_data(
                 nextcloud_config["url"],
                 os.getenv(nextcloud_config["username"]),
                 os.getenv(nextcloud_config["password"]),
-                nextcloud_config["remote_path"],
+                remote_path,
             )
             return share_url
     return None
