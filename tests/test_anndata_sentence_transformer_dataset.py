@@ -549,8 +549,11 @@ def test_dataset_includes_embedding_reference(
     for record in ds:
         assert "anndata_ref" in record, "Dataset record missing 'anndata_ref'."
         metadata = json.loads(record["anndata_ref"])
-        assert "file_path" in metadata, "Metadata missing 'file_path'."
+        assert "file_record" in metadata, "Metadata missing 'file_record'."
         # Optionally, check that the file_path is the one we added.
-        assert metadata["file_path"] == ann_data_file_with_obsm, (
-            f"Expected file_path to be {ann_data_file_with_obsm}, got {metadata['file_path']}."
+        assert metadata["file_record"]["dataset_path"] == ann_data_file_with_obsm, (
+            f"Expected file_path to be {ann_data_file_with_obsm}, got {metadata['file_record']}."
+        )
+        assert metadata["file_record"]["embeddings"]["X_emb"] is not None, (
+            "Expected 'X_emb' key in embeddings record."
         )
