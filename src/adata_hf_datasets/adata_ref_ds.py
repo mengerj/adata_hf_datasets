@@ -235,7 +235,7 @@ class AnnDataSetConstructor:
         logger.info("Successfully added AnnData file: %s", file_path)
 
     def extract_obsm_layers(
-        adata: anndata.AnnData, obsm_keys: list[str]
+        self, adata: anndata.AnnData, obsm_keys: list[str]
     ) -> dict[str, pd.DataFrame]:
         """
         Extract specified .obsm layers from an AnnData object and return each as a pandas DataFrame.

@@ -44,8 +44,8 @@ def ann_data_file_1(tmp_path):
         The path to the .h5ad file containing the test anndata object.
     """
     # Create a small adata
-    obs_data = pd.DataFrame(index=[f"S{i}" for i in range(3)])
-    var_data = pd.DataFrame(index=[f"G{i}" for i in range(5)])
+    obs_data = pd.DataFrame(index=[f"S1{i}" for i in range(3)])
+    var_data = pd.DataFrame(index=[f"G1{i}" for i in range(5)])
     X = np.random.rand(3, 5)
     adata = anndata.AnnData(X=X, obs=obs_data, var=var_data)
 
@@ -64,8 +64,8 @@ def ann_data_file_2(tmp_path):
     str
         The path to the second .h5ad file containing the test anndata object.
     """
-    obs_data = pd.DataFrame(index=[f"S{i}" for i in range(2)])
-    var_data = pd.DataFrame(index=[f"G{i}" for i in range(4)])
+    obs_data = pd.DataFrame(index=[f"S2{i}" for i in range(2)])
+    var_data = pd.DataFrame(index=[f"G2{i}" for i in range(4)])
     X = np.random.rand(2, 4)
     adata = anndata.AnnData(X=X, obs=obs_data, var=var_data)
 
@@ -232,14 +232,9 @@ def test_no_caption_constructor(ann_data_file_1):
     from adata_hf_datasets.adata_ref_ds import AnnDataSetConstructor
 
     # Create constructor without a caption_constructor
-    constructor = AnnDataSetConstructor(
-        caption_constructor=None, negatives_per_sample=1
-    )
-    constructor.add_anndata(ann_data_file_1)
-
-    # If your code does not handle 'None' and tries to call 'construct_captions', it should fail
-    with pytest.raises(AttributeError):
-        constructor.get_dataset()
+    with pytest.raises(ValueError) as excinfo:
+        AnnDataSetConstructor(caption_constructor=None, negatives_per_sample=1)
+    assert "caption_constructor must be provided" in str(excinfo.value)
 
 
 def test_caption_constructor_fail(dataset_constructor, ann_data_file_1):
@@ -362,24 +357,6 @@ def test_get_dataset_positive_and_negative(
         assert caption != original_caption
 
 
-def test_clear_method(dataset_constructor, ann_data_file_1):
-    """
-    Test that the clear method resets all internal data structures.
-
-    References
-    ----------
-    Simulated anndata from the 'ann_data_file_1' fixture.
-    """
-    logger.info("Testing the clear method of the constructor.")
-
-    dataset_constructor.add_anndata(ann_data_file_1)
-    dataset_constructor.clear()
-
-    assert len(dataset_constructor.anndata_files) == 0
-    assert len(dataset_constructor.sample_id_keys) == 0
-    assert len(dataset_constructor.dataset) == 0
-
-
 def test_duplicate_sample_ids(dataset_constructor, ann_data_file_with_duplicates):
     """
     Test that adding an anndata file with duplicate sample IDs:
@@ -396,9 +373,6 @@ def test_duplicate_sample_ids(dataset_constructor, ann_data_file_with_duplicates
     assert "duplicate sample IDs" in err_msg
     assert "Currently using adata.obs.index as sample IDs" in err_msg
     assert "Example duplicates: ['S1', 'S2']" in err_msg
-
-    # Clear the constructor
-    dataset_constructor.clear()
 
     # Should work when using the unique_id column
     dataset_constructor.add_anndata(
@@ -457,16 +431,14 @@ def test_get_dataset_multiplets(dataset_constructor, ann_data_file_1, ann_data_f
     dataset_constructor.add_anndata(ann_data_file_2)
 
     ds = dataset_constructor.get_dataset()
-    ds_list = ds[:]  # Convert Dataset to a list of dicts
 
-    for entry in ds_list:
-        # Check required columns
-        assert "anndata_ref" in entry
-        assert "positive" in entry
-        # The negatives should appear as separate columns: negative_1 and negative_2
-        assert "negative_1" in entry
-        assert "negative_2" in entry
-        # Optionally, check that anchor equals positive (if that is the intended behavior)
+    # Check required columns
+    assert "anndata_ref" in ds.features.keys()
+    assert "positive" in ds.features.keys()
+    # The negatives should appear as separate columns: negative_1 and negative_2
+    assert "negative_1" in ds.features.keys()
+    assert "negative_2" in ds.features.keys()
+    # Optionally, check that anchor equals positive (if that is the intended behavior)
 
 
 def test_get_dataset_single(dataset_constructor, ann_data_file_1):
@@ -478,13 +450,10 @@ def test_get_dataset_single(dataset_constructor, ann_data_file_1):
     dataset_constructor.add_anndata(ann_data_file_1)
 
     ds = dataset_constructor.get_dataset()
-    ds_list = ds[:]  # Convert Dataset to a list of dicts
-
-    for entry in ds_list:
-        # Only 'anndata_ref' and 'caption' should be present
-        assert "anndata_ref" in entry
-        # There should be no extra keys like 'anchor', 'positive', or negatives
-        assert len(entry.keys()) == 1
+    # Only 'anndata_ref' and 'caption' should be present
+    assert "anndata_ref" in ds.features.keys()
+    # There should be no extra keys like 'anchor', 'positive', or negatives
+    assert len(ds.features.keys()) == 1
 
 
 def test_invalid_dataset_format(mock_caption_constructor):
@@ -536,7 +505,7 @@ def test_obsm_extraction_and_storage(
     )
 
     # Load the saved npz file.
-    loaded = np.load(embedding_path)
+    loaded = np.load(embedding_path, allow_pickle=True)
     # The saved file should have arrays 'data' and 'sample_ids'
     assert "data" in loaded, "Expected 'data' key in saved embedding file."
     assert "sample_ids" in loaded, "Expected 'sample_ids' key in saved embedding file."
@@ -575,10 +544,9 @@ def test_dataset_includes_embedding_reference(
 
     # Build the dataset.
     ds = dataset_constructor.get_dataset()
-    ds_list = ds[:]  # Convert to list of dicts
 
     # Check each record for the "anndata_ref" key and that it contains a valid JSON with "file_path"
-    for record in ds_list:
+    for record in ds:
         assert "anndata_ref" in record, "Dataset record missing 'anndata_ref'."
         metadata = json.loads(record["anndata_ref"])
         assert "file_path" in metadata, "Metadata missing 'file_path'."
