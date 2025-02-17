@@ -200,26 +200,19 @@ class SCVIEmbedder(BaseAnnDataEmbedder):
         except ImportError:
             raise ImportError("scvi-tools is not installed.")
         logger.info("Setting up scVI model with embedding_dim=%d", self.embedding_dim)
-        adata_sub = adata.copy()
-        if n_cells < adata_sub.shape[0]:
-            adata_sub = adata_sub[
-                np.random.choice(adata_sub.shape[0], n_cells, replace=False), :
-            ]
-        try:
-            _ = adata_sub.layers[layer_key]
-        except KeyError:
-            adata_sub.layers[layer_key] = adata_sub.X.copy()
-        # Replace NaN values with "other"
-        adata_sub.obs[batch_key] = adata_sub.obs[batch_key].cat.add_categories("other")
-        adata_sub.obs[batch_key] = adata_sub.obs[batch_key].fillna("other")
+        adata.obs[batch_key] = adata.obs[batch_key].cat.add_categories("other")
+        adata.obs[batch_key] = adata.obs[batch_key].fillna("other")
 
-        scvi.model.SCVI.setup_anndata(adata_sub, layer=layer_key, batch_key=batch_key)
-        self.model = scvi.model.SCVI(adata_sub, n_latent=self.embedding_dim, **kwargs)
+        try:
+            _ = adata.layers[layer_key]
+        except KeyError:
+            adata.layers[layer_key] = adata.X.copy()
+        scvi.model.SCVI.setup_anndata(adata, layer=layer_key, batch_key=batch_key)
+        self.model = scvi.model.SCVI(adata, n_latent=self.embedding_dim, **kwargs)
         # setup while adata for inference
-        self.model.setup_anndata(adata, layer=layer_key, batch_key=batch_key)
 
         logger.info("Training scVI model.")
-        self.model.train(max_epochs=400)
+        self.model.train(max_epochs=10)
 
     def embed(self, adata: anndata.AnnData, obsm_key: str = "X_scvi", **kwargs) -> None:
         """Use the trained scVI model to compute latent embeddings for each cell."""
