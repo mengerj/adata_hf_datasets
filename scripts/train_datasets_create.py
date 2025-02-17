@@ -123,13 +123,6 @@ def process_file_to_dataset(
     """
     logger.info("Processing file: %s", file_path)
     adata = anndata.read_h5ad(file_path)
-    # Log the current amount of memory in GB
-    used_mem = psutil.virtual_memory().percent / (1024 ** 3)
-    free_mem = psutil.virtual_memory().available / (1024 ** 3)
-    # Log in GB
-    logger.info(f"Memory usage: {used_mem}GB, Free memory: {free_mem}GB")
-    
-        # Clean up unnecessary fields to free up memory
     # Remove zero variance cells and genes
     adata = remove_zero_variance_cells(adata)
     adata = remove_zero_variance_genes(adata)
