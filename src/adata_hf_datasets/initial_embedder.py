@@ -154,9 +154,10 @@ class PCAEmbedder(BaseAnnDataEmbedder):
 
         adata_sub = adata.copy()
         # get a random subset of cells with random
-        adata_sub = adata_sub[
-            np.random.choice(adata_sub.shape[0], n_cells, replace=False), :
-        ]
+        if n_cells < adata_sub.shape[0]:
+            adata_sub = adata_sub[
+                np.random.choice(adata_sub.shape[0], n_cells, replace=False), :
+            ]
         logger.info("Normalizing and log-transforming data before PCA.")
         sc.pp.normalize_total(adata_sub, target_sum=1e4)
         sc.pp.log1p(adata_sub)
@@ -200,9 +201,10 @@ class SCVIEmbedder(BaseAnnDataEmbedder):
             raise ImportError("scvi-tools is not installed.")
         logger.info("Setting up scVI model with embedding_dim=%d", self.embedding_dim)
         adata_sub = adata.copy()
-        adata_sub = adata_sub[
-            np.random.choice(adata_sub.shape[0], n_cells, replace=False), :
-        ]
+        if n_cells < adata_sub.shape[0]:
+            adata_sub = adata_sub[
+                np.random.choice(adata_sub.shape[0], n_cells, replace=False), :
+            ]
         try:
             _ = adata_sub.layers[layer_key]
         except KeyError:
