@@ -140,8 +140,8 @@ def process_file_to_dataset(
         embedder.fit(adata, batch_key=batch_key)
         adata = embedder.embed(adata)
         # Log the current amount of memory in GB
-        used_mem = psutil.virtual_memory().percent / (1024 ** 3)
-        free_mem = psutil.virtual_memory().available / (1024 ** 3)
+        used_mem = psutil.virtual_memory().percent / (1024**3)
+        free_mem = psutil.virtual_memory().available / (1024**3)
         # Log in GB
         logger.info(f"Memory usage: {used_mem}GB, Free memory: {free_mem}GB")
         # Each embedder is assumed to store its embedding in adata.obsm (e.g., adata.obsm[f'X_{method}'])
@@ -177,7 +177,9 @@ def process_file_to_dataset(
                 negatives_per_sample=negatives_per_sample,
                 dataset_format=dataset_type,
             )
-            constructor.add_anndata(file_path=path)
+            constructor.add_anndata(
+                file_path=path, obsm_keys=[f"X_{method}" for method in methods]
+            )
             dataset = constructor.get_dataset()
             local_dataset[split] = dataset
         datasets_all[dataset_type] = local_dataset
