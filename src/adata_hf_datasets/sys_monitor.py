@@ -408,13 +408,18 @@ class SystemMonitor:
         self.logger.info(
             f"Event logged at {time.strftime('%H:%M:%S', time.localtime(current_time))}: {message}. "
             f"CPU Usage (current/mean/max %): "
-            f"{current_cpu:.2f}/{mean_cpu:.2f}/{max_cpu:.2f} | "
-            if current_cpu is not None
-            else "N/A/N/A/N/A | "
-            f"Memory Usage (current/mean/max GB): "
-            f"{current_mem:.2f}/{mean_mem:.2f}/{max_mem:.2f} "
-            if current_mem is not None
-            else f"N/A/N/A/N/A {gpu_message}"
+            + (
+                f"{current_cpu:.2f}/{mean_cpu:.2f}/{max_cpu:.2f} | "
+                if current_cpu is not None
+                else "N/A/N/A/N/A | "
+            )
+            + "Memory Usage (current/mean/max GB): "
+            + (
+                f"{current_mem:.2f}/{mean_mem:.2f}/{max_mem:.2f} "
+                if current_mem is not None
+                else "N/A/N/A/N/A "
+            )
+            + gpu_message
         )
 
     def save(self, save_dir):
