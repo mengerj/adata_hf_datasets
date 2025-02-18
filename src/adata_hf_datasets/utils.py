@@ -3,7 +3,6 @@ import logging
 import anndata
 import numpy as np
 import pandas as pd
-import scanpy as sc
 
 from datetime import datetime
 import os
@@ -14,6 +13,7 @@ from huggingface_hub import HfApi
 import tempfile
 from string import Template
 import scipy.sparse as sp
+import pybiomart
 
 logger = logging.getLogger(__name__)
 
@@ -73,21 +73,21 @@ def add_ensembl_ids(
         return
 
     logger.info("Fetching biomart annotations from Ensembl. This may take a moment...")
-    biomart_df = sc.queries.biomart_annotations(
-        species, ["ensembl_gene_id", "external_gene_name"], use_cache=use_cache
+
+    dataset = pybiomart.Dataset(
+        name="hsapiens_gene_ensembl", host="http://www.ensembl.org"
     )
+    biomart_df = dataset.query(attributes=["ensembl_gene_id", "external_gene_name"])
 
     # Drop duplicates so that each gene symbol maps to exactly one Ensembl ID
-    biomart_df = biomart_df.drop_duplicates(subset="external_gene_name").set_index(
-        "external_gene_name"
-    )
+    biomart_df = biomart_df.drop_duplicates(subset="Gene name").set_index("Gene name")
 
     # Prepare list for the mapped Ensembl IDs
     gene_symbols = adata.var_names
     ensembl_ids = []
     for symbol in gene_symbols:
         if symbol in biomart_df.index:
-            ensembl_ids.append(biomart_df.loc[symbol, "ensembl_gene_id"])
+            ensembl_ids.append(biomart_df.loc[symbol, "Gene stable ID"])
         else:
             ensembl_ids.append("")
     # check that ensembl_ids contain "ENSG" IDs and are of same length adata
