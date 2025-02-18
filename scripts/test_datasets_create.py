@@ -35,12 +35,17 @@ from adata_hf_datasets.initial_embedder import InitialEmbedder
 from adata_hf_datasets.adata_ref_ds import AnnDataSetConstructor
 from adata_hf_datasets.utils import setup_logging, annotate_and_push_dataset
 from adata_hf_datasets.sys_monitor import SystemMonitor
-import logging
 
 logger = setup_logging()
 
+
 def process_test_file(
-    file_path, batch_key, methods, nextcloud_config, negatives_per_sample, monitor,
+    file_path,
+    batch_key,
+    methods,
+    nextcloud_config,
+    negatives_per_sample,
+    monitor,
 ):
     """
     Process a test AnnData file: apply embeddings using the provided batch_key,
@@ -152,9 +157,10 @@ def main():
 
     for file_path in test_files:
         file_name = file_path.name
-        if file_name not in ["tabula_sapiens.h5ad"]:
+        if file_name in ["immgen.h5ad"]:
             continue
         # Get the batch key for this file from the JSON mapping.
+        monitor.log_event(f"Processing test file: {file_name}")
         # If not provided, you can choose a default (here, "tech")
         batch_key = batch_keys_mapping.get(file_name, "batch")
         test_name, test_dataset = process_test_file(

@@ -3,13 +3,11 @@ import os
 import platform
 import threading
 import time
-from pathlib import Path
 
 import matplotlib.pyplot as plt
 import numpy as np
 import psutil
 import pynvml
-import torch
 
 
 class SystemMonitor:
@@ -29,10 +27,10 @@ class SystemMonitor:
         self.interval = interval
         self.gpu_indices = [gpu_idx] if isinstance(gpu_idx, int) else gpu_idx
         self.num_cpus = psutil.cpu_count(logical=True)
-        self.cpu_usage = []      # List of tuples (timestamp, total_cpu_usage_percent)
-        self.cpu_per_core = []   # List of tuples (timestamp, avg_cpu_usage_per_core)
-        self.memory_usage = []   # List of tuples (timestamp, used_memory_gb relative to baseline)
-        self.disk_io = []        # List of tuples (timestamp, read_rate_mb_s, write_rate_mb_s)
+        self.cpu_usage = []  # List of tuples (timestamp, total_cpu_usage_percent)
+        self.cpu_per_core = []  # List of tuples (timestamp, avg_cpu_usage_per_core)
+        self.memory_usage = []  # List of tuples (timestamp, used_memory_gb relative to baseline)
+        self.disk_io = []  # List of tuples (timestamp, read_rate_mb_s, write_rate_mb_s)
         self.total_memory = psutil.virtual_memory().total / (1024**3)  # GB
         self.baseline_memory = psutil.virtual_memory().used / (1024**3)  # GB
         self._stop_event = threading.Event()
@@ -43,7 +41,7 @@ class SystemMonitor:
 
         # GPU Monitoring Initialization
         self.gpu_available = False
-        self.gpu_usage = []         # For each GPU, list of tuples (timestamp, usage_percent)
+        self.gpu_usage = []  # For each GPU, list of tuples (timestamp, usage_percent)
         self.gpu_memory_usage = []  # For each GPU, list of tuples (timestamp, used_memory_gb)
         self.gpu_name = None
 
@@ -87,22 +85,29 @@ class SystemMonitor:
 
             for handle in self.gpu_handles:
                 name = pynvml.nvmlDeviceGetName(handle)
-                self.gpu_names.append(name.decode() if isinstance(name, bytes) else name)
+                self.gpu_names.append(
+                    name.decode() if isinstance(name, bytes) else name
+                )
 
             self.gpu_total_memory = [
-                pynvml.nvmlDeviceGetMemoryInfo(handle).total / (1024**3) for handle in self.gpu_handles
+                pynvml.nvmlDeviceGetMemoryInfo(handle).total / (1024**3)
+                for handle in self.gpu_handles
             ]
             self.gpu_available = True
             self.gpu_type = "NVIDIA"
             self.logger.info(f"Detected NVIDIA GPUs: {self.gpu_names}")
 
         except Exception as e:
-            self.logger.info(f"No NVIDIA GPU detected or pynvml not installed: {str(e)}")
+            self.logger.info(
+                f"No NVIDIA GPU detected or pynvml not installed: {str(e)}"
+            )
             if platform.system() == "Darwin" and "macOS" in platform.platform():
                 self.gpu_available = False
                 self.gpu_type = "Apple"
                 self.gpu_name = "Apple Integrated GPU"
-                self.logger.info("Detected Apple GPU. But not supported for detailed monitoring.")
+                self.logger.info(
+                    "Detected Apple GPU. But not supported for detailed monitoring."
+                )
             else:
                 self.logger.info("No supported GPU detected.")
                 self.gpu_available = False
@@ -132,10 +137,22 @@ class SystemMonitor:
             # Measure disk I/O
             disk_io_counters = psutil.disk_io_counters()
             if prev_disk_io_counters is not None:
-                read_bytes = disk_io_counters.read_bytes - prev_disk_io_counters.read_bytes
-                write_bytes = disk_io_counters.write_bytes - prev_disk_io_counters.write_bytes
-                read_rate_mb_s = (read_bytes / (1024**2)) / interval_duration if interval_duration > 0 else 0
-                write_rate_mb_s = (write_bytes / (1024**2)) / interval_duration if interval_duration > 0 else 0
+                read_bytes = (
+                    disk_io_counters.read_bytes - prev_disk_io_counters.read_bytes
+                )
+                write_bytes = (
+                    disk_io_counters.write_bytes - prev_disk_io_counters.write_bytes
+                )
+                read_rate_mb_s = (
+                    (read_bytes / (1024**2)) / interval_duration
+                    if interval_duration > 0
+                    else 0
+                )
+                write_rate_mb_s = (
+                    (write_bytes / (1024**2)) / interval_duration
+                    if interval_duration > 0
+                    else 0
+                )
             else:
                 read_rate_mb_s = write_rate_mb_s = 0
 
@@ -184,6 +201,7 @@ class SystemMonitor:
         self._thread.join()
         if self.gpu_available and self.gpu_type == "NVIDIA":
             import pynvml
+
             pynvml.nvmlShutdown()
 
     def summarize(self):
@@ -228,20 +246,32 @@ class SystemMonitor:
             if self.gpu_type == "NVIDIA":
                 summary["gpu_metrics"] = []
                 for idx, (usage_data, memory_data, name, total_memory) in enumerate(
-                    zip(self.gpu_usage, self.gpu_memory_usage, self.gpu_names, self.gpu_total_memory, strict=False)
+                    zip(
+                        self.gpu_usage,
+                        self.gpu_memory_usage,
+                        self.gpu_names,
+                        self.gpu_total_memory,
+                        strict=False,
+                    )
                 ):
                     gpu_summary = {}
                     gpu_usages = [usage for _, usage in usage_data if usage is not None]
-                    gpu_memory_usages = [usage for _, usage in memory_data if usage is not None]
+                    gpu_memory_usages = [
+                        usage for _, usage in memory_data if usage is not None
+                    ]
 
                     if gpu_usages:
                         gpu_summary["usage_mean"] = sum(gpu_usages) / len(gpu_usages)
                         gpu_summary["usage_max"] = max(gpu_usages)
                     if gpu_memory_usages:
-                        gpu_summary["memory_usage_mean"] = sum(gpu_memory_usages) / len(gpu_memory_usages)
+                        gpu_summary["memory_usage_mean"] = sum(gpu_memory_usages) / len(
+                            gpu_memory_usages
+                        )
                         gpu_summary["memory_usage_max"] = max(gpu_memory_usages)
 
-                    gpu_summary["name"] = name.decode() if isinstance(name, bytes) else name
+                    gpu_summary["name"] = (
+                        name.decode() if isinstance(name, bytes) else name
+                    )
                     gpu_summary["total_memory"] = total_memory
                     gpu_summary["gpu_id"] = idx
 
@@ -269,7 +299,9 @@ class SystemMonitor:
         print(
             f"Core Utilization (mean/max % per core): {summary['core_usage_mean']:.2f}/{summary['core_usage_max']:.2f}% on {self.num_cpus} cores"
         )
-        print(f"Memory Usage (mean/max GB): {summary['memory_usage_mean']:.2f}/{summary['memory_usage_max']:.2f} GB")
+        print(
+            f"Memory Usage (mean/max GB): {summary['memory_usage_mean']:.2f}/{summary['memory_usage_max']:.2f} GB"
+        )
         print(f"Total System Memory: {summary['total_memory']:.2f} GB")
         print("Baseline Memory Usage: {:.2f} GB".format(summary["baseline_memory"]))
         print(
@@ -284,7 +316,9 @@ class SystemMonitor:
             for gpu in summary["gpu_metrics"]:
                 print(f"\nGPU {gpu['gpu_id']}: {gpu['name']}")
                 if gpu.get("usage_mean") is not None:
-                    print(f"  Usage (mean/max %): {gpu['usage_mean']:.2f}/{gpu['usage_max']:.2f}%")
+                    print(
+                        f"  Usage (mean/max %): {gpu['usage_mean']:.2f}/{gpu['usage_max']:.2f}%"
+                    )
                 if gpu.get("memory_usage_mean") is not None:
                     print(
                         f"  Memory Usage (mean/max GB): {gpu['memory_usage_mean']:.2f}/{gpu['memory_usage_max']:.2f} GB"
@@ -341,16 +375,24 @@ class SystemMonitor:
         if self.gpu_available and self.gpu_type == "NVIDIA":
             for idx, usage_data in enumerate(self.gpu_usage):
                 if usage_data:
-                    gpu_usages = [usage for ts, usage in usage_data if usage is not None]
+                    gpu_usages = [
+                        usage for ts, usage in usage_data if usage is not None
+                    ]
                     current_gpu = usage_data[-1][1] if gpu_usages else None
                     mean_gpu = sum(gpu_usages) / len(gpu_usages) if gpu_usages else None
                     max_gpu = max(gpu_usages) if gpu_usages else None
 
                     memory_data = self.gpu_memory_usage[idx]
                     if memory_data:
-                        gpu_mem_usages = [mem for ts, mem in memory_data if mem is not None]
+                        gpu_mem_usages = [
+                            mem for ts, mem in memory_data if mem is not None
+                        ]
                         current_gpu_mem = memory_data[-1][1] if gpu_mem_usages else None
-                        mean_gpu_mem = sum(gpu_mem_usages) / len(gpu_mem_usages) if gpu_mem_usages else None
+                        mean_gpu_mem = (
+                            sum(gpu_mem_usages) / len(gpu_mem_usages)
+                            if gpu_mem_usages
+                            else None
+                        )
                         max_gpu_mem = max(gpu_mem_usages) if gpu_mem_usages else None
                     else:
                         current_gpu_mem = mean_gpu_mem = max_gpu_mem = None
@@ -365,9 +407,14 @@ class SystemMonitor:
 
         self.logger.info(
             f"Event logged at {time.strftime('%H:%M:%S', time.localtime(current_time))}: {message}. "
-            f"CPU Usage (current/mean/max %): {current_cpu:.2f}/{mean_cpu:.2f}/{max_cpu:.2f} | "
-            f"Memory Usage (current/mean/max GB): {current_mem:.2f}/{mean_mem:.2f}/{max_mem:.2f}"
-            f"{gpu_message}"
+            f"CPU Usage (current/mean/max %): "
+            f"{current_cpu:.2f}/{mean_cpu:.2f}/{max_cpu:.2f} | "
+            if current_cpu is not None
+            else "N/A/N/A/N/A | "
+            f"Memory Usage (current/mean/max GB): "
+            f"{current_mem:.2f}/{mean_mem:.2f}/{max_mem:.2f} "
+            if current_mem is not None
+            else f"N/A/N/A/N/A {gpu_message}"
         )
 
     def save(self, save_dir):
@@ -406,10 +453,15 @@ class SystemMonitor:
             max_labels = 10  # Maximum number of x-axis labels
             if num_points <= max_labels:
                 tick_positions = range(num_points)
-                tick_labels = [time.strftime(time_format, time.localtime(ts)) for ts in timestamps]
+                tick_labels = [
+                    time.strftime(time_format, time.localtime(ts)) for ts in timestamps
+                ]
             else:
                 tick_positions = np.linspace(0, num_points - 1, max_labels, dtype=int)
-                tick_labels = [time.strftime(time_format, time.localtime(timestamps[pos])) for pos in tick_positions]
+                tick_labels = [
+                    time.strftime(time_format, time.localtime(timestamps[pos]))
+                    for pos in tick_positions
+                ]
             return tick_positions, tick_labels
 
         # For plotting events, we define a helper to get relative times given a list of (timestamp, value) pairs.
@@ -429,8 +481,15 @@ class SystemMonitor:
             for i, event in enumerate(self.events, start=1):
                 # Find relative time closest to event timestamp
                 event_rel = event["timestamp"] - timestamps[0]
-                plt.axvline(x=event_rel, color='red', linestyle='--', alpha=0.7)
-                plt.text(event_rel, max(cpu_usages)*0.95, f"t{i}", rotation=90, verticalalignment='top', color='red')
+                plt.axvline(x=event_rel, color="red", linestyle="--", alpha=0.7)
+                plt.text(
+                    event_rel,
+                    max(cpu_usages) * 0.95,
+                    f"t{i}",
+                    rotation=90,
+                    verticalalignment="top",
+                    color="red",
+                )
             plt.xlabel("Time (s)")
             plt.ylabel("CPU Usage (% per core)")
             plt.title(f"Avg. CPU Usage Over Time ({self.num_cpus} cores)")
@@ -454,8 +513,15 @@ class SystemMonitor:
             # Annotate events
             for i, event in enumerate(self.events, start=1):
                 event_rel = event["timestamp"] - timestamps[0]
-                plt.axvline(x=event_rel, color='red', linestyle='--', alpha=0.7)
-                plt.text(event_rel, max(mem_usages)*0.95, f"t{i}", rotation=90, verticalalignment='top', color='red')
+                plt.axvline(x=event_rel, color="red", linestyle="--", alpha=0.7)
+                plt.text(
+                    event_rel,
+                    max(mem_usages) * 0.95,
+                    f"t{i}",
+                    rotation=90,
+                    verticalalignment="top",
+                    color="red",
+                )
             plt.xlabel("Time (s)")
             plt.ylabel("Memory Usage (GB)")
             plt.title("Memory Usage Over Time")
@@ -479,8 +545,15 @@ class SystemMonitor:
             # Annotate events
             for i, event in enumerate(self.events, start=1):
                 event_rel = event["timestamp"] - timestamps[0]
-                plt.axvline(x=event_rel, color='red', linestyle='--', alpha=0.7)
-                plt.text(event_rel, max(max(read_rates), max(write_rates))*0.95, f"t{i}", rotation=90, verticalalignment='top', color='red')
+                plt.axvline(x=event_rel, color="red", linestyle="--", alpha=0.7)
+                plt.text(
+                    event_rel,
+                    max(max(read_rates), max(write_rates)) * 0.95,
+                    f"t{i}",
+                    rotation=90,
+                    verticalalignment="top",
+                    color="red",
+                )
             plt.xlabel("Time (s)")
             plt.ylabel("Disk I/O Rate (MB/s)")
             plt.title("Disk I/O Rates Over Time")
@@ -506,8 +579,15 @@ class SystemMonitor:
                     # Annotate events for this GPU plot
                     for i, event in enumerate(self.events, start=1):
                         event_rel = event["timestamp"] - timestamps[0]
-                        plt.axvline(x=event_rel, color='red', linestyle='--', alpha=0.7)
-                        plt.text(event_rel, max(gpu_usages)*0.95, f"t{i}", rotation=90, verticalalignment='top', color='red')
+                        plt.axvline(x=event_rel, color="red", linestyle="--", alpha=0.7)
+                        plt.text(
+                            event_rel,
+                            max(gpu_usages) * 0.95,
+                            f"t{i}",
+                            rotation=90,
+                            verticalalignment="top",
+                            color="red",
+                        )
             num_ticks = min(10, len(rel_times_gpu))
             tick_positions = np.linspace(0, max_rel_time, num_ticks)
             tick_labels = [f"{t:.0f}s" for t in tick_positions]
@@ -526,7 +606,9 @@ class SystemMonitor:
                 plt.show()
 
         # --- GPU Memory Usage Plot ---
-        if self.gpu_available and any(memory_data for memory_data in self.gpu_memory_usage):
+        if self.gpu_available and any(
+            memory_data for memory_data in self.gpu_memory_usage
+        ):
             plt.figure(figsize=(12, 6))
             max_rel_time = 0
             for idx, memory_data in enumerate(self.gpu_memory_usage):
@@ -534,11 +616,20 @@ class SystemMonitor:
                     timestamps, gpu_mem_usages = zip(*memory_data, strict=False)
                     rel_times_gpu = [t - timestamps[0] for t in timestamps]
                     max_rel_time = max(max_rel_time, rel_times_gpu[-1])
-                    plt.plot(rel_times_gpu, gpu_mem_usages, label=f"{self.gpu_names[idx]}")
+                    plt.plot(
+                        rel_times_gpu, gpu_mem_usages, label=f"{self.gpu_names[idx]}"
+                    )
                     for i, event in enumerate(self.events, start=1):
                         event_rel = event["timestamp"] - timestamps[0]
-                        plt.axvline(x=event_rel, color='red', linestyle='--', alpha=0.7)
-                        plt.text(event_rel, max(gpu_mem_usages)*0.95, f"t{i}", rotation=90, verticalalignment='top', color='red')
+                        plt.axvline(x=event_rel, color="red", linestyle="--", alpha=0.7)
+                        plt.text(
+                            event_rel,
+                            max(gpu_mem_usages) * 0.95,
+                            f"t{i}",
+                            rotation=90,
+                            verticalalignment="top",
+                            color="red",
+                        )
             num_ticks = min(10, len(rel_times_gpu))
             tick_positions = np.linspace(0, max_rel_time, num_ticks)
             tick_labels = [f"{t:.0f}s" for t in tick_positions]
