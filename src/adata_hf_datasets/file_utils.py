@@ -422,7 +422,6 @@ def download_figshare_data(
     download_dir: str = ".",
     figshare_id: str = "12420968",
     base_url="https://api.figshare.com/v2",
-    out_format: str = "h5ad",
     wanted_file_name: str | None = None,
 ):
     """Download the data from Figshare and split it into train and test sets.
@@ -435,8 +434,6 @@ def download_figshare_data(
         The Figshare ID of the dataset.
     base_url : str, optional
         The base URL of the Figshare API.
-    out_format : str, optional
-        The format to save the data, either "h5ad" or "zarr".
     wanted_file_name: str, optional
         If you only want to download a certain file. Otherwise all files in the remote directory will be downloaded.
     """
