@@ -68,24 +68,43 @@ The anndata reference is a json string which contains a share_link to the remotl
 import json
 import anndata
 import requests
+import numpy as np
 
-# hf makes a
-adata_ref = json.loads(dataset["train]["anndata_ref"][0])
-share_link = adata_ref["file_path"]
+adata_ref = json.loads(dataset["train"]["anndata_ref"][0])
+#caption = dataset["train"]["caption"] #For dataset_type "pairs"
+#caption = dataset["train"]["positive"] #For dataset_type "multiplet"
+adata_share_link = adata_ref["file_record"]["dataset_path"]
+embedding_matrix_share_link = adata_ref["file_record"]["embeddings"]["X_scvi"] #directly access a seperatly stored embedding matrix
 sample_id = adata_ref["sample_id"]
-save_path = "data"
-response = requests.get(share_link)
+save_path = "../data/adata.h5ad"
+#read the whole adata
+response = requests.get(adata_share_link)
 if response.status_code == 200:
   # Write the content of the response to a local file
   with open(save_path, "wb") as file:
     file.write(response.content)
 else:
   print("Failed to read data from share link.")
-
 adata = anndata.read_h5ad(save_path)
+
+save_path = "../data/embedding.npy"
 # The dataset contains several pre-computed embeddings. Lets for example get the embeddings computed with "scvi":
 sample_idx = adata.obs.index == sample_id
 sample_embedding = adata.obsm["X_scvi"][sample_idx]
 # This sample embedding is described the the caption (loaded above)
-# Note that you can cache your anndata files so you don't need to reload the anndata object if the filepath is still the same.
+# The same embedding should be obtainable from the embedding matrix directly
+response = requests.get(embedding_matrix_share_link)
+if response.status_code == 200:
+  # Write the content of the response to a local file
+  with open(save_path, "wb") as file:
+    file.write(response.content)
+else:
+  print("Failed to read data from share link.")
+# Load the .npz file
+npzfile = np.load(save_path, allow_pickle=True)
+# Extract arrays from the keys
+emb_matrix = npzfile["data"]       # Assuming "data" contains your embeddings
+sample_ids = npzfile["sample_ids"] # Assuming "sample_ids" contains the corresponding sample IDs
+sample_embedding_2 = emb_matrix[sample_ids == sample_id]
+assert np.allclose(sample_embedding, sample_embedding_2)
 ```

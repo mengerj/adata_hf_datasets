@@ -6,7 +6,12 @@ import anndata
 from datasets import Dataset
 from typing import Optional
 import tempfile
-from .file_utils import save_and_upload_adata, download_file_from_share_link
+from .file_utils import (
+    save_and_upload_adata,
+    download_file_from_share_link,
+    save_embedding_data,
+)
+import os
 
 logger = logging.getLogger(__name__)
 
@@ -131,7 +136,12 @@ class AnnDataSetConstructor:
             logger.error(error_msg)
             raise ValueError(error_msg)
 
-    def add_anndata(self, file_path: str, sample_id_key: str | None = None) -> None:
+    def add_anndata(
+        self,
+        file_path: str,
+        sample_id_key: str | None = None,
+        obsm_keys: Optional[list[str]] = None,
+    ) -> None:
         """
         Add an AnnData file to the constructor.
 
@@ -141,6 +151,9 @@ class AnnDataSetConstructor:
             Path to the AnnData file.
         sample_id_key : str or None, optional
             Optional key in adata.obs to use for sample IDs. If None, uses adata.obs.index.
+        obsm_keys : list of str, optional
+            List of .obsm keys to extract from the AnnData object.
+            Each extracted layer is stored separately and its reference is added to the dataset record.
 
         Raises
         ------
@@ -193,11 +206,68 @@ class AnnDataSetConstructor:
                 logger.error("Failed to upload file to Nextcloud: %s", file_path)
                 raise ValueError(f"Nextcloud upload failed for {file_path}")
 
-        self.anndata_files.append(
-            {"local_path": file_path, "dataset_path": path_for_dataset}
-        )
+        # Create a record for this file.
+        file_record = {"local_path": file_path, "dataset_path": path_for_dataset}
+
+        # If obsm keys are provided, extract and save the embedding objects.
+        if obsm_keys:
+            extracted = self.extract_obsm_layers(adata, obsm_keys)
+            file_record["embeddings"] = {}
+            for key, df in extracted.items():
+                # Construct a local file name for the embedding.
+                embedding_local_path = (
+                    f"{os.path.splitext(file_path)[0]}_{key}_embedding.npz"
+                )
+                share_link = None
+                share_link = save_embedding_data(
+                    df,
+                    embedding_local_path,
+                    self.nextcloud_config if self.store_nextcloud else None,
+                    create_share_link=True if self.store_nextcloud else False,
+                )
+                # Store the share link if available, otherwise the local path.
+                file_record["embeddings"][key] = (
+                    share_link if share_link else embedding_local_path
+                )
+
+        self.anndata_files.append(file_record)
         self.sample_id_keys[file_path] = sample_id_key
         logger.info("Successfully added AnnData file: %s", file_path)
+
+    def extract_obsm_layers(
+        self, adata: anndata.AnnData, obsm_keys: list[str]
+    ) -> dict[str, pd.DataFrame]:
+        """
+        Extract specified .obsm layers from an AnnData object and return each as a pandas DataFrame.
+
+        Parameters
+        ----------
+        adata : anndata.AnnData
+            AnnData object containing .obsm layers.
+        obsm_keys : list of str
+            List of keys corresponding to the .obsm layers to extract.
+
+        Returns
+        -------
+        dict of {str: pd.DataFrame}
+            Dictionary mapping each obsm key to a DataFrame. Each DataFrame uses adata.obs.index as its index,
+            and its rows are the numeric vectors from the corresponding obsm layer.
+
+        Raises
+        ------
+        KeyError
+            If any provided obsm key is not found in adata.obsm.
+        """
+        extracted = {}
+        for key in obsm_keys:
+            if key not in adata.obsm.keys():
+                error_msg = f"obsm key '{key}' not found in the AnnData object."
+                logger.error(error_msg)
+                raise KeyError(error_msg)
+            # Create a DataFrame: rows are samples (using adata.obs.index) and columns are the embedding dimensions.
+            df = pd.DataFrame(adata.obsm[key], index=adata.obs.index)
+            extracted[key] = df
+        return extracted
 
     def buildCaption(self, file_path: str) -> None:
         """
@@ -257,48 +327,52 @@ class AnnDataSetConstructor:
 
     def _create_negative_example(
         self,
-        current_dataset_path: str,
+        current_file_path: str,
+        current_file_record: str,
         current_sample: str,
         current_caption: str,
         all_captions: dict[str, dict[str, str]],
     ) -> tuple[str, str, float]:
-        """
-        Create a negative example by finding a caption that does not match the current sample.
+        """Create a negative example, ensuring it's truly negative."""
 
-        Parameters
-        ----------
-        current_dataset_path : str
-            Path used to reference the current file.
-        current_sample : str
-            ID of the current sample.
-        current_caption : str
-            Caption of the current sample.
-        all_captions : dict
-            Nested dict mapping file paths to {sample_id: caption} dictionaries.
+        possible_negatives = all_captions[
+            current_file_path
+        ]  # Get captions from the same file
+        possible_negative_ids = list(possible_negatives.keys())
+        random.shuffle(
+            possible_negative_ids
+        )  # Shuffle to avoid always picking the same ones.
 
-        Returns
-        -------
-        tuple
-            A tuple (sentence_1, sentence_2, label) where:
-              - sentence_1 : JSON string containing file_path and sample_id (of the current sample).
-              - sentence_2 : The negative caption.
-              - label : 0.0 (indicating a negative example).
-        """
-        while True:
-            # Randomly choose a file
-            neg_file = random.choice(self.anndata_files)["local_path"]
-            # Randomly choose a sample from that file
-            neg_sample = random.choice(list(all_captions[neg_file].keys()))
-            neg_caption = all_captions[neg_file][neg_sample]
-
-            # Check if this is actually a negative example
-            if neg_caption != current_caption:
+        for neg_sample in possible_negative_ids:
+            neg_caption = possible_negatives[neg_sample]
+            if (
+                neg_caption != current_caption and neg_sample != current_sample
+            ):  # Check sample id too
                 sentence_1 = json.dumps(
-                    {"file_path": current_dataset_path, "sample_id": current_sample}
+                    {"file_record": current_file_record, "sample_id": current_sample}
                 )
                 sentence_2 = neg_caption
                 label = 0.0
                 return (sentence_1, sentence_2, label)
+
+        # Handle the case where no true negative is found (rare, but possible)
+        # In this case, choose a negative from a different file.
+        # This is not ideal, but better than returning a positive example.
+        other_files = [
+            f for f in self.anndata_files if f["local_path"] != current_file_path
+        ]
+        if other_files:
+            neg_file = random.choice(other_files)["local_path"]
+            neg_sample = random.choice(list(all_captions[neg_file].keys()))
+            neg_caption = all_captions[neg_file][neg_sample]
+            sentence_1 = json.dumps(
+                {"file_record": current_file_record, "sample_id": current_sample}
+            )
+            sentence_2 = neg_caption
+            label = 0.0
+            return (sentence_1, sentence_2, label)
+        else:
+            raise ValueError("No true negative example could be found.")
 
     def _check_sharelink(self, share_link: str) -> bool:
         """
@@ -366,7 +440,9 @@ class AnnDataSetConstructor:
         # Build dataset entries based on the selected format
         for files in self.anndata_files:
             file_path = files["local_path"]
-            dataset_path = files["dataset_path"]
+            file_record = {
+                k: v for k, v in files.items() if k != "local_path"
+            }  # create a new dict to avoid in place modification
 
             # No caption retrieval for "single" dataset format
             caption_dict = (
@@ -381,7 +457,7 @@ class AnnDataSetConstructor:
                 else self._get_sample_ids(file_path)
             ):
                 ref_json = json.dumps(
-                    {"file_path": dataset_path, "sample_id": sample_id}
+                    {"file_record": file_record, "sample_id": sample_id}
                 )
 
                 if self.dataset_format == "pairs":
@@ -397,7 +473,11 @@ class AnnDataSetConstructor:
                     # Negative examples (if any)
                     for _ in range(self.negatives_per_sample):
                         neg_ref, neg_caption, neg_label = self._create_negative_example(
-                            dataset_path, sample_id, caption_dict, all_captions
+                            file_path,
+                            file_record,
+                            sample_id,
+                            caption_dict,
+                            all_captions,
                         )
                         hf_data.append(
                             {
@@ -414,7 +494,11 @@ class AnnDataSetConstructor:
                     }
                     for idx in range(1, self.negatives_per_sample + 1):
                         _, neg_caption, _ = self._create_negative_example(
-                            dataset_path, sample_id, caption_dict, all_captions
+                            file_path,
+                            file_record,
+                            sample_id,
+                            caption_dict,
+                            all_captions,
                         )
                         entry[f"negative_{idx}"] = neg_caption
                     hf_data.append(entry)

@@ -8,6 +8,7 @@ import psutil
 import scanpy as sc
 from datetime import datetime
 import numpy as np
+
 logger = logging.getLogger(__name__)
 
 
@@ -144,13 +145,19 @@ class PCAEmbedder(BaseAnnDataEmbedder):
         self.embedding_dim = embedding_dim
         self._pca_model = None
 
-    def fit(self, adata: anndata.AnnData, n_cells = 5000, **kwargs) -> None:
+    def fit(self, adata: anndata.AnnData, n_cells=10000, **kwargs) -> None:
         """Fit a PCA model to the AnnData object's .X matrix."""
-        logger.info("Fitting PCA with %d components on %d.", self.embedding_dim, n_cells)
+        logger.info(
+            "Fitting PCA with %d components on %d.", self.embedding_dim, n_cells
+        )
         from sklearn.decomposition import PCA
+
         adata_sub = adata.copy()
-        #get a random subset of cells with random
-        adata_sub = adata_sub[np.random.choice(adata_sub.shape[0], n_cells, replace=False), :]
+        # get a random subset of cells with random
+        if n_cells < adata_sub.shape[0]:
+            adata_sub = adata_sub[
+                np.random.choice(adata_sub.shape[0], n_cells, replace=False), :
+            ]
         logger.info("Normalizing and log-transforming data before PCA.")
         sc.pp.normalize_total(adata_sub, target_sum=1e4)
         sc.pp.log1p(adata_sub)
@@ -180,7 +187,12 @@ class SCVIEmbedder(BaseAnnDataEmbedder):
         self.model = None
 
     def fit(
-        self, adata: anndata.AnnData, batch_key, layer_key="counts", n_cells = 5000, **kwargs
+        self,
+        adata: anndata.AnnData,
+        batch_key,
+        layer_key="counts",
+        n_cells=5000,
+        **kwargs,
     ) -> None:
         """Set up scVI model and train on the data."""
         try:
@@ -188,21 +200,19 @@ class SCVIEmbedder(BaseAnnDataEmbedder):
         except ImportError:
             raise ImportError("scvi-tools is not installed.")
         logger.info("Setting up scVI model with embedding_dim=%d", self.embedding_dim)
-        adata_sub = adata.copy()
-        adata_sub = adata_sub[np.random.choice(adata_sub.shape[0], n_cells, replace=False), :]
-        try:
-            _ = adata_sub.layers[layer_key]
-        except KeyError:
-            adata_sub.layers[layer_key] = adata_sub.X.copy()
-        # Replace NaN values with "other"
-        adata_sub.obs[batch_key] = adata_sub.obs[batch_key].cat.add_categories("other")
-        adata_sub.obs[batch_key] = adata_sub.obs[batch_key].fillna("other")
+        adata.obs[batch_key] = adata.obs[batch_key].cat.add_categories("other")
+        adata.obs[batch_key] = adata.obs[batch_key].fillna("other")
 
-        scvi.model.SCVI.setup_anndata(adata_sub, layer=layer_key, batch_key=batch_key)
-        self.model = scvi.model.SCVI(adata_sub, n_latent=self.embedding_dim, **kwargs)
+        try:
+            _ = adata.layers[layer_key]
+        except KeyError:
+            adata.layers[layer_key] = adata.X.copy()
+        scvi.model.SCVI.setup_anndata(adata, layer=layer_key, batch_key=batch_key)
+        self.model = scvi.model.SCVI(adata, n_latent=self.embedding_dim, **kwargs)
+        # setup while adata for inference
 
         logger.info("Training scVI model.")
-        self.model.train(max_epochs=400)
+        self.model.train(max_epochs=50)
 
     def embed(self, adata: anndata.AnnData, obsm_key: str = "X_scvi", **kwargs) -> None:
         """Use the trained scVI model to compute latent embeddings for each cell."""

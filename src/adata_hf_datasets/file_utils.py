@@ -7,6 +7,9 @@ import xml.etree.ElementTree as ET
 from tqdm import tqdm
 import json
 import anndata as ad
+import pandas as pd
+import numpy as np
+from typing import Optional
 
 
 def download_from_link(url, save_path):
@@ -111,6 +114,92 @@ def save_and_upload_adata(
                 nextcloud_config["remote_path"],
             )
             return share_url
+
+
+def save_embedding_data(
+    data: pd.DataFrame,
+    local_path: str,
+    nextcloud_config: Optional[dict] = None,
+    create_share_link: bool = True,
+) -> Optional[str]:
+    """
+    Save embedding data to a local file and optionally upload it to Nextcloud.
+
+    Parameters
+    ----------
+    data : pd.DataFrame
+        DataFrame with sample IDs as index and embedding vectors as rows.
+    local_path : str
+        Local file path where the embedding data is saved (e.g. ending with .npz).
+    nextcloud_config : dict, optional
+        Nextcloud configuration dictionary.
+    create_share_link : bool, optional
+        Whether to create and return a share link for the file.
+
+    Returns
+    -------
+    str or None
+        The share link URL if the file is uploaded and a link is created, otherwise None.
+
+    Notes
+    -----
+    For simplicity, we use numpy.savez_compressed to store the data.
+    The saved file will contain two arrays: "data" (the embedding matrix) and "sample_ids" (the row labels).
+    """
+    # Save using NumPy compressed format.
+    np.savez_compressed(local_path, data=data.values, sample_ids=data.index.values)
+    logger.info("Embedding data saved locally at %s", local_path)
+    if not nextcloud_config:
+        return None  # dont return a share link if nextcloud config is not provided
+    # extract the filename and the last dir name from the local path
+    filename = os.path.basename(local_path)
+    last_dir = os.path.basename(os.path.dirname(local_path))
+    # replace the filename from the remotepath with the dir and the new filename
+    old_file_name = os.path.basename(nextcloud_config["remote_path"])
+    remote_path = nextcloud_config["remote_path"].replace(
+        old_file_name, last_dir + "/" + filename
+    )
+
+    # Upload to Nextcloud if configured.
+    try:
+        # Import functions from your file utils module.
+        from .file_utils import (
+            create_nested_directories,
+            upload_file_to_nextcloud,
+            get_share_link,
+        )
+
+        # create a remote path by replacing
+        create_nested_directories(
+            nextcloud_config["url"],
+            os.getenv(nextcloud_config["username"]),
+            os.getenv(nextcloud_config["password"]),
+            remote_path,
+        )
+        response = upload_file_to_nextcloud(
+            local_path,
+            nextcloud_config["url"],
+            os.getenv(nextcloud_config["username"]),
+            os.getenv(nextcloud_config["password"]),
+            remote_path,
+        )
+        logger.info(
+            "Embedding file uploaded to Nextcloud at %s with status code %s",
+            remote_path,
+            response.status_code,
+        )
+    except Exception as e:
+        logger.error("Failed to upload embedding data to Nextcloud: %s", e)
+        return None
+    if create_share_link:
+        share_url = get_share_link(
+            nextcloud_config["url"],
+            os.getenv(nextcloud_config["username"]),
+            os.getenv(nextcloud_config["password"]),
+            remote_path,
+        )
+        return share_url
+    return None
 
 
 def upload_file_to_nextcloud(file_path, nextcloud_url, username, password, remote_path):
@@ -334,7 +423,6 @@ def download_figshare_data(
     download_dir: str = ".",
     figshare_id: str = "12420968",
     base_url="https://api.figshare.com/v2",
-    out_format: str = "h5ad",
     wanted_file_name: str | None = None,
 ):
     """Download the data from Figshare and split it into train and test sets.
@@ -347,8 +435,6 @@ def download_figshare_data(
         The Figshare ID of the dataset.
     base_url : str, optional
         The base URL of the Figshare API.
-    out_format : str, optional
-        The format to save the data, either "h5ad" or "zarr".
     wanted_file_name: str, optional
         If you only want to download a certain file. Otherwise all files in the remote directory will be downloaded.
     """
