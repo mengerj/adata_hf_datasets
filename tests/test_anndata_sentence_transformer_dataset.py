@@ -339,7 +339,7 @@ def test_get_dataset_positive_and_negative(
         # parse the JSON string
         metadata = json.loads(ex["anndata_ref"])
         caption = ex["caption"]
-        file_path = metadata["file_path"]
+        file_path = metadata["file_record"]["dataset_path"]
         sample_id = metadata["sample_id"]
 
         adata = anndata.read_h5ad(file_path)
@@ -349,7 +349,7 @@ def test_get_dataset_positive_and_negative(
     for ex in neg_examples:
         metadata = json.loads(ex["anndata_ref"])
         caption = ex["caption"]
-        file_path = metadata["file_path"]
+        file_path = metadata["file_record"]["dataset_path"]
         sample_id = metadata["sample_id"]
 
         adata = anndata.read_h5ad(file_path)
