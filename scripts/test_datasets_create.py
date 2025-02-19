@@ -106,7 +106,9 @@ def process_test_file(
         negatives_per_sample=negatives_per_sample,
         dataset_format="single",
     )
-    constructor.add_anndata(file_path=test_processed_path)
+    constructor.add_anndata(
+        file_path=test_processed_path, obsm_keys=[f"X_{method}" for method in methods]
+    )
     test_dataset = constructor.get_dataset()
     return Path(file_path).stem, test_dataset
 
@@ -157,7 +159,10 @@ def main():
 
     for file_path in test_files:
         file_name = file_path.name
-        if file_name in ["immgen.h5ad"]:
+        if file_name not in [
+            "tabula_sapiens.h5ad",
+            "human_pancreas_norm_complexBatch.h5ad",
+        ]:
             continue
         # Get the batch key for this file from the JSON mapping.
         monitor.log_event(f"Processing test file: {file_name}")
@@ -196,8 +201,8 @@ def main():
             "Test dataset '%s' pushed successfully to repo: %s", test_name, repo_id
         )
         monitor.stop()
-        monitor.save("out")
-        monitor.plot_metrics("out")
+        monitor.save("out/test_datasets_create")
+        monitor.plot_metrics("out/test_datasets_create")
 
 
 if __name__ == "__main__":
