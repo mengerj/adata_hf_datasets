@@ -11,4 +11,5 @@ data/
 *logs*
 *.err
 *.out
+out/
 *.DS_Store
