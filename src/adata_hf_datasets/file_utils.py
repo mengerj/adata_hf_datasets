@@ -149,6 +149,8 @@ def save_embedding_data(
     # Save using NumPy compressed format.
     np.savez_compressed(local_path, data=data.values, sample_ids=data.index.values)
     logger.info("Embedding data saved locally at %s", local_path)
+    if not nextcloud_config:
+        return None  # dont return a share link if nextcloud config is not provided
     # extract the filename and the last dir name from the local path
     filename = os.path.basename(local_path)
     last_dir = os.path.basename(os.path.dirname(local_path))
@@ -159,45 +161,44 @@ def save_embedding_data(
     )
 
     # Upload to Nextcloud if configured.
-    if nextcloud_config:
-        try:
-            # Import functions from your file utils module.
-            from .file_utils import (
-                create_nested_directories,
-                upload_file_to_nextcloud,
-                get_share_link,
-            )
+    try:
+        # Import functions from your file utils module.
+        from .file_utils import (
+            create_nested_directories,
+            upload_file_to_nextcloud,
+            get_share_link,
+        )
 
-            # create a remote path by replacing
-            create_nested_directories(
-                nextcloud_config["url"],
-                os.getenv(nextcloud_config["username"]),
-                os.getenv(nextcloud_config["password"]),
-                remote_path,
-            )
-            response = upload_file_to_nextcloud(
-                local_path,
-                nextcloud_config["url"],
-                os.getenv(nextcloud_config["username"]),
-                os.getenv(nextcloud_config["password"]),
-                remote_path,
-            )
-            logger.info(
-                "Embedding file uploaded to Nextcloud at %s with status code %s",
-                remote_path,
-                response.status_code,
-            )
-        except Exception as e:
-            logger.error("Failed to upload embedding data to Nextcloud: %s", e)
-            return None
-        if create_share_link:
-            share_url = get_share_link(
-                nextcloud_config["url"],
-                os.getenv(nextcloud_config["username"]),
-                os.getenv(nextcloud_config["password"]),
-                remote_path,
-            )
-            return share_url
+        # create a remote path by replacing
+        create_nested_directories(
+            nextcloud_config["url"],
+            os.getenv(nextcloud_config["username"]),
+            os.getenv(nextcloud_config["password"]),
+            remote_path,
+        )
+        response = upload_file_to_nextcloud(
+            local_path,
+            nextcloud_config["url"],
+            os.getenv(nextcloud_config["username"]),
+            os.getenv(nextcloud_config["password"]),
+            remote_path,
+        )
+        logger.info(
+            "Embedding file uploaded to Nextcloud at %s with status code %s",
+            remote_path,
+            response.status_code,
+        )
+    except Exception as e:
+        logger.error("Failed to upload embedding data to Nextcloud: %s", e)
+        return None
+    if create_share_link:
+        share_url = get_share_link(
+            nextcloud_config["url"],
+            os.getenv(nextcloud_config["username"]),
+            os.getenv(nextcloud_config["password"]),
+            remote_path,
+        )
+        return share_url
     return None
 
 
