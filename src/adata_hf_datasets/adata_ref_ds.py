@@ -333,45 +333,46 @@ class AnnDataSetConstructor:
         current_caption: str,
         all_captions: dict[str, dict[str, str]],
     ) -> tuple[str, str, float]:
-        """
-        Create a negative example by finding a caption that does not match the current sample.
+        """Create a negative example, ensuring it's truly negative."""
 
-        Parameters
-        ----------
-        current_file_path : str
-            Path used to reference the current file.
-        current_file_record : str
-            Dictionary containing the paths to the whole file and the embedding matrices of the current sample.
-        current_sample : str
-            ID of the current sample.
-        current_caption : str
-            Caption of the current sample.
-        all_captions : dict
-            Nested dict mapping file paths to {sample_id: caption} dictionaries.
+        possible_negatives = all_captions[
+            current_file_path
+        ]  # Get captions from the same file
+        possible_negative_ids = list(possible_negatives.keys())
+        random.shuffle(
+            possible_negative_ids
+        )  # Shuffle to avoid always picking the same ones.
 
-        Returns
-        -------
-        tuple
-            A tuple (sentence_1, sentence_2, label) where:
-              - sentence_1 : JSON string containing file_path and sample_id (of the current sample).
-              - sentence_2 : The negative caption.
-              - label : 0.0 (indicating a negative example).
-        """
-        while True:
-            # Randomly choose a file
-            neg_file = random.choice(self.anndata_files)["local_path"]
-            # Randomly choose a sample from that file
-            neg_sample = random.choice(list(all_captions[neg_file].keys()))
-            neg_caption = all_captions[neg_file][neg_sample]
-
-            # Check if this is actually a negative example
-            if neg_caption != current_caption:
+        for neg_sample in possible_negative_ids:
+            neg_caption = possible_negatives[neg_sample]
+            if (
+                neg_caption != current_caption and neg_sample != current_sample
+            ):  # Check sample id too
                 sentence_1 = json.dumps(
                     {"file_record": current_file_record, "sample_id": current_sample}
                 )
                 sentence_2 = neg_caption
                 label = 0.0
                 return (sentence_1, sentence_2, label)
+
+        # Handle the case where no true negative is found (rare, but possible)
+        # In this case, choose a negative from a different file.
+        # This is not ideal, but better than returning a positive example.
+        other_files = [
+            f for f in self.anndata_files if f["local_path"] != current_file_path
+        ]
+        if other_files:
+            neg_file = random.choice(other_files)["local_path"]
+            neg_sample = random.choice(list(all_captions[neg_file].keys()))
+            neg_caption = all_captions[neg_file][neg_sample]
+            sentence_1 = json.dumps(
+                {"file_record": current_file_record, "sample_id": current_sample}
+            )
+            sentence_2 = neg_caption
+            label = 0.0
+            return (sentence_1, sentence_2, label)
+        else:
+            raise ValueError("No true negative example could be found.")
 
     def _check_sharelink(self, share_link: str) -> bool:
         """
