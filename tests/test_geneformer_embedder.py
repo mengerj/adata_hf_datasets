@@ -94,10 +94,20 @@ def test_geneformer_embedder_embedding():
         patch("geneformer.TranscriptomeTokenizer.tokenize_data", return_value=None),
         patch("geneformer.EmbExtractor.extract_embs", return_value=mock_embeddings),
     ):
-        embedder.embed(adata)
+        adata = embedder.embed(adata)
 
-    assert "X_pp" in adata.obsm
-    assert adata.obsm["X_pp"].shape == (10, 512)  # Expected embedding shape
+    assert "X_geneformer" in adata.obsm
+    assert adata.obsm["X_geneformer"].shape == (10, 512)  # Expected embedding shape
+    # ------------------- Order Verification -------------------
+
+    # 1. Extract the original sample_index from mock_embeddings before it's dropped
+    original_order = mock_embeddings["sample_index"].values
+
+    # 2. Reorder the rows of the embedding matrix according to original_order
+    reordered_embeddings = adata.obsm["X_geneformer"][original_order, :]
+
+    # 3. Assert that the reordered embeddings match the original mock_embeddings (without the sample_index column)
+    np.testing.assert_array_equal(reordered_embeddings, mock_embeddings.iloc[:, :-1])
 
 
 def test_initial_embedder_geneformer():
