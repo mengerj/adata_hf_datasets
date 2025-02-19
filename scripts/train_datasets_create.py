@@ -14,10 +14,10 @@ from adata_hf_datasets.utils import (
     remove_zero_variance_cells,
     remove_zero_variance_genes,
 )
+from adata_hf_datasets.sys_monitor import SystemMonitor
 from datasets import DatasetDict, concatenate_datasets
 import logging
 import argparse
-import psutil
 
 # Define project parameters and paths
 project_dir = Path(__file__).resolve().parents[1]
@@ -91,6 +91,7 @@ def process_file_to_dataset(
     nextcloud_config,
     dataset_types,
     negatives_per_sample,
+    monitor,
 ):
     """
     Process a single AnnData file: apply embeddings, split the data, and create Hugging Face datasets.
@@ -114,6 +115,8 @@ def process_file_to_dataset(
         List of dataset types to create (e.g., ["pairs", "multiplets", "single"]).
     negatives_per_sample : int
         Number of negative samples to generate for each positive sample.
+    monitor : SystemMonitor
+        SystemMonitor object to monitor memory usage.
 
     Returns
     -------
@@ -122,6 +125,7 @@ def process_file_to_dataset(
         Data is ultimately sourced from the file at `file_path`.
     """
     logger.info("Processing file: %s", file_path)
+    monitor.log_event(f"Processing file: {file_path}")
     adata = anndata.read_h5ad(file_path)
     # Remove zero variance cells and genes
     adata = remove_zero_variance_cells(adata)
@@ -135,15 +139,12 @@ def process_file_to_dataset(
 
     # Apply each embedding method; embeddings are stored in adata.obsm
     for method in methods:
-        logger.info("Applying embedding method '%s' on %s", method, file_path)
+        monitor.log_event(f"Applying embedding method '{method}' on {file_path}")
         embedder = InitialEmbedder(method=method)
         embedder.fit(adata, batch_key=batch_key)
         adata = embedder.embed(adata)
         # Log the current amount of memory in GB
-        used_mem = psutil.virtual_memory().percent / (1024**3)
-        free_mem = psutil.virtual_memory().available / (1024**3)
-        # Log in GB
-        logger.info(f"Memory usage: {used_mem}GB, Free memory: {free_mem}GB")
+        monitor.log_event(f"Embedding completed for method {method}")
         # Each embedder is assumed to store its embedding in adata.obsm (e.g., adata.obsm[f'X_{method}'])
 
     # Split the data into training and validation sets
@@ -195,6 +196,8 @@ def main():
     """
     setup_logging()
     load_dotenv(override=True)
+    monitor = SystemMonitor(logger=logger)
+    monitor.start()
     args = parse_arguments()  # Get arguments from command line
     geo_n = args.geo_n
     cellxgene_n = args.cellxgene_n
@@ -229,6 +232,7 @@ def main():
             nextcloud_config=nextcloud_config,
             dataset_types=dataset_types,
             negatives_per_sample=negatives_per_sample,
+            monitor=monitor,
         )
 
     for dataset_type in local_ds.keys():
@@ -274,6 +278,10 @@ def main():
             readme_template_name="cellwhisperer_train",
         )
         logger.info("Final concatenated dataset pushed successfully.")
+
+        monitor.stop()
+        monitor.save("out/training_datasets_create")
+        monitor.plot_metrics(save_dir="out/training_datasets_create")
 
 
 if __name__ == "__main__":
