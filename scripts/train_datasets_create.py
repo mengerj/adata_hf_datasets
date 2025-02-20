@@ -201,10 +201,11 @@ def main():
     args = parse_arguments()  # Get arguments from command line
     geo_n = args.geo_n
     cellxgene_n = args.cellxgene_n
-    raw_full_data = {
-        "geo": f"geo_{geo_n}",
-        "cellxgene": f"cellxgene_pseudo_bulk_{cellxgene_n}",
-    }
+    raw_full_data = {}
+    if geo_n != "None" or geo_n is not None:
+        raw_full_data["geo"] = f"geo_{geo_n}"
+    if cellxgene_n != "None" or cellxgene_n is not None:
+        raw_full_data["cellxgene"] = f"cellxgene_pseudo_bulk_{cellxgene_n}"
     # Process each raw file and concatenate its dataset with previous ones split-wise
     for key, data_name in raw_full_data.items():
         file_path = project_dir / "data" / "RNA" / "raw" / "train" / f"{data_name}.h5ad"
