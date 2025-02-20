@@ -471,7 +471,7 @@ class SystemMonitor:
 
         # For plotting events, we define a helper to get relative times given a list of (timestamp, value) pairs.
         def get_relative_times(data):
-            times = [t for t, _ in data]
+            times = [t[0] for t in data]
             base = times[0] if times else 0
             return [t - base for t in times]
 
