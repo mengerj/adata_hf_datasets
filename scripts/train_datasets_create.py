@@ -25,7 +25,6 @@ project_dir = Path(__file__).resolve().parents[1]
 methods = ["scvi"]  # , ["hvg", "pca", "scvi", "geneformer"]
 dataset_types = ["pairs", "multiplets"]
 negatives_per_sample = 2
-batch_keys = {"geo": "study", "cellxgene": "assay"}
 caption_key = "natural_language_annotation"
 push_to_hub = False
 
@@ -56,30 +55,41 @@ logger = logging.getLogger(__name__)
 
 def parse_arguments():
     """
-    Parses command-line arguments for geo_n and cellxgene_n.
+    Parse command-line arguments.
+
+    Parameters
+    ----------
+    None
 
     Returns
     -------
     argparse.Namespace
-        Parsed arguments containing geo_n and cellxgene_n.
+        Parsed arguments containing:
+            files : list of str
+                One or more file paths to AnnData (.h5ad) files.
+            push_to_hub : bool
+                Whether to push the final dataset to Hugging Face Hub (default: False).
     """
     parser = argparse.ArgumentParser(
-        description="Generate training datasets with different dataset sizes."
-    )
-
-    parser.add_argument(
-        "--geo_n",
-        type=str,
-        default="7k",
-        help="Number of samples to take from the GEO dataset (default: '0_2k')",
+        description="Generate training datasets from one or more AnnData files."
     )
     parser.add_argument(
-        "--cellxgene_n",
-        type=str,
-        default="3_5k",
-        help="Number of samples to take from the Cellxgene dataset (default: '0_2k')",
+        "--files",
+        nargs="+",
+        required=True,
+        help="One or more file paths to AnnData (.h5ad) files. Use 'None' to skip a file.",
     )
-
+    parser.add_argument(
+        "--batch_keys",
+        nargs="+",
+        default="study",
+        help="Key in AnnData used for batch correction by scvi embedder.",
+    )
+    parser.add_argument(
+        "--push_to_hub",
+        action="store_true",
+        help="Flag to indicate whether to push the final dataset to Hugging Face Hub.",
+    )
     return parser.parse_args()
 
 
@@ -200,35 +210,27 @@ def main():
     monitor = SystemMonitor(logger=logger)
     monitor.start()
     args = parse_arguments()  # Get arguments from command line
-    geo_n = args.geo_n
-    cellxgene_n = args.cellxgene_n
-    raw_full_data = {}
-    if geo_n != "None" or geo_n is not None:
-        raw_full_data["geo"] = f"geo_{geo_n}"
-    if cellxgene_n != "None" or cellxgene_n is not None:
-        raw_full_data["cellxgene"] = f"cellxgene_pseudo_bulk_{cellxgene_n}"
-    # Process each raw file and concatenate its dataset with previous ones split-wise
-    for key, data_name in raw_full_data.items():
-        file_path = project_dir / "data" / "RNA" / "raw" / "train" / f"{data_name}.h5ad"
+    file_names = []
+    # Loop over dict of files and batch_keys
+    for file_str, batch_key in zip(args.files, args.batch_keys):
+        file_path = Path(file_str)
         if not file_path.exists():
             logger.error("File not found: %s", file_path)
             raise FileNotFoundError(f"File not found: {file_path}")
-            continue
-
+        # collect all names of the files for pushing to hub
+        file_names.append(file_path.stem)
         # Loop over
         processed_paths = {
             "train": str(
-                project_dir / "data" / "RNA" / "processed" / data_name / "train.h5ad"
+                file_path.parent / "processed" / file_path.stem / "train.h5ad"
             ),
-            "val": str(
-                project_dir / "data" / "RNA" / "processed" / data_name / "val.h5ad"
-            ),
+            "val": str(file_path.parent / "processed" / file_path.stem / "val.h5ad"),
         }
         # Process the file and obtain datasets for the train and val splits
         local_ds = process_file_to_dataset(
             file_path=file_path,
             methods=methods,
-            batch_key=batch_keys[key],
+            batch_key=batch_key,
             caption_key=caption_key,
             processed_paths=processed_paths,
             nextcloud_config=nextcloud_config,
@@ -277,7 +279,7 @@ def main():
                 caption_generation=caption_generation,
                 embedding_generation=embedding_generation,
                 dataset_type_explanation=dataset_type_explanation,
-                repo_id=f"jo-mengr/geo_{geo_n}_cellxgene_{cellxgene_n}_{dataset_type}",
+                repo_id=f"jo-mengr/{file_names.join('_')}_{dataset_type}",
                 readme_template_name="cellwhisperer_train",
             )
             logger.info("Final concatenated dataset pushed successfully.")
