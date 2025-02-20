@@ -1,7 +1,7 @@
 #!/bin/bash
-#SBATCH --job-name=train_dataset_100K
-#SBATCH --output=train_dataset_100K.out
-#SBATCH --error=train_dataset_100K.err
+#SBATCH --job-name=train_dataset_350K
+#SBATCH --output=train_dataset_350K.out
+#SBATCH --error=train_dataset_350K.err
 #SBATCH --partition=gpu
 #SBATCH --gres=gpu:1            # Request amount of GPUs
 #SBATCH --mem=400G               # Request amount of memory
@@ -12,4 +12,4 @@ echo "Starting job"
 source .venv/bin/activate
 echo "venv activated"
 # Now run your Python script
-python3 scripts/train_datasets_create.py --geo_n 70k --cellxgene_n 35k
+python3 scripts/train_datasets_create.py --geo_n None --cellxgene_n 350k
