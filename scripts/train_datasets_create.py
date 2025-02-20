@@ -22,11 +22,12 @@ import argparse
 # Define project parameters and paths
 project_dir = Path(__file__).resolve().parents[1]
 
-methods = ["hvg", "pca", "scvi", "geneformer"]
+methods = ["scvi"]  # , ["hvg", "pca", "scvi", "geneformer"]
 dataset_types = ["pairs", "multiplets"]
 negatives_per_sample = 2
 batch_keys = {"geo": "study", "cellxgene": "assay"}
 caption_key = "natural_language_annotation"
+push_to_hub = False
 
 nextcloud_config = {
     "url": "https://nxc-fredato.imbi.uni-freiburg.de",
@@ -69,13 +70,13 @@ def parse_arguments():
     parser.add_argument(
         "--geo_n",
         type=str,
-        default="0_2k",
+        default="7k",
         help="Number of samples to take from the GEO dataset (default: '0_2k')",
     )
     parser.add_argument(
         "--cellxgene_n",
         type=str,
-        default="0_2k",
+        default="3_5k",
         help="Number of samples to take from the Cellxgene dataset (default: '0_2k')",
     )
 
@@ -268,20 +269,23 @@ def main():
         dataset_type_explanation = f"""Dataset type: {dataset_type}. This can be used for several loss functions from the
                                     sentence_transformers library."""
 
-        # Annotate and push the concatenated dataset
-        annotate_and_push_dataset(
-            dataset=hf_dataset,
-            caption_generation=caption_generation,
-            embedding_generation=embedding_generation,
-            dataset_type_explanation=dataset_type_explanation,
-            repo_id=f"jo-mengr/geo_{geo_n}_cellxgene_{cellxgene_n}_{dataset_type}",
-            readme_template_name="cellwhisperer_train",
-        )
-        logger.info("Final concatenated dataset pushed successfully.")
+        if push_to_hub is not False:
+            # Annotate and push the concatenated dataset
+            annotate_and_push_dataset(
+                dataset=hf_dataset,
+                caption_generation=caption_generation,
+                embedding_generation=embedding_generation,
+                dataset_type_explanation=dataset_type_explanation,
+                repo_id=f"jo-mengr/geo_{geo_n}_cellxgene_{cellxgene_n}_{dataset_type}",
+                readme_template_name="cellwhisperer_train",
+            )
+            logger.info("Final concatenated dataset pushed successfully.")
 
         monitor.stop()
-        monitor.save("out/training_datasets_create")
-        monitor.plot_metrics(save_dir="out/training_datasets_create")
+        metric_dir = "out/training_datasets_create"
+        os.makedirs(metric_dir, exist_ok=True)
+        monitor.save(metric_dir)
+        monitor.plot_metrics(save_dir=metric_dir)
 
 
 if __name__ == "__main__":
