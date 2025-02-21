@@ -3,6 +3,7 @@ import anndata
 from adata_hf_datasets.initial_embedder import InitialEmbedder
 from adata_hf_datasets.utils import split_anndata
 import os
+import sys
 from pathlib import Path
 from dotenv import load_dotenv
 from adata_hf_datasets.adata_ref_ds import (
@@ -22,11 +23,9 @@ import argparse
 # Define project parameters and paths
 project_dir = Path(__file__).resolve().parents[1]
 
-methods = ["scvi"]  # , ["hvg", "pca", "scvi", "geneformer"]
+methods = ["hvg", "pca", "scvi", "geneformer"]
 dataset_types = ["pairs", "multiplets"]
 negatives_per_sample = 2
-caption_key = "natural_language_annotation"
-push_to_hub = False
 
 nextcloud_config = {
     "url": "https://nxc-fredato.imbi.uni-freiburg.de",
@@ -88,7 +87,13 @@ def parse_arguments():
     parser.add_argument(
         "--push_to_hub",
         action="store_true",
+        default=True,
         help="Flag to indicate whether to push the final dataset to Hugging Face Hub.",
+    )
+    parser.add_argument(
+        "--caption_key",
+        default="natural_language_annotation",
+        help="Observation key used for generating captions. Must be stored in anndata.obs.",
     )
     return parser.parse_args()
 
@@ -210,6 +215,7 @@ def main():
     monitor = SystemMonitor(logger=logger)
     monitor.start()
     args = parse_arguments()  # Get arguments from command line
+    caption_key = args.caption_key
     file_names = []
     # Loop over dict of files and batch_keys
     for file_str, batch_key in zip(args.files, args.batch_keys):
@@ -271,15 +277,15 @@ def main():
         )
         dataset_type_explanation = f"""Dataset type: {dataset_type}. This can be used for several loss functions from the
                                     sentence_transformers library."""
-
-        if push_to_hub is not False:
+        dataset_name = "_".join(file_names)
+        if args.push_to_hub:
             # Annotate and push the concatenated dataset
             annotate_and_push_dataset(
                 dataset=hf_dataset,
                 caption_generation=caption_generation,
                 embedding_generation=embedding_generation,
                 dataset_type_explanation=dataset_type_explanation,
-                repo_id=f"jo-mengr/{file_names.join('_')}_{dataset_type}",
+                repo_id=f"jo-mengr/{dataset_name}_{dataset_type}_{caption_key}",
                 readme_template_name="cellwhisperer_train",
             )
             logger.info("Final concatenated dataset pushed successfully.")
@@ -292,4 +298,8 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except Exception:
+        logger.exception("An error occurred during dataset creation.")
+        sys.exit(1)
