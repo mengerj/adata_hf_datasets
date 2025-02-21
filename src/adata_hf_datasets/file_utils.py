@@ -351,25 +351,18 @@ def download_file_from_share_link(share_link, save_path, chunk_size=8192):
                 # Check if required keys exist in the HDF5 structure
                 required_keys = ["X", "obs", "var"]  # Common in .h5ad files
                 if all(key in h5_file for key in required_keys):
-                    print("✅ File is a valid .h5ad file.")
+                    print("File is a valid .h5ad file.")
                     return True
                 else:
                     print("⚠️ File is an HDF5 file but missing required .h5ad keys.")
                     return False
         except Exception as e:
-            print(f"❌ Error while checking the file: {e}")
+            print(f"Error while checking the file: {e}")
             return False
 
     except requests.exceptions.RequestException as e:
-        print(f"❌ Failed to download the file: {e}")
+        print(f"Failed to download the file: {e}")
         return False
-
-    finally:
-        # Optional: Delete file if invalid
-        if not os.path.exists(save_path) or not h5py.is_hdf5(save_path):
-            print("❌ Deleting invalid file.")
-            os.remove(save_path)
-            return False
 
 
 logger = logging.getLogger(__name__)
