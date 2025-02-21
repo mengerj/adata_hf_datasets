@@ -189,27 +189,72 @@ class SCVIEmbedder(BaseAnnDataEmbedder):
     def fit(
         self,
         adata: anndata.AnnData,
-        batch_key,
-        layer_key="counts",
-        n_cells=5000,
+        batch_key: str,
+        layer_key: str = "counts",
+        n_cells: int = 5000,
         **kwargs,
     ) -> None:
-        """Set up scVI model and train on the data."""
+        """
+        Set up and train the scVI model on the provided data.
+
+        Parameters
+        ----------
+        adata : anndata.AnnData
+            Annotated data matrix.
+        batch_key : str
+            Key in `adata.obs` that indicates batch information.
+        layer_key : str, optional
+            Key in `adata.layers` that contains the data to be modeled. Defaults to "counts".
+        n_cells : int, optional
+            Number of cells to subsample for training. Defaults to 5000.
+        **kwargs
+            Additional keyword arguments passed to the scVI model.
+
+        Raises
+        ------
+        ImportError
+            If scvi-tools is not installed.
+        KeyError
+            If the specified `layer_key` is not found in `adata.layers`.
+        """
         try:
             import scvi
         except ImportError:
             raise ImportError("scvi-tools is not installed.")
+
         logger.info("Setting up scVI model with embedding_dim=%d", self.embedding_dim)
+
+        # Ensure batch_key has no missing values
         adata.obs[batch_key] = adata.obs[batch_key].cat.add_categories("other")
         adata.obs[batch_key] = adata.obs[batch_key].fillna("other")
 
-        try:
-            _ = adata.layers[layer_key]
-        except KeyError:
+        # Check if the specified layer exists; if not, use adata.X
+        if layer_key not in adata.layers:
             adata.layers[layer_key] = adata.X.copy()
-        scvi.model.SCVI.setup_anndata(adata, layer=layer_key, batch_key=batch_key)
-        self.model = scvi.model.SCVI(adata, n_latent=self.embedding_dim, **kwargs)
-        # setup while adata for inference
+
+        # Determine the appropriate distribution based on data type
+        data_sample = adata.layers[layer_key]
+        if issubclass(data_sample.dtype.type, np.integer):
+            # Data contains integer counts; use Negative Binomial distribution
+            logger.info("Using Negative Binomial distribution for scVI model.")
+            scvi.model.SCVI.setup_anndata(adata, layer=layer_key, batch_key=batch_key)
+            self.model = scvi.model.SCVI(adata, n_latent=self.embedding_dim, **kwargs)
+        elif issubclass(data_sample.dtype.type, np.floating):
+            # Data contains floats; use Normal distribution
+            logger.info("Using Normal distribution for scVI model.")
+            scvi.model.SCVI.setup_anndata(
+                adata,
+                layer=layer_key,
+                batch_key=batch_key,
+                continuous_covariates=layer_key,
+            )
+            self.model = scvi.model.SCVI(
+                adata, n_latent=self.embedding_dim, gene_likelihood="normal", **kwargs
+            )
+        else:
+            raise ValueError(
+                "Data type of the specified layer is neither integer nor float."
+            )
 
         logger.info("Training scVI model.")
         self.model.train(max_epochs=50)
@@ -344,7 +389,8 @@ class GeneformerEmbedder(BaseAnnDataEmbedder):
             from geneformer import TranscriptomeTokenizer, EmbExtractor
         except ImportError:
             raise ImportError(
-                "geneformer is not installed. Please install geneformer to use GeneformerEmbedder. Follow the instructions from the geneformer documentation."
+                """To use the Geneformer submodule, you need to have git lfs installed. Run 'git lfs install' if you have it installed.
+                    Then, run 'git submodule update --init --recursive' to update the geneformer external repository and 'pip install external/Geneformer'"""
             )
         from adata_hf_datasets.utils import add_ensembl_ids
         import scanpy as sc
