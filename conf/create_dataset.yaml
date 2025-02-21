@@ -6,11 +6,9 @@ split_dataset: true
 
 # These get used only if split_dataset is true
 processed_paths_train:
-  - "processed_adata/raw_data1/train.h5ad"
-  - "processed_adata/raw_data2/train.h5ad"
+  - "data/RNA/processed/train/cellxgene_pseudo_bulk_3_5k/train.h5ad"
 processed_paths_val:
-  - "processed_adata/raw_data1/val.h5ad"
-  - "processed_adata/raw_data2/val.h5ad"
+  - "data/RNA/processed/train/cellxgene_pseudo_bulk_3_5k/val.h5ad"
 
 # This gets used only if split_dataset is false (a single dataset).
 processed_paths_all:
@@ -20,8 +18,15 @@ caption_key: "natural_language_annotation"
 negatives_per_sample: 2
 
 # For test sets, you might set dataset_type="single". For train/val, you might use "pairs" or "multiplets".
-dataset_type: "pairs"
+dataset_type: "multiplets"
 
-push_to_hub: false
-repo_id: "myuser/my_adata_dataset"
+push_to_hub: true
+base_repo_id: "jo-mengr"
 obsm_keys: ["X_hvg", "X_pca", "X_scvi", "X_geneformer"]
+
+use_nextcloud: true
+nextcloud_config:
+  url: "https://nxc-fredato.imbi.uni-freiburg.de"
+  username: "NEXTCLOUD_USER" # Use environment variable or override
+  password: "NEXTCLOUD_PASSWORD" # Use environment variable or override
+  remote_path: ""

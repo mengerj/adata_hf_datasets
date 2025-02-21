@@ -13,3 +13,4 @@ data/
 *.out
 out/
 *.DS_Store
+outputs
