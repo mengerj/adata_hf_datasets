@@ -34,7 +34,7 @@ from adata_hf_datasets.initial_embedder import InitialEmbedder
 logger = logging.getLogger(__name__)
 
 
-@hydra.main(version_base=None, config_path="conf", config_name="preprocess_adata")
+@hydra.main(version_base=None, config_path="../conf", config_name="preprocess_adata")
 def main(cfg: DictConfig):
     """
     Main function for preprocessing raw AnnData files using Hydra config.
