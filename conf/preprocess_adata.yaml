@@ -1,10 +1,10 @@
 # conf/preprocess_adata.yaml
 files:
-  - "data/raw/train/cellxgene_pseudo_bulk_3_5.h5ad"
+  - "data/RNA/raw/train/geo_700k.h5ad"
 
 methods: ["hvg", "pca", "scvi", "geneformer"]
-batch_keys: ["assay"] # match length of 'files'
-output_dir: "data/processed/train"
+batch_keys: ["study"] # match length of 'files'
+output_dir: "data/RNA/processed/test"
 train_split: 0.9
 
 # If false, the script will NOT split into train/val but instead
