@@ -27,6 +27,7 @@ from adata_hf_datasets.utils import (
     setup_logging,
     annotate_and_push_dataset,
 )
+from hydra.utils import to_absolute_path
 
 logger = logging.getLogger(__name__)
 
@@ -73,6 +74,8 @@ def main(cfg: DictConfig):
             caption_key=caption_key,
             negatives_per_sample=negatives_per_sample,
             dataset_type=dataset_type,
+            nextcloud_config=nextcloud_config,
+            use_nextcloud=use_nextcloud,
             obsm_keys=obsm_keys,
         )
 
@@ -83,6 +86,8 @@ def main(cfg: DictConfig):
             caption_key=caption_key,
             negatives_per_sample=negatives_per_sample,
             dataset_type=dataset_type,
+            nextcloud_config=nextcloud_config,
+            use_nextcloud=use_nextcloud,
             obsm_keys=obsm_keys,
         )
 
@@ -183,11 +188,12 @@ def build_hf_dataset(
     )
 
     for fpath in processed_paths:
-        if not Path(fpath).is_file():
-            logger.error("Processed file not found: %s", fpath)
-            raise FileNotFoundError(f"Processed file not found: {fpath}")
+        local_path = to_absolute_path(fpath)
+        if not Path(local_path).is_file():
+            logger.error("Processed file not found: %s", local_path)
+            raise FileNotFoundError(f"Processed file not found: {local_path}")
         if use_nextcloud:
-            constructor.nextcloud_config["remote_path"] = processed_paths
+            constructor.nextcloud_config["remote_path"] = fpath
         constructor.add_anndata(file_path=fpath, obsm_keys=obsm_keys)
 
     dataset = constructor.get_dataset()
