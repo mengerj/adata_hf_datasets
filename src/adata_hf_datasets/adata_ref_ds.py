@@ -199,9 +199,9 @@ class AnnDataSetConstructor:
             )
             if share_link:
                 path_for_dataset = share_link
-                if not self._check_sharelink(share_link):
-                    logger.error(f"Nextcloud sharelink {share_link} not working")
-                    raise ValueError(f"Nextcloud sharelink {share_link} not working")
+                # if not self._check_sharelink(share_link):
+                #    logger.error(f"Nextcloud sharelink {share_link} not working")
+                #    raise ValueError(f"Nextcloud sharelink {share_link} not working")
             else:
                 logger.error("Failed to upload file to Nextcloud: %s", file_path)
                 raise ValueError(f"Nextcloud upload failed for {file_path}")
