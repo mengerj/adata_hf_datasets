@@ -246,7 +246,6 @@ class SCVIEmbedder(BaseAnnDataEmbedder):
                 adata,
                 layer=layer_key,
                 batch_key=batch_key,
-                continuous_covariates=layer_key,
             )
             self.model = scvi.model.SCVI(
                 adata, n_latent=self.embedding_dim, gene_likelihood="normal", **kwargs
