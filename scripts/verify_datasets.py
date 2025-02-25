@@ -29,7 +29,6 @@ import os
 import sys
 import json
 import tempfile
-import logging
 import requests
 import numpy as np
 import anndata
@@ -37,8 +36,9 @@ from huggingface_hub import HfApi
 from datasets import load_dataset
 from adata_hf_datasets.file_utils import download_file_from_share_link
 from adata_hf_datasets.utils import setup_logging
+from dotenv import load_dotenv
 
-logger = logging.getLogger(__name__)
+logger = setup_logging()
 
 
 def verify_h5ad_and_embeddings(dataset_split, split_name):
@@ -235,9 +235,11 @@ def verify_dataset(dataset_id):
 def main():
     # If desired, store invalid results in a structure
     invalid_datasets = []
-
+    load_dotenv(override=True)
     api = HfApi()
-    user_datasets_gen = api.list_datasets(author="jo-mengr", full=True)
+    user_datasets_gen = api.list_datasets(
+        author="jo-mengr", limit=None, token=os.getenv("HF_TOKEN")
+    )
 
     # Convert generator to list (use itertools.tee if you want to preserve generator).
     user_datasets_list = list(user_datasets_gen)
