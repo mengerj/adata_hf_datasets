@@ -66,7 +66,7 @@ def main(cfg: DictConfig):
             "Number of batch_keys != number of files. Reusing the first batch_key for all files."
         )
         if len(batch_keys) == 1:
-            batch_keys = batch_keys * len(files)
+            batch_keys = list(batch_keys) * len(files)
 
     for file_path_str, batch_key in zip(files, batch_keys):
         logger.info("Processing raw file: %s", file_path_str)
