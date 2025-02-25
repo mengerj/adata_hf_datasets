@@ -1,10 +1,22 @@
 # conf/preprocess_adata.yaml
 files:
-  - "data/RNA/raw/train/geo_700k.h5ad"
+  - "data/RNA/raw/train/cellxgene_pseudo_bulk_splits/part_1.h5ad"
+  - "data/RNA/raw/train/cellxgene_pseudo_bulk_splits/part_2.h5ad"
+  - "data/RNA/raw/train/cellxgene_pseudo_bulk_splits/part_3.h5ad"
+  - "data/RNA/raw/train/cellxgene_pseudo_bulk_splits/part_4.h5ad"
+  - "data/RNA/raw/train/cellxgene_pseudo_bulk_splits/part_5.h5ad"
+  - "data/RNA/raw/train/cellxgene_pseudo_bulk_splits/part_6.h5ad"
+  - "data/RNA/raw/train/cellxgene_pseudo_bulk_splits/part_7.h5ad"
+  - "data/RNA/raw/train/cellxgene_pseudo_bulk_splits/part_8.h5ad"
+  - "data/RNA/raw/train/cellxgene_pseudo_bulk_splits/part_9.h5ad"
+  - "data/RNA/raw/train/cellxgene_pseudo_bulk_splits/part_10.h5ad"
 
+## !!! make sure to adjust out dir train/test accordingly !!
+output_dir: "data/RNA/processed/test/cellxgene_pseudo_bulk_splits"
+## !!! make sure this fits the current dataset
+batch_keys: ["assay"] # match length of 'files' #assay for cellxgene data, and study for geo data
 methods: ["hvg", "pca", "scvi", "geneformer"]
-batch_keys: ["study"] # match length of 'files'
-output_dir: "data/RNA/processed/test"
+
 train_split: 0.9
 
 # If false, the script will NOT split into train/val but instead

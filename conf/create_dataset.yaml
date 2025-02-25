@@ -6,18 +6,20 @@ split_dataset: true
 
 # These get used only if split_dataset is true
 processed_paths_train:
-  - "data/RNA/processed/train/cellxgene_pseudo_bulk_3_5k/train.h5ad"
+  - "data/RNA/processed/train/geo_70k/train.h5ad"
+  #- "data/RNA/processed/train/cellxgene_pseudo_bulk_3_5k/train.h5ad"
 processed_paths_val:
-  - "data/RNA/processed/train/cellxgene_pseudo_bulk_3_5k/val.h5ad"
+  - "data/RNA/processed/train/geo_70k/val.h5ad"
+  #- "data/RNA/processed/train/cellxgene_pseudo_bulk_3_5k/val.h5ad"
 
 # This gets used only if split_dataset is false (a single dataset).
 processed_paths_all:
-  - "processed_adata/some_test_data/all.h5ad"
+  - "data/RNA/processed/test/bowel_disease/all.h5ad"
 
-caption_key: "natural_language_annotation"
+caption_key: "cluster_label"
 negatives_per_sample: 2
 
-# For test sets, you might set dataset_type="single". For train/val, you might use "pairs" or "multiplets".
+# For test sets without a proper text caption, you might set dataset_type="single". For train/val, you might use "pairs" or "multiplets".
 dataset_type: "multiplets"
 
 push_to_hub: true

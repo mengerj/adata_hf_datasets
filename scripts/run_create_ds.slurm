@@ -4,7 +4,6 @@
 #SBATCH --error=create_ds.err
 #SBATCH --partition=gpu
 #SBATCH --gres=gpu:1            # Request amount of GPUs
-#SBATCH --mem=50G               # Request amount of memory
 #SBATCH --time=2:00:00         # Max job time of 1 hour
 
 echo "Starting job"
