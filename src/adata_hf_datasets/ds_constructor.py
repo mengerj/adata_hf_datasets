@@ -408,7 +408,7 @@ class AnnDataSetConstructor:
                 caption_dict = all_captions.get(file_path, {})
 
                 for sample_id, current_caption in caption_dict.items():
-                    anchor_modality = random.choice(["file_record", "caption"])
+                    anchor_modality = random.choice(["file_record"])
                     if anchor_modality == "file_record":
                         anndata_ref = json.dumps(
                             {"file_record": file_record, "sample_id": sample_id}
@@ -428,7 +428,7 @@ class AnnDataSetConstructor:
                         }
                     )
 
-                    neg_mod_random = random.choice(["caption", "file_record"])
+                    neg_mod_random = random.choice(["caption"])
                     neg_candidate_random = self._get_negative_sample(
                         current_file_path=file_path,
                         current_file_record=file_record,
@@ -444,22 +444,22 @@ class AnnDataSetConstructor:
                             "label": 0.0,
                         }
                     )
-
-                    neg_candidate_same = self._get_negative_sample(
-                        current_file_path=file_path,
-                        current_file_record=file_record,
-                        current_sample=sample_id,
-                        current_caption=current_caption,
-                        desired_modality=anchor_modality,
-                        all_captions=all_captions,
-                    )
-                    hf_data.append(
-                        {
-                            "anndata_ref": anndata_ref,
-                            "caption": neg_candidate_same,
-                            "label": 0.0,
-                        }
-                    )
+                    # if you want to include negatives of the same modality
+                    # neg_candidate_same = self._get_negative_sample(
+                    #    current_file_path=file_path,
+                    #    current_file_record=file_record,
+                    #    current_sample=sample_id,
+                    #    current_caption=current_caption,
+                    #    desired_modality=anchor_modality,
+                    #    all_captions=all_captions,
+                    # )
+                    # hf_data.append(
+                    #    {
+                    #        "anndata_ref": anndata_ref,
+                    #        "caption": neg_candidate_same,
+                    #        "label": 0.0,
+                    #    }
+                    # )
 
         elif self.dataset_format == "multiplets":
             for files in self.anndata_files:
@@ -539,6 +539,55 @@ class AnnDataSetConstructor:
         """
         adata = anndata.read_h5ad(file_path)
         return adata.obs.index.tolist()
+
+
+class SimpleCaptionConstructor:
+    """
+    Construct captions for each sample by concatenating values from specified obs keys.
+    """
+
+    def __init__(self, obs_keys: Union[list[str], str], separator: str = " "):
+        """
+        Initialize the SimpleCaptionConstructor.
+
+        Parameters
+        ----------
+        obs_keys : list of str or str
+            Keys from adata.obs to include in the caption.
+        separator : str, optional
+            Separator used between values (default is a space).
+        """
+        if isinstance(obs_keys, str):
+            obs_keys = [obs_keys]
+        self.obs_keys = obs_keys
+        self.separator = separator
+
+    def construct_captions(self, adata: anndata.AnnData) -> None:
+        """
+        Construct captions by concatenating values from specified obs keys and add them as a new column.
+
+        Parameters
+        ----------
+        adata : anndata.AnnData
+            AnnData object to process.
+
+        Raises
+        ------
+        KeyError
+            If any specified key is not found in adata.obs.
+        """
+        missing_keys = [key for key in self.obs_keys if key not in adata.obs.columns]
+        if missing_keys:
+            raise KeyError(
+                f"The following keys were not found in adata.obs: {missing_keys}"
+            )
+
+        str_values = [
+            adata.obs[key].astype(str).replace("nan", "") for key in self.obs_keys
+        ]
+        adata.obs["caption"] = pd.DataFrame(str_values).T.agg(
+            self.separator.join, axis=1
+        )
 
 
 '''
@@ -667,131 +716,4 @@ class AnnDataSetConstructor:
 
         hf_dataset = Dataset.from_list(hf_data)
         return hf_dataset
-'''
-
-
-class SimpleCaptionConstructor:
-    """
-    Construct captions for each sample by concatenating values from specified obs keys.
-    """
-
-    def __init__(self, obs_keys: Union[list[str], str], separator: str = " "):
-        """
-        Initialize the SimpleCaptionConstructor.
-
-        Parameters
-        ----------
-        obs_keys : list of str or str
-            Keys from adata.obs to include in the caption.
-        separator : str, optional
-            Separator used between values (default is a space).
-        """
-        if isinstance(obs_keys, str):
-            obs_keys = [obs_keys]
-        self.obs_keys = obs_keys
-        self.separator = separator
-
-    def construct_captions(self, adata: anndata.AnnData) -> None:
-        """
-        Construct captions by concatenating values from specified obs keys and add them as a new column.
-
-        Parameters
-        ----------
-        adata : anndata.AnnData
-            AnnData object to process.
-
-        Raises
-        ------
-        KeyError
-            If any specified key is not found in adata.obs.
-        """
-        missing_keys = [key for key in self.obs_keys if key not in adata.obs.columns]
-        if missing_keys:
-            raise KeyError(
-                f"The following keys were not found in adata.obs: {missing_keys}"
-            )
-
-        str_values = [
-            adata.obs[key].astype(str).replace("nan", "") for key in self.obs_keys
-        ]
-        adata.obs["caption"] = pd.DataFrame(str_values).T.agg(
-            self.separator.join, axis=1
-        )
-
-        '''
-    def _get_negative_sample(
-        self,
-        current_file_path: str,
-        current_file_record: dict,
-        current_sample: str,
-        current_caption: str,
-        desired_modality: str,
-        all_captions: dict[str, dict[str, str]],
-    ) -> str:
-        """
-        Retrieve a negative sample (from the same file if possible, otherwise from a different file)
-        that satisfies: sample ID is different and its caption differs from the current caption.
-
-        Parameters
-        ----------
-        current_file_path : str
-            File path of the current sample.
-        current_file_record : dict
-            File record (e.g. embeddings, paths) for the current file.
-        current_sample : str
-            Sample ID of the current sample.
-        current_caption : str
-            Caption of the current sample.
-        desired_modality : str
-            Negative modality to use: "caption" or "file_record".
-        all_captions : dict
-            Nested mapping {file_path: {sample_id: caption}} for all files.
-
-        Returns
-        -------
-        str
-            If desired_modality is "caption": the negative sample's caption text.
-            If desired_modality is "file_record": a JSON string representing the negative sample's file record and sample ID.
-
-        Raises
-        ------
-        ValueError
-            If no appropriate negative sample can be found.
-        """
-        # First try the same file.
-        candidates = [
-            sample for sample in all_captions[current_file_path]
-            if sample != current_sample and all_captions[current_file_path][sample] != current_caption
-        ]
-        if candidates:
-            neg_sample = random.choice(candidates)
-            neg_caption = all_captions[current_file_path][neg_sample]
-            neg_file_record = current_file_record
-        else:
-            # Fallback: search in other files.
-            other_files = [
-                f for f in self.anndata_files if f["local_path"] != current_file_path
-            ]
-            if not other_files:
-                logger.error("No other files found to search for negative examples.")
-                raise ValueError("No true negative example could be found.")
-            neg_file = random.choice(other_files)
-            neg_file_path = neg_file["local_path"]
-            candidates = [
-                sample for sample in all_captions[neg_file_path]
-                if all_captions[neg_file_path][sample] != current_caption
-            ]
-            if not candidates:
-                logger.error("No negative examples found in other files.")
-                raise ValueError("No true negative example could be found in other files.")
-            neg_sample = random.choice(candidates)
-            neg_caption = all_captions[neg_file_path][neg_sample]
-            neg_file_record = {k: v for k, v in neg_file.items() if k != "local_path"}
-
-        if desired_modality == "caption":
-            return neg_caption
-        elif desired_modality == "file_record":
-            return json.dumps({"file_record": neg_file_record, "sample_id": neg_sample})
-        else:
-            raise ValueError("desired_modality must be either 'caption' or 'file_record'.")
 '''
