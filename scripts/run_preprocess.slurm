@@ -4,8 +4,8 @@
 #SBATCH --error=pp_adata.err
 #SBATCH --partition=gpu
 #SBATCH --gres=gpu:1            # Request amount of GPUs
-#SBATCH --mem=400G               # Request amount of memory
-#SBATCH --time=24:00:00         # Max job time
+#SBATCH --mem=150G               # Request amount of memory
+#SBATCH --time=128:00:00         # Max job time
 
 echo "Starting job"
 # Source the setup script to ensure the environment is ready

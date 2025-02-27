@@ -16,7 +16,7 @@ import os
 logger = logging.getLogger(__name__)
 
 
-class AnnDataSetConstructor:
+class AnnDataSetConstructor_old:
     """
     Class to generate a dataset compatible with the SentenceTransformer library from AnnData files.
 

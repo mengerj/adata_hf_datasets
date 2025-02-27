@@ -1,4 +1,3 @@
-#!/usr/bin/env python
 """
 Create Hugging Face datasets from processed AnnData train/val files
 or a single processed file (test). Optionally push them to the Hugging Face Hub.
@@ -19,7 +18,7 @@ from omegaconf import DictConfig
 from dotenv import load_dotenv
 
 from datasets import DatasetDict
-from adata_hf_datasets.adata_ref_ds import (
+from adata_hf_datasets.ds_constructor import (
     AnnDataSetConstructor,
     SimpleCaptionConstructor,
 )

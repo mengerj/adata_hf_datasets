@@ -16,11 +16,11 @@ processed_paths_val:
 processed_paths_all:
   - "data/RNA/processed/test/bowel_disease/all.h5ad"
 
-caption_key: "cluster_label"
+caption_key: "natural_language_annotation"
 negatives_per_sample: 2
 
 # For test sets without a proper text caption, you might set dataset_type="single". For train/val, you might use "pairs" or "multiplets".
-dataset_type: "multiplets"
+dataset_type: "pairs"
 
 push_to_hub: true
 base_repo_id: "jo-mengr"
