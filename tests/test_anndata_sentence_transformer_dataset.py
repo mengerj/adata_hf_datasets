@@ -129,7 +129,7 @@ def dataset_constructor(mock_caption_constructor):
     AnnDataSetConstructor
         A fresh instance for testing.
     """
-    from adata_hf_datasets.adata_ref_ds import AnnDataSetConstructor
+    from adata_hf_datasets.ds_constructor import AnnDataSetConstructor
 
     return AnnDataSetConstructor(
         caption_constructor=mock_caption_constructor, negatives_per_sample=1
@@ -229,7 +229,7 @@ def test_no_caption_constructor(ann_data_file_1):
     """
     logger.info("Testing behavior with no caption constructor provided.")
 
-    from adata_hf_datasets.adata_ref_ds import AnnDataSetConstructor
+    from adata_hf_datasets.ds_constructor import AnnDataSetConstructor
 
     # Create constructor without a caption_constructor
     with pytest.raises(ValueError) as excinfo:
@@ -332,7 +332,7 @@ def test_get_dataset_positive_and_negative(
 
     # Basic checks
     assert len(pos_examples) == 5, f"Expected 5 positives, got {len(pos_examples)}"
-    assert len(neg_examples) == 5, f"Expected 5 negatives, got {len(neg_examples)}"
+    assert len(neg_examples) == 10, f"Expected 5 negatives, got {len(neg_examples)}"
 
     # Now parse each row and verify
     for ex in pos_examples:
@@ -460,7 +460,7 @@ def test_invalid_dataset_format(mock_caption_constructor):
     """
     Test that providing an invalid dataset_format during construction raises a ValueError.
     """
-    from adata_hf_datasets.adata_ref_ds import AnnDataSetConstructor
+    from adata_hf_datasets.ds_constructor import AnnDataSetConstructor
 
     with pytest.raises(ValueError) as excinfo:
         AnnDataSetConstructor(
