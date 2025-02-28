@@ -332,7 +332,7 @@ def test_get_dataset_positive_and_negative(
 
     # Basic checks
     assert len(pos_examples) == 5, f"Expected 5 positives, got {len(pos_examples)}"
-    assert len(neg_examples) == 10, f"Expected 5 negatives, got {len(neg_examples)}"
+    assert len(neg_examples) == 5, f"Expected 5 negatives, got {len(neg_examples)}"
 
     # Now parse each row and verify
     for ex in pos_examples:
