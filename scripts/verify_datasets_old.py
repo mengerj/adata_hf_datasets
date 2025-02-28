@@ -10,12 +10,6 @@ Data Sources
     1) A "file_record" with a "dataset_path" (Nextcloud share link to an .h5ad).
     2) A "sample_id" (IDs stored in adata.obs).
     3) An "embeddings" dict with share links to .npz files for various methods.
-    4) For pair datasets:
-       - 'caption' (str)
-       - 'label' (int: 0 or 1) indicating negative or positive pair
-    5) For multiplet datasets:
-       - 'positive' (str) caption for positive
-       - 'negative_1', 'negative_2', ... each referencing anndata_ref + caption entries
 
 References
 ----------
@@ -28,6 +22,7 @@ References
 Example
 -------
 python verify_jo_mengr_datasets.py
+
 """
 
 import os
@@ -66,60 +61,44 @@ def verify_h5ad_and_embeddings(dataset_split, split_name):
     """
     rows = list(dataset_split)
     if not rows:
-        # If empty, treat as valid but note it (or adjust as needed).
+        # If empty split is not considered an error, you can decide.
+        # Let's treat empty as valid but note it.
         return True, [f"Split '{split_name}' is empty."]
 
     fail_reasons = []
     logger.info(f"Verifying split: {split_name}, Number of rows: {len(rows)}")
-
-    # Basic key presence checks (only on the first row for speed).
-    first_anndata = rows[0].get("anndata_ref", None)
-    if not first_anndata:
+    # check first row to see if it has the necessary keys and if the anndata_ref dict contains the expected keys
+    if "anndata_ref" not in rows[0]:
         fail_reasons.append("Dataset missing 'anndata_ref' key.")
         return False, fail_reasons
-
-    try:
-        first_info = json.loads(first_anndata)
-    except ValueError as e:
-        fail_reasons.append(f"Cannot parse JSON in 'anndata_ref' of row 0: {e}")
-        return False, fail_reasons
-
-    if "sample_id" not in first_info:
+    if "sample_id" not in json.loads(rows[0]["anndata_ref"]):
         fail_reasons.append("anndata_ref missing 'sample_id' key.")
         return False, fail_reasons
-    if "file_record" not in first_info:
+    if "file_record" not in json.loads(rows[0]["anndata_ref"]):
         fail_reasons.append("anndata_ref missing 'file_record' key.")
         return False, fail_reasons
-    if "dataset_path" not in first_info["file_record"]:
+    if "dataset_path" not in json.loads(rows[0]["anndata_ref"])["file_record"]:
         fail_reasons.append("file_record missing 'dataset_path' key.")
         return False, fail_reasons
-
-    # Group rows by share link to download .h5ad only once per link.
+    # Group rows by share link
     adata_map = {}
     for i, row in enumerate(rows):
         # parse the 'anndata_ref' JSON
-        anndata_json = row.get("anndata_ref", None)
-        if not anndata_json:
-            fail_reasons.append(f"Row {i} is missing 'anndata_ref'.")
-            continue
         try:
-            row_info = json.loads(anndata_json)
+            row_info = json.loads(row["anndata_ref"])
         except (KeyError, ValueError) as e:
             fail_reasons.append(f"Row {i} has invalid 'anndata_ref': {e}")
             continue
-
         share_link = row_info["file_record"]["dataset_path"]
         sample_id = row_info["sample_id"]
         embeddings_dict = row_info.get("embeddings", {})
 
-        # Store all row info so we can do positivity checks later
         if share_link not in adata_map:
             adata_map[share_link] = {
                 "rows": [],
             }
-        adata_map[share_link]["rows"].append((i, sample_id, embeddings_dict, row_info))
+        adata_map[share_link]["rows"].append((i, sample_id, embeddings_dict))
 
-    # Now, for each share link, download once, load anndata, then do checks.
     with tempfile.TemporaryDirectory() as tmpdir:
         for adata_link, data_dict in adata_map.items():
             local_adata_path = os.path.join(tmpdir, "temp_adata.h5ad")
@@ -130,15 +109,16 @@ def verify_h5ad_and_embeddings(dataset_split, split_name):
                 )
                 continue
 
-            # Load the adata object (in read-only backed mode).
+            # Load the adata object
             try:
                 adata = anndata.read_h5ad(local_adata_path, backed="r")
             except Exception as e:
                 fail_reasons.append(f"Cannot read .h5ad for link={adata_link}: {e}")
                 continue
 
-            # Check sample IDs from the dataset vs. file
-            dataset_sample_ids = [r[1] for r in data_dict["rows"]]
+            # Check sample IDs
+            dataset_sample_ids = [row_info[1] for row_info in data_dict["rows"]]
+
             file_sample_ids = list(adata.obs.index)
             if dataset_sample_ids != file_sample_ids:
                 fail_reasons.append(
@@ -147,57 +127,12 @@ def verify_h5ad_and_embeddings(dataset_split, split_name):
                         adata_link, dataset_sample_ids[:1], file_sample_ids[:1]
                     )
                 )
-
-            # Optional: check if 'caption' is in adata.obs columns before verifying positive captions
-            obs_cols = adata.obs.columns
-            has_caption_col = "caption" in obs_cols
-
-            # For each row referencing this share link, do positivity checks
-            # before or after embedding checks as you prefer:
-            for row_idx, samp_id, embed_dict, row_info in data_dict["rows"]:
-                # 1) If this row is a pair with label=1, ensure row_info["caption"] matches adata.obs["caption"][samp_id].
-                if "caption" in row_info and "label" in row_info:
-                    if row_info["label"] == 1:
-                        if not has_caption_col:
-                            fail_reasons.append(
-                                f"Row {row_idx}: 'caption' column not found in adata.obs. Cannot verify positive pair."
-                            )
-                        else:
-                            actual_caption = adata.obs["caption"][samp_id]
-                            expected_caption = row_info["caption"]
-                            if actual_caption != expected_caption:
-                                fail_reasons.append(
-                                    f"Row {row_idx}: Positive pair mismatch. "
-                                    f"adata.obs['caption'][{samp_id}] = '{actual_caption}' "
-                                    f"!= '{expected_caption}' in row_info."
-                                )
-
-                # 2) If this row is a multiplet with "positive", ensure row_info["positive"] == adata.obs["caption"][samp_id].
-                if "positive" in row_info:
-                    if not has_caption_col:
-                        fail_reasons.append(
-                            f"Row {row_idx}: 'caption' column not found in adata.obs. Cannot verify positive caption."
-                        )
-                    else:
-                        actual_caption = adata.obs["caption"][samp_id]
-                        expected_caption = row_info["positive"]
-                        if actual_caption != expected_caption:
-                            fail_reasons.append(
-                                f"Row {row_idx}: Positive mismatch. "
-                                f"adata.obs['caption'][{samp_id}] = '{actual_caption}' "
-                                f"!= '{expected_caption}' in row_info."
-                            )
-
-            # ------------------------------------------
-            # EMBEDDING CHECKS (same as your original logic)
-            # ------------------------------------------
-            # Collect unique embeddings across all rows referencing this link
+            # Collect unique embeddings
             embedding_links_by_method = {}
-            for row_idx, samp_id, embed_dict, _ in data_dict["rows"]:
+            for row_idx, samp_id, embed_dict in data_dict["rows"]:
                 for method, emb_link in embed_dict.items():
                     embedding_links_by_method.setdefault(method, set()).add(emb_link)
 
-            # Verify each embedding method's .obsm key and compare with .npz
             for method_name, emb_links in embedding_links_by_method.items():
                 obsm_key = f"X_{method_name}"
                 if obsm_key not in adata.obsm:
@@ -297,16 +232,6 @@ def verify_dataset(dataset_id):
 
 
 def main():
-    """
-    Main entry point to iterate over all HF datasets owned by 'jo-mengr'
-    and validate their .h5ad and embedding references.
-
-    If any are invalid, writes a JSON file with details.
-
-    Returns
-    -------
-    None
-    """
     # If desired, store invalid results in a structure
     invalid_datasets = []
     load_dotenv(override=True)
@@ -315,7 +240,7 @@ def main():
         author="jo-mengr", limit=None, token=os.getenv("HF_TOKEN")
     )
 
-    # Convert generator to list
+    # Convert generator to list (use itertools.tee if you want to preserve generator).
     user_datasets_list = list(user_datasets_gen)
     logger.info(f"Found {len(user_datasets_list)} datasets in user 'jo-mengr' space.")
 
