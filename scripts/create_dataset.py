@@ -287,6 +287,7 @@ def push_dataset_to_hub(hf_dataset, repo_id, caption_key, obsm_keys, dataset_typ
         dataset_type_explanation=dataset_type_explanation,
         repo_id=repo_id,
         readme_template_name="cellwhisperer_train",  # or whichever template you have
+        private=True,
     )
     logger.info("Dataset pushed to HF Hub at %s", repo_id)
 
