@@ -162,6 +162,54 @@ def ann_data_file_with_obsm(tmp_path):
     return file_path
 
 
+@pytest.fixture
+def ann_data_file_with_batch(tmp_path):
+    """
+    Create a small anndata object with a 'batch' column in obs for testing batch-specific negative sampling.
+    Each sample is assigned a unique 'caption' in obs.
+
+    Returns
+    -------
+    str
+        Path to the .h5ad file containing the test AnnData object with a 'batch' column.
+
+    Notes
+    -----
+    This fixture explicitly creates two batches 'batchA' and 'batchB'. We will confirm that
+    when this data is used in pairs or multiplets mode with a specified batch_key, all
+    negative samples come from the same batch as the anchor.
+    """
+    # We'll create 6 samples: 3 in batchA, 3 in batchB
+    n_samples_per_batch = 3
+    sample_ids_batchA = [f"sampleA_{i}" for i in range(n_samples_per_batch)]
+    sample_ids_batchB = [f"sampleB_{i}" for i in range(n_samples_per_batch)]
+
+    obs_index = sample_ids_batchA + sample_ids_batchB
+    obs_data = pd.DataFrame(index=obs_index)
+    # Fill 'batch' column
+    obs_data["batch"] = ["batchA"] * n_samples_per_batch + [
+        "batchB"
+    ] * n_samples_per_batch
+    # Create some random data for X
+    n_vars = 5
+    X = np.random.randn(len(obs_index), n_vars)
+
+    # Create the AnnData object
+    adata = anndata.AnnData(X=X, obs=obs_data)
+
+    # We store a unique column for demonstration if needed
+    # But if you have a mock_caption_constructor, it typically populates 'caption' automatically
+    # or you can store a placeholder column in obs and rely on the real constructor logic
+    adata.obs["my_unique_metadata"] = [
+        f"unique_meta_{i}" for i in range(len(obs_index))
+    ]
+
+    # Write to .h5ad
+    file_path = str(tmp_path / "test_with_batch.h5ad")
+    adata.write_h5ad(file_path)
+    return file_path
+
+
 def test_add_anndata_success(dataset_constructor, ann_data_file_1, ann_data_file_2):
     """
     Test that we can successfully add distinct anndata files without error.
@@ -355,6 +403,83 @@ def test_get_dataset_positive_and_negative(
         adata = anndata.read_h5ad(file_path)
         original_caption = adata.obs.loc[sample_id, "caption"]
         assert caption != original_caption
+
+
+def test_batch_key_negatives_remain_within_same_batch(
+    mock_caption_constructor, ann_data_file_with_batch
+):
+    """
+    Test that when a batch_key is specified in the AnnDataSetConstructor, all negative samples
+    come from the same batch as the anchor sample.
+
+    References
+    ----------
+    Simulated data from the 'ann_data_file_with_batch' fixture, which contains two batches
+    ('batchA' and 'batchB') in adata.obs['batch'].
+
+    This test:
+    1. Instantiates a constructor with batch_key='batch'.
+    2. Adds the ann_data_file_with_batch.
+    3. Generates the dataset in 'pairs' format (could also be 'multiplets').
+    4. Parses each record:
+       - For the positive/anchor sample, we get the anchor's batch.
+       - For the negative sample, confirm that it has the same batch as the anchor.
+    """
+    from adata_hf_datasets.ds_constructor import AnnDataSetConstructor
+
+    # Instantiate the constructor, specifying batch_key='batch'
+    constructor = AnnDataSetConstructor(
+        caption_constructor=mock_caption_constructor,
+        negatives_per_sample=1,
+        dataset_format="pairs",
+    )
+
+    # Add the file that contains multiple batches
+    constructor.add_anndata(ann_data_file_with_batch, batch_key="batch")
+
+    # Build the dataset
+    ds = constructor.get_dataset()
+    ds_list = ds[:]  # Convert to dict of columns -> lists
+
+    # We expect pairs => each row has 'anndata_ref', 'caption', 'label'
+    # The anchor + positive sample (label=1) is a separate record from the anchor + negative sample (label=0).
+    # We'll pair them up or just check negative rows as a group.
+    for anndata_ref, caption, label in zip(
+        ds_list["anndata_ref"], ds_list["caption"], ds_list["label"]
+    ):
+        if label == 0.0:
+            # This is a negative row
+            # 1. Parse the anchor sample info from anndata_ref
+            metadata = json.loads(anndata_ref)
+            file_record = metadata["file_record"]
+            sample_id = metadata["sample_id"]
+
+            # 2. Read the AnnData from local path (or share link, if that is how you stored it)
+            file_path = file_record["dataset_path"]
+            adata_neg_check = anndata.read_h5ad(file_path)
+
+            # 3. Anchor sample's batch
+            anchor_batch = adata_neg_check.obs.loc[sample_id, "batch"]
+
+            # 4. The negative's caption is purely text, so let's figure out which sample ID
+            #    has that 'caption' in adata. We must find the row in adata that has the same text in adata.obs["caption"].
+            #    Because the test uses mock_caption_constructor, the caption is "caption_{obs_name}" by default.
+            #    So we can map back from the text to the sample. For example, if caption == 'caption_sampleA_1',
+            #    then the negative sample is 'sampleA_1'.
+
+            # The mock constructor sets "caption_{sample_id}" in adata.obs["caption"].
+            # We can strip off the prefix "caption_" to find the sample ID.
+            if not caption.startswith("caption_"):
+                raise ValueError(f"Unexpected negative caption format: {caption}")
+            negative_sample_id = caption.split("caption_", 1)[1]
+
+            # 5. Check the negative sample's batch
+            negative_batch = adata_neg_check.obs.loc[negative_sample_id, "batch"]
+            # 6. Assert they match
+            assert anchor_batch == negative_batch, (
+                f"Expected negative to come from same batch. Anchor batch={anchor_batch}, "
+                f"Negative batch={negative_batch} for anchor={sample_id}, negative={negative_sample_id}"
+            )
 
 
 def test_duplicate_sample_ids(dataset_constructor, ann_data_file_with_duplicates):
