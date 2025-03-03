@@ -454,7 +454,7 @@ class GeneformerEmbedder(BaseAnnDataEmbedder):
         # self._kill_process()
         # Clean up the tmp files
         # remove the tmp files
-        os.system(f"rm -r {self.tmp_dir}")
+        os.system(f"rm -rf {self.tmp_dir}")
         return adata
 
     def _kill_process(self):
