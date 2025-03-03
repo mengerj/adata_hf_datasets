@@ -391,7 +391,7 @@ class GeneformerEmbedder(BaseAnnDataEmbedder):
                 """To use the Geneformer submodule, you need to have git lfs installed. Run 'git lfs install' if you have it installed.
                     Then, run 'git submodule update --init --recursive' to update the geneformer external repository and 'pip install external/Geneformer'"""
             )
-        from adata_hf_datasets.utils import add_ensembl_ids
+        from adata_hf_datasets.pp import add_ensembl_ids
         import scanpy as sc
 
         # Load the data for preprocessing
