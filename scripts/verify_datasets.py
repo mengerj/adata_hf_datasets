@@ -31,7 +31,6 @@ python verify_jo_mengr_datasets.py
 """
 
 import os
-import sys
 import json
 import tempfile
 import requests
@@ -41,7 +40,6 @@ from huggingface_hub import HfApi
 from datasets import load_dataset
 from adata_hf_datasets.file_utils import download_file_from_share_link
 from adata_hf_datasets.utils import setup_logging
-from dotenv import load_dotenv
 
 logger = setup_logging()
 
@@ -64,6 +62,8 @@ def verify_h5ad_and_embeddings(dataset_split, split_name):
     fail_reasons : list of str
         List of textual descriptions for any failures encountered.
     """
+    if "label" in dataset_split.column_names:
+        dataset_split = dataset_split.filter(lambda x: x["label"] == 1)
     rows = list(dataset_split)
     if not rows:
         # If empty, treat as valid but note it (or adjust as needed).
@@ -269,7 +269,7 @@ def verify_dataset(dataset_id):
     setup_logging()
     logger.info(f"Verifying dataset: {dataset_id}")
     try:
-        hf_ds = load_dataset(dataset_id)
+        hf_ds = load_dataset(dataset_id, download_mode="force_redownload")
     except Exception as e:
         logger.error(f"❌ Cannot load dataset {dataset_id}: {e}")
         return False, [f"Cannot load dataset: {e}"]
@@ -309,14 +309,13 @@ def main():
     """
     # If desired, store invalid results in a structure
     invalid_datasets = []
-    load_dotenv(override=True)
+    # load_dotenv(override=True)
     api = HfApi()
-    user_datasets_gen = api.list_datasets(
-        author="jo-mengr", limit=None, token=os.getenv("HF_TOKEN")
-    )
-
-    # Convert generator to list
-    user_datasets_list = list(user_datasets_gen)
+    user_datasets = api.list_datasets(author="jo-mengr", limit=None)
+    user_datasets_list = list(user_datasets)
+    # user_datasets_gen = api.list_datasets(
+    #    author="jo-mengr", limit=None, token=os.getenv("HF_TOKEN")
+    # )
     logger.info(f"Found {len(user_datasets_list)} datasets in user 'jo-mengr' space.")
 
     for ds_info in user_datasets_list:
@@ -344,4 +343,4 @@ def main():
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    main()
