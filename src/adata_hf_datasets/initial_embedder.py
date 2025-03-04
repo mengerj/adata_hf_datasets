@@ -256,7 +256,7 @@ class SCVIEmbedder(BaseAnnDataEmbedder):
             )
 
         logger.info("Training scVI model.")
-        self.model.train(max_epochs=50)
+        self.model.train(max_epochs=200)
 
     def embed(self, adata: anndata.AnnData, obsm_key: str = "X_scvi", **kwargs) -> None:
         """Use the trained scVI model to compute latent embeddings for each cell."""
