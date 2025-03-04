@@ -78,19 +78,17 @@ def verify_h5ad_and_embeddings(dataset_split, split_name):
         fail_reasons.append("Dataset missing 'anndata_ref' key.")
         return False, fail_reasons
 
-    try:
-        first_info = json.loads(first_anndata)
-    except ValueError as e:
-        fail_reasons.append(f"Cannot parse JSON in 'anndata_ref' of row 0: {e}")
+    if not isinstance(first_anndata, dict):
+        fail_reasons.append("anndata_ref is not a dictionary.")
         return False, fail_reasons
 
-    if "sample_id" not in first_info:
+    if "sample_id" not in first_anndata:
         fail_reasons.append("anndata_ref missing 'sample_id' key.")
         return False, fail_reasons
-    if "file_record" not in first_info:
+    if "file_record" not in first_anndata:
         fail_reasons.append("anndata_ref missing 'file_record' key.")
         return False, fail_reasons
-    if "dataset_path" not in first_info["file_record"]:
+    if "dataset_path" not in first_anndata["file_record"]:
         fail_reasons.append("file_record missing 'dataset_path' key.")
         return False, fail_reasons
 
@@ -98,14 +96,9 @@ def verify_h5ad_and_embeddings(dataset_split, split_name):
     adata_map = {}
     for i, row in enumerate(rows):
         # parse the 'anndata_ref' JSON
-        anndata_json = row.get("anndata_ref", None)
-        if not anndata_json:
+        row_info = row.get("anndata_ref", None)
+        if not row_info:
             fail_reasons.append(f"Row {i} is missing 'anndata_ref'.")
-            continue
-        try:
-            row_info = json.loads(anndata_json)
-        except (KeyError, ValueError) as e:
-            fail_reasons.append(f"Row {i} has invalid 'anndata_ref': {e}")
             continue
 
         share_link = row_info["file_record"]["dataset_path"]
