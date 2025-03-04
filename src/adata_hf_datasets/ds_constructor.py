@@ -1,4 +1,3 @@
-import json
 import logging
 import random
 import pandas as pd
@@ -220,6 +219,7 @@ class AnnDataSetConstructor:
                 file_record["embeddings"][key] = (
                     share_link if share_link else embedding_local_path
                 )
+                self._check_sharelink(share_link, suffix=".npz")
 
         self.anndata_files.append(file_record)
         self.sample_id_keys[file_path] = sample_id_key
@@ -438,7 +438,10 @@ class AnnDataSetConstructor:
         if desired_modality == "caption":
             return neg_caption
         elif desired_modality == "file_record":
-            return json.dumps({"file_record": neg_file_record, "sample_id": neg_sample})
+            return {
+                "file_record": neg_file_record,
+                "sample_id": neg_sample,
+            }  # json.dumps
         else:
             raise ValueError(
                 "desired_modality must be either 'caption' or 'file_record'."
@@ -481,9 +484,7 @@ class AnnDataSetConstructor:
 
                 for sample_id, current_caption in caption_dict.items():
                     # anchor modality is always the file_record
-                    anndata_ref = json.dumps(
-                        {"file_record": file_record, "sample_id": sample_id}
-                    )
+                    anndata_ref = {"file_record": file_record, "sample_id": sample_id}
                     positive = current_caption
 
                     hf_data.append(
@@ -519,9 +520,11 @@ class AnnDataSetConstructor:
                 caption_dict = all_captions.get(file_path, {})
                 for sample_id, current_caption in caption_dict.items():
                     # anchor is the JSON file_record reference, positive is the caption
-                    ref_json = json.dumps(
-                        {"file_record": file_record, "sample_id": sample_id}
-                    )
+                    ref_json = {
+                        "file_record": file_record,
+                        "sample_id": sample_id,
+                    }  # json.dumps
+
                     entry = {"anndata_ref": ref_json, "positive": current_caption}
 
                     # For negatives, randomly select a modality for each negative
@@ -556,9 +559,11 @@ class AnnDataSetConstructor:
                     sample_ids = adata.obs[sample_id_key]
 
                 for sample_id in sample_ids:
-                    ref_json = json.dumps(
-                        {"file_record": files, "sample_id": sample_id}
-                    )
+                    ref_json = {
+                        "file_record": files,
+                        "sample_id": sample_id,
+                    }  # json.dumps
+
                     hf_data.append({"anndata_ref": ref_json})
         else:
             error_msg = "Invalid dataset_format. Choose from 'pairs', 'multiplets', or 'single'."
@@ -568,7 +573,7 @@ class AnnDataSetConstructor:
         hf_dataset = Dataset.from_list(hf_data)
         return hf_dataset
 
-    def _check_sharelink(self, share_link: str) -> bool:
+    def _check_sharelink(self, share_link: str, suffix=".h5ad") -> bool:
         """
         Validate that the Nextcloud share link is working.
 
@@ -582,7 +587,7 @@ class AnnDataSetConstructor:
         bool
             True if the share link is working; False otherwise.
         """
-        with tempfile.NamedTemporaryFile(suffix=".h5ad") as temp_file:
+        with tempfile.NamedTemporaryFile(suffix=suffix) as temp_file:
             if download_file_from_share_link(share_link, temp_file.name):
                 return True
             else:
