@@ -441,7 +441,7 @@ class GeneformerEmbedder(BaseAnnDataEmbedder):
                 "Tokenized geneformer dataset already exists. Skipping tokenization."
             )
         self.out_dataset_dir = self.tmp_dir
-        self.input_dict_defaults["batch_size"] = batch_size
+        self.input_dict_defaults["forward_batch_size"] = batch_size
         extractor = EmbExtractor(**self.input_dict_defaults)
 
         embs = extractor.extract_embs(
