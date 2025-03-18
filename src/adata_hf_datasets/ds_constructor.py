@@ -11,6 +11,7 @@ from adata_hf_datasets.file_utils import (
     download_file_from_share_link,
     save_embedding_data,
 )
+import scipy.sparse as sp
 
 logger = logging.getLogger(__name__)
 
@@ -247,7 +248,7 @@ class AnnDataSetConstructor:
         self, adata: anndata.AnnData, obsm_keys: list[str]
     ) -> dict[str, pd.DataFrame]:
         """
-        Extract specified .obsm layers from an AnnData object.
+        Extract specified .obsm layers from an AnnData object and save them as .npz files.
 
         Parameters
         ----------
@@ -267,8 +268,17 @@ class AnnDataSetConstructor:
                 error_msg = f"obsm key '{key}' not found in the AnnData object."
                 logger.error(error_msg)
                 raise KeyError(error_msg)
-            df = pd.DataFrame(adata.obsm[key], index=adata.obs.index)
-            extracted[key] = df
+
+            # Convert to numpy array
+            data = adata.obsm[key]
+            if isinstance(data, pd.DataFrame):
+                data = data.values
+            elif isinstance(data, sp.spmatrix):
+                data = data.toarray()
+
+            # Store the DataFrame for return
+            extracted[key] = pd.DataFrame(data, index=adata.obs.index)
+
         return extracted
 
     def buildCaption(self, file_path: str) -> None:
@@ -523,13 +533,14 @@ class AnnDataSetConstructor:
                     ref_json = {
                         "file_record": file_record,
                         "sample_id": sample_id,
-                    }  # json.dumps
+                    }
 
                     entry = {"anndata_ref": ref_json, "positive": current_caption}
 
-                    # For negatives, randomly select a modality for each negative
+                    # Fixed pattern: odd numbers are captions, even numbers are file_records
                     for idx in range(1, self.negatives_per_sample + 1):
-                        neg_mod = random.choice(["caption", "file_record"])
+                        # Use "caption" for odd numbers (1, 3, 5...), "file_record" for even numbers (2, 4, 6...)
+                        neg_mod = "caption" if idx % 2 == 1 else "file_record"
                         neg_candidate = self._get_negative_sample(
                             current_file_path=file_path,
                             current_file_record=file_record,
