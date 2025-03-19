@@ -10,6 +10,69 @@ import anndata as ad
 import pandas as pd
 import numpy as np
 from typing import Optional
+import tempfile
+from pathlib import Path
+import random
+import anndata
+
+logger = logging.getLogger(__name__)
+
+
+def load_adata_from_hf_dataset(
+    test_dataset,
+    sample_size=10,
+):
+    """
+    Load an AnnData object from a Hugging Face test dataset that contains a share link to an external `.h5ad` file.
+
+    This function downloads the file to a temporary directory
+    and reads it into memory.
+
+    Parameters
+    ----------
+    test_dataset : dict
+        A dictionary-like object representing the HF dataset split (e.g., `test_dataset["train"]`).
+        It must contain an 'anndata_ref' field, where each element is a JSON string with a "file_path" key.
+    sample_size : int, optional
+        Number of random rows to check for file path consistency before download, by default 10.
+
+    Returns
+    -------
+    anndata.AnnData
+        The AnnData object read from the downloaded `.h5ad` file.
+
+    Notes
+    -----
+    - Data is assumed to come from a Hugging Face dataset with a single unique `file_path` for all rows.
+    - The function downloads the file to a temporary directory, which is removed when this function returns.
+    - If multiple rows have different `file_path` values, the function raises an error.
+    """
+    # If the dataset split is large, reduce the sample size to the dataset size
+    size_of_dataset = len(test_dataset)
+    sample_size = min(sample_size, size_of_dataset)
+
+    # Randomly sample rows to ensure all file paths match
+    indices_to_check = random.sample(range(size_of_dataset), sample_size)
+    paths = []
+    for idx in indices_to_check:
+        adata_ref = test_dataset[idx]["anndata_ref"]
+        paths.append(adata_ref["file_record"]["dataset_path"])
+
+    # Ensure that all random rows have the same file path
+    first_path = paths[0]
+    for p in paths[1:]:
+        if p != first_path:
+            raise ValueError(
+                "Not all sampled rows contain the same file path. Please verify the dataset consistency."
+            )
+
+    # Download the file from the share link into a temporary directory
+    with tempfile.TemporaryDirectory() as tmpdir:
+        save_path = Path(tmpdir) / "test.h5ad"
+        download_file_from_share_link(first_path, str(save_path))
+        adata = anndata.read_h5ad(save_path)
+
+    return adata
 
 
 def download_from_link(url, save_path):
@@ -363,9 +426,6 @@ def download_file_from_share_link(share_link, save_path, chunk_size=8192):
     except requests.exceptions.RequestException as e:
         print(f"Failed to download the file: {e}")
         return False
-
-
-logger = logging.getLogger(__name__)
 
 
 def download_figshare_file(url: str, download_dir: str, file_name: str) -> str:
