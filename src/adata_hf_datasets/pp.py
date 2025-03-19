@@ -2,8 +2,76 @@ import pybiomart
 import anndata
 import pandas as pd
 import logging
+import scanpy as sc
+from pathlib import Path
+import os
 
 logger = logging.getLogger(__name__)
+
+
+def pp_geneformer(
+    infile: str,
+    outfile: str,
+    overwrite: bool = False,
+):
+    """
+    Preprocess an AnnData file for Geneformer embeddings.
+
+    Parameters
+    ----------
+    infile : str
+        Path to the input AnnData file (H5AD).
+    outfile : str
+        Path to the output AnnData file after preprocessing.
+    add_ensembl_func : callable
+        A function that adds 'ensembl_id' to `adata.var`, e.g. 'add_ensembl_ids(adata)'
+        from your code. Must work on the chunk's var as needed.
+    chunk_size : int, optional
+        Number of cells (rows) to process at a time if you are chunking.
+        If your dataset is still too large, you can lower this.
+    overwrite : bool, optional
+        If True, overwrite the output file if it exists.
+
+    Notes
+    -----
+    - If your data is absolutely huge, you may need an advanced chunked approach
+      (e.g. reading partial slices). For moderate data, 'backed' mode
+      might suffice if you have enough memory for the partial steps.
+    - This function modifies obs and var. It must be able to write changes to disk,
+      so be mindful of anndata’s limitations in 'backed' mode.
+    - One simpler approach is to read the entire data if you have enough memory to at
+      least hold obs and var (but not necessarily X). Then write out the new file.
+    """
+    if Path(outfile).exists() and not overwrite:
+        raise FileExistsError(
+            f"Output file {outfile} already exists. Set overwrite=True to replace it."
+        )
+
+    logger.info("Loading AnnData from %s ...", infile)
+    # A direct approach is to load in memory if you can handle obs,var in memory:
+    adata = sc.read(infile)  # or None if you want to keep X on disk
+
+    # 1. Add ensembl IDs if not present
+    if "ensembl_id" not in adata.var.columns:
+        logger.info("Adding 'ensembl_id' to adata.var.")
+        add_ensembl_ids(adata)  # user-provided function
+
+    # 2. Add n_counts if not present
+    if "n_counts" not in adata.obs.columns:
+        logger.info("Calculating n_counts, this requires scanning the data once.")
+        sc.pp.calculate_qc_metrics(adata, inplace=True)
+        adata.obs["n_counts"] = adata.obs.total_counts
+    # 3. Attach a stable sample index
+    if "sample_index" not in adata.obs.columns:
+        logger.info("Adding a stable sample_index to obs.")
+        n_obs = adata.shape[0]
+        adata.obs["sample_index"] = range(n_obs)
+
+    # Force full write to a new file, removing the old .backed references
+    logger.info("Writing preprocessed AnnData to %s", outfile)
+    os.makedirs(os.path.dirname(outfile), exist_ok=True)
+    adata.write(outfile)
+    logger.info("Preprocessing done. Preprocessed file: %s", outfile)
 
 
 def check_ensembl_ids(ensembl_ids):
@@ -91,7 +159,7 @@ def add_ensembl_ids(
     logger.info("Fetching biomart annotations from Ensembl. This may take a moment...")
 
     dataset = pybiomart.Dataset(
-        name="hsapiens_gene_ensembl", host="http://www.ensembl.org"
+        name=f"{species}_gene_ensembl", host="http://www.ensembl.org"
     )
     biomart_df = dataset.query(attributes=["ensembl_gene_id", "external_gene_name"])
 

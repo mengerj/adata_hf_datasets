@@ -5,10 +5,10 @@ from scvi.hub import HubModel
 from scvi.model import SCVI
 from pathlib import Path
 import os
-from datetime import datetime
-import shutil
+import tempfile
 import psutil
 import scanpy as sc
+from anndata.experimental import AnnLoader
 
 logger = logging.getLogger(__name__)
 
@@ -204,15 +204,14 @@ class GeneformerEmbedder(BaseEmbedder):
             self.emb_extractor_init.update(emb_extractor_init)
 
         # Create a unique temp directory for saving intermediate data
-        time_tag = datetime.now().strftime("%Y%m%d_%H%M%S")
-        self.tmp_dir = self.project_dir / f"tmp_geneformer_{time_tag}"
-        self.tmp_adata_dir = self.tmp_dir / "adata"
-        self.tmp_adata_dir.mkdir(parents=True, exist_ok=True)
+        # time_tag = datetime.now().strftime("%Y%m%d_%H%M%S")
+        # self.tmp_dir = self.project_dir / f"tmp_geneformer_{time_tag}"
+        # self.tmp_adata_dir = self.tmp_dir / "adata"
+        # self.tmp_adata_dir.mkdir(parents=True, exist_ok=True)
 
         # Name of the tokenized dataset
         self.dataset_name = "geneformer"
         # Where the output tokenized dataset is stored
-        self.out_dataset_dir = self.tmp_dir
 
         logger.info(
             "Initialized GeneformerEmbedder with model_input_size=%d, num_layers=%d, special_model=%s",
@@ -221,9 +220,7 @@ class GeneformerEmbedder(BaseEmbedder):
             self.special_model,
         )
 
-    def prepare(
-        self, adata: anndata.AnnData, do_tokenization: bool = True, **kwargs
-    ) -> None:
+    def prepare(self, adata_path: str, do_tokenization: bool = True, **kwargs) -> None:
         """
         Prepare (preprocess + tokenize) the data for Geneformer embeddings.
 
@@ -250,7 +247,6 @@ class GeneformerEmbedder(BaseEmbedder):
         - Geneformer tokenization is performed by `TranscriptomeTokenizer`.
         """
         try:
-            from adata_hf_datasets.pp import add_ensembl_ids
             from geneformer import TranscriptomeTokenizer
         except ImportError:
             raise ImportError(
@@ -258,23 +254,38 @@ class GeneformerEmbedder(BaseEmbedder):
                 "run 'git submodule update --init --recursive'. Then install geneformer: "
                 "`pip install external/Geneformer`."
             )
-
+        self.adata_path = Path(adata_path)
+        # save the tokenized dataset in the same directory as the adata
+        self.adata_dir = self.adata_path.parent
+        self.out_dataset_dir = self.adata_path.parent / "geneformer"
+        adata = sc.read(self.adata_path, backed="r")
         # 1. Make sure the data has the required fields
         if "ensembl_id" not in adata.var.columns:
-            add_ensembl_ids(adata)
-            logger.info("Added Ensembl IDs to adata.var['ensembl_id'].")
+            logger.error(
+                "ensembl_id not found in adata.var. Run preprocessing script or pp_geneformer first."
+            )
+            raise ValueError(
+                "ensembl_id not found in adata.var. Run preprocessing script or pp_geneformer first."
+            )
         if "n_counts" not in adata.obs.columns:
-            sc.pp.calculate_qc_metrics(adata, inplace=True)
-            adata.obs["n_counts"] = adata.obs.total_counts
-            logger.info("Added 'n_counts' to adata.obs.")
-
-        # 2. Attach a stable sample index
-        adata.obs["sample_index"] = range(adata.shape[0])
+            logger.error(
+                "n_counts not found in adata.obs. Run preprocessing script or pp_geneformer first."
+            )
+            raise ValueError(
+                "n_counts not found in adata.obs. Run preprocessing script or pp_geneformer first."
+            )
+        if "sample_index" not in adata.obs.columns:
+            logger.error(
+                "sample_index not found in adata.obs. Run preprocessing script or pp_geneformer first."
+            )
+            raise ValueError(
+                "sample_index not found in adata.obs. Run preprocessing script or pp_geneformer first."
+            )
 
         # 3. Write to a temporary h5ad
-        h5ad_path = self.tmp_adata_dir / "adata.h5ad"
-        adata.write_h5ad(h5ad_path)
-        logger.info("Wrote AnnData to temporary file: %s", h5ad_path)
+        # h5ad_path = self.tmp_adata_dir / "adata.h5ad"
+        # adata.write_h5ad(h5ad_path)
+        # logger.info("Wrote AnnData to temporary file: %s", h5ad_path)
 
         # 4. Tokenize data if needed
         dataset_path = self.out_dataset_dir / f"{self.dataset_name}.dataset"
@@ -296,8 +307,8 @@ class GeneformerEmbedder(BaseEmbedder):
             )
             # The tokenizer expects a directory containing .h5ad => pass self.tmp_adata_dir
             tk.tokenize_data(
-                str(self.tmp_adata_dir),
-                str(self.tmp_dir),
+                str(self.adata_dir),
+                str(self.out_dataset_dir),
                 self.dataset_name,
                 file_format="h5ad",
             )
@@ -310,7 +321,7 @@ class GeneformerEmbedder(BaseEmbedder):
 
     def embed(
         self,
-        adata: anndata.AnnData,
+        adata_path: str,
         obsm_key: str = "X_geneformer",
         batch_size: int = 16,
         cleanup: bool = True,
@@ -328,9 +339,8 @@ class GeneformerEmbedder(BaseEmbedder):
 
         Parameters
         ----------
-        adata : anndata.AnnData
-            Single-cell dataset. The same object used during `prepare(...)`.
-            We store the final embeddings in this object's `.obsm`.
+        adata_path : str
+            Path to the AnnData file to embed. Has to already be prepared and tokenized.
         obsm_key : str, optional
             Key in `adata.obsm` to store the final embeddings. Defaults to "X_geneformer".
         batch_size : int, optional
@@ -373,6 +383,8 @@ class GeneformerEmbedder(BaseEmbedder):
                 f"No tokenized dataset found at {dataset_path}. "
                 "Did you run `prepare(..., do_tokenization=True)` first?"
             )
+        if not self.adata_path:
+            raise ValueError("Run prepare first to set the adata_path.")
 
         # Create the extractor with updated batch size
         extractor_params = dict(self.emb_extractor_init)
@@ -385,7 +397,7 @@ class GeneformerEmbedder(BaseEmbedder):
         embs_df = extractor.extract_embs(
             str(self.model_dir),
             str(dataset_path),
-            str(self.tmp_dir),
+            str(self.out_dataset_dir),
             output_prefix=f"{self.dataset_name}_embeddings",
             cell_state=None,
         )
@@ -395,11 +407,11 @@ class GeneformerEmbedder(BaseEmbedder):
         embs_matrix = embs_sorted.drop(columns=["sample_index"]).values
 
         # Reload the same data from the temporary .h5ad so we can retrieve obs, var, etc.
-        processed_adata_path = self.tmp_adata_dir / "adata.h5ad"
+        processed_adata_path = self.adata_path
         if not processed_adata_path.exists():
             raise ValueError(f"No processed AnnData found at {processed_adata_path}.")
 
-        adata = anndata.read_h5ad(processed_adata_path)
+        adata = sc.read(processed_adata_path, backed="r")
         # logger.info("Loaded processed AnnData from %s.", processed_adata_path)
 
         # Attach embeddings (in the correct order) back to the *original* adata
@@ -413,11 +425,6 @@ class GeneformerEmbedder(BaseEmbedder):
             embs_matrix.shape,
             obsm_key,
         )
-
-        # Optional cleanup
-        if cleanup:
-            logger.info("Cleaning up temporary directory: %s", self.tmp_dir)
-            shutil.rmtree(self.tmp_dir, ignore_errors=True)
         return adata
 
     def _kill_process(self):
@@ -513,10 +520,6 @@ class SCVIEmbedder(BaseEmbedder):
 
         # Load reference AnnData if needed
         if reference_adata_url is not None:
-            import tempfile
-            import os
-            import scanpy as sc
-
             if file_cache_dir is None:
                 save_dir = tempfile.TemporaryDirectory()
             else:
@@ -538,17 +541,16 @@ class SCVIEmbedder(BaseEmbedder):
         # Set up the scVI model with reference data
         self.scvi_model = self._setup_model_with_ref(model, reference_adata)
 
-    def _prepare_query_adata(self, query_adata: anndata.AnnData):
+    def _prepare_query_adata(self, query_adata: str | Path):
         """
         Private helper to prepare query data for scVI inference.
 
         Parameters
         ----------
-        query_adata : anndata.AnnData
+        query_adata_path : str | Path
             Single-cell dataset to be used as 'query'.
         """
         logger.info("Preparing query AnnData and loading into SCVI model.")
-
         # Set batch key as expected from training data
         query_adata.obs["batch"] = query_adata.obs[self.batch_key].astype("category")
         # Prepare scvi fields
@@ -594,7 +596,8 @@ class SCVIEmbedder(BaseEmbedder):
 
     def embed(
         self,
-        adata: anndata.AnnData,
+        adata_path: str | None = None,
+        adata: anndata.AnnData | None = None,
         obsm_key: str = "X_scvi",
         batch_key="batch",
         **kwargs,
@@ -630,6 +633,9 @@ class SCVIEmbedder(BaseEmbedder):
         if self.scvi_model is None:
             raise ValueError("SCVI model is not prepared. Call `prepare(...)` first.")
         # If the query hasn't been loaded yet, load it now:
+        if adata is None and adata_path is not None:
+            # if only a path is given, maybe load the entire data
+            adata = sc.read(adata_path)
         if not hasattr(self.scvi_model, "adata") or self.scvi_model.adata is not adata:
             self._prepare_query_adata(adata)
 
@@ -679,6 +685,199 @@ class SCVIEmbedderFM(SCVIEmbedder):
 
 class InitialEmbedder:
     """
+    A manager class for creating embeddings of single-cell data from file paths.
+
+    Parameters
+    ----------
+    method : str
+        The embedding method to use. For example: ["scvi_fm", "geneformer", ...].
+    embedding_dim : int
+        Dimensionality of the output embedding space.
+    init_kwargs : dict, optional
+        Additional keyword arguments to pass to the chosen embedder.
+    """
+
+    def __init__(
+        self,
+        method: str,
+        embedding_dim: int = 64,
+        **init_kwargs,
+    ):
+        """
+        Initialize the manager and select the embedding method.
+
+        Parameters
+        ----------
+        method : str
+            The embedding method to use. For example: ["scvi_fm", "geneformer", ...].
+        embedding_dim : int
+            Dimensionality of the output embedding space.
+        init_kwargs : dict, optional
+            Additional keyword arguments to pass to the chosen embedder.
+        """
+        self.method = method
+        self.embedding_dim = embedding_dim
+        self.init_kwargs = init_kwargs or {}
+
+        # You already have these classes defined (SCVIEmbedder, SCVIEmbedderFM, GeneformerEmbedder, etc.)
+        embedder_classes = {
+            "scvi_fm": SCVIEmbedderFM,  # for scVI
+            "geneformer": GeneformerEmbedder,
+            # "pca": PCAEmbedder, etc., if needed
+        }
+
+        if method not in embedder_classes:
+            raise ValueError(f"Unknown embedding method: {method}")
+
+        self.embedder = embedder_classes[method](
+            embedding_dim=embedding_dim, **self.init_kwargs
+        )
+
+        # For convenience, you might store a flag if the method requires full AnnData in memory:
+        # (Here we check if it's an SCVIEmbedder or you can define a property in each embedder.)
+        self.requires_full_adata = isinstance(self.embedder, SCVIEmbedder)
+        logger.info(
+            "Initialized InitialEmbedder with method=%s, embedding_dim=%d. requires_full_adata=%s",
+            self.method,
+            self.embedding_dim,
+            self.requires_full_adata,
+        )
+
+    def prepare(self, adata_path: str, **prepare_kwargs):
+        """
+        Prepare the embedder. For methods like SCVI, this might load from S3/Hub;
+        for Geneformer, it might tokenize, etc.
+
+        This now accepts a file path instead of an in-memory AnnData.
+
+        Parameters
+        ----------
+        adata_path : str
+            Path to the single-cell data file (e.g., .h5ad) to prepare.
+        **prepare_kwargs : dict
+            Additional keyword arguments passed to the embedder's `prepare()` method.
+
+        Notes
+        -----
+        The data source is a user-provided .h5ad file.
+        """
+        logger.info(
+            "Preparing method '%s' with embedding_dim=%d",
+            self.method,
+            self.embedding_dim,
+        )
+        # Most embedders do not strictly require the entire data in memory just for "prepare".
+        # So we can simply pass the file path.
+        self.embedder.prepare(adata_path=adata_path, **prepare_kwargs)
+
+    def embed(
+        self,
+        adata_path: str,
+        obsm_key: str | None = None,
+        output_path: str | None = None,
+        batch_size: int = 10000,
+        **embed_kwargs,
+    ):
+        """
+        Transform the data into the learned embedding space. If the embedder
+        requires a full AnnData in memory (e.g., SCVI), we perform chunk-based
+        processing and write out a concatenated result on disk.
+
+        Parameters
+        ----------
+        adata_path : str
+            Path to the single-cell data file (e.g., .h5ad) to embed.
+        obsm_key : str, optional
+            Key in `adata.obsm` to store the embeddings (default: "X_{self.method}").
+        output_path : str, optional
+            Where to write the embedded AnnData. If None, overwrites `adata_path`.
+        batch_size : int, optional
+            Number of observations to load in each chunk for memory-limited processing.
+        **embed_kwargs : dict
+            Additional kwargs for the underlying embedder's `embed` method.
+
+        Returns
+        -------
+        anndata.AnnData
+            AnnData object on which embedding was performed (with an updated `obsm`).
+            - If chunk-based mode, returns the final *in-memory* concatenation.
+            - The same result is also written to `output_path` on disk.
+
+        Notes
+        -----
+        - Data is user-provided as `.h5ad` and loaded in chunks if needed.
+        - If the embedder does not require full AnnData, we simply call
+          `self.embedder.embed(adata_path, ...)` directly.
+        - If the embedder does need a full AnnData in memory (like scVI),
+          we load in chunks from disk using `AnnLoader`, call the embedder
+          on each chunk in memory, and concatenate the chunks on disk.
+        """
+        if output_path is None:
+            # make a new outputpath based on input path +_scvi_emb
+            output_path = adata_path.replace(".h5ad", f"_{self.method}_emb.h5ad")
+        if obsm_key is None:
+            obsm_key = f"X_{self.method}"
+
+        logger.info(
+            "Embedding data using method '%s'. Output to '%s'. obsm_key=%s",
+            self.method,
+            output_path,
+            obsm_key,
+        )
+
+        # If the method doesn't require a full AnnData, we can pass it directly.
+        if not self.requires_full_adata:
+            # The embedder itself is prepared to accept file paths directly:
+            adata_emb = self.embedder.embed(
+                adata_path=adata_path, obsm_key=obsm_key, **embed_kwargs
+            )
+            adata_emb.write_h5ad(output_path)
+            return adata_emb
+
+        # Otherwise, we do chunk-based embedding:
+        logger.info("Using chunk-based approach for method '%s'.", self.method)
+        adata = sc.read(adata_path, backed="r")
+        loader = AnnLoader(adatas=adata, batch_size=batch_size)
+        chunk_list = []
+
+        # Use a context manager to ensure the temporary directory is properly cleaned up
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            for i, chunk in enumerate(loader):
+                logger.info(
+                    "Processing chunk %d with shape obs x var = %s x %s",
+                    i,
+                    chunk.n_obs,
+                    chunk.n_vars,
+                )
+
+                # Move chunk fully into memory
+                chunk_in_memory = chunk.to_adata()
+
+                # Let the embedder produce embeddings
+                chunk_adata = self.embedder.embed(
+                    adata_path=None,  # Not used because we're passing chunk_in_memory directly
+                    adata=chunk_in_memory,
+                    obsm_key=obsm_key,
+                    **embed_kwargs,
+                )
+
+                # Create a path for the chunk file within the temporary directory
+                chunk_path = Path(tmp_dir) / f"chunk_{i}.h5ad"
+                chunk_adata.write_h5ad(chunk_path)
+                chunk_list.append(chunk_path)
+                del chunk_adata
+
+            # Concatenate all embedded chunks in memory
+            anndata.experimental.concat_on_disk(
+                in_files=chunk_list, out_file=output_path
+            )
+        # Write the final result to disk
+        logger.info("Wrote final embedded AnnData to %s", output_path)
+
+
+'''
+class InitialEmbedder:
+    """
     Main interface for creating embeddings of single-cell data.
     """
 
@@ -719,7 +918,7 @@ class InitialEmbedder:
             embedding_dim=embedding_dim, **self.init_kwargs
         )
 
-    def prepare(self, adata=None, **prepare_kwargs):
+    def prepare(self, adata_path=None, **prepare_kwargs):
         """
         Prepare the embedder. For methods like PCA, this trains the model;
         for SCVI, this loads from S3 or the Hub, etc.
@@ -736,16 +935,16 @@ class InitialEmbedder:
             self.method,
             self.embedding_dim,
         )
-        self.embedder.prepare(adata=adata, **prepare_kwargs)
+        self.embedder.prepare(adata=adata_path, **prepare_kwargs)
 
-    def embed(self, adata, obsm_key=None, **embed_kwargs):
+    def embed(self, adata_path, obsm_key=None, **embed_kwargs):
         """
         Transform the data into the learned embedding space.
 
         Parameters
         ----------
-        adata : anndata.AnnData
-            Single-cell dataset to be transformed.
+        adata_path : str
+            Path to the AnnData file to embed.
         obsm_key : str, optional
             Key in `adata.obsm` to store the embeddings (default: "X_{method}").
         **embed_kwargs : dict
@@ -762,4 +961,5 @@ class InitialEmbedder:
         logger.info(
             "Embedding data using method '%s'. Storing in '%s'.", self.method, obsm_key
         )
-        return self.embedder.embed(adata, obsm_key=obsm_key, **embed_kwargs)
+        return self.embedder.embed(adata_path = adata_path, obsm_key=obsm_key, **embed_kwargs)
+'''
