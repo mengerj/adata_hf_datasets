@@ -12,6 +12,7 @@ from huggingface_hub import HfApi
 import tempfile
 from string import Template
 import scipy.sparse as sp
+import pandas as pd
 
 logger = logging.getLogger(__name__)
 
@@ -52,6 +53,99 @@ def split_anndata(adata: anndata.AnnData, train_size: float = 0.8):
     val_adata = adata[val_indices]
 
     return train_adata, val_adata
+
+
+def consolidate_low_frequency_categories(
+    adata: anndata.AnnData, columns: list | str, threshold: int, remove=False
+):
+    """Consolidates low frequency categories in specified columns of an AnnData object.
+
+    Modifies the AnnData object's .obs by setting entries in specified columns
+    to 'remaining {column_name}' or removing them if their frequency is below a specified threshold.
+    Converts columns to non-categorical if necessary to adjust the categories dynamically.
+
+    Parameters
+    ----------
+    adata
+        The AnnData object to be processed.
+    columns
+        List of column names in adata.obs to check for low frequency.
+    threshold
+        Frequency threshold below which categories are considered low.
+    remove
+        If True, categories below the threshold are removed entirely.
+
+    Returns
+    -------
+    anndata.AnnData: The modified AnnData object.
+    """
+    # Ensure the object is loaded into memory if it's in backed mode
+    if adata.isbacked:
+        adata = adata.to_memory()
+    adata_cut = adata.copy()
+    if not isinstance(columns, list):
+        columns = [columns]
+    for col in columns:
+        if col in adata_cut.obs.columns:
+            # Convert column to string if it's categorical
+            if isinstance(adata_cut.obs[col].dtype, pd.CategoricalDtype):
+                as_string = adata_cut.obs[col].astype(str)
+                adata_cut.obs[col] = as_string
+
+            # Calculate the frequency of each category
+            freq = adata_cut.obs[col].value_counts()
+
+            # Identify low frequency categories
+            low_freq_categories = freq[freq < threshold].index
+
+            if remove:
+                # Remove entries with low frequency categories entirely
+                mask = ~adata_cut.obs[col].isin(low_freq_categories)
+                adata_cut._inplace_subset_obs(mask)
+                # Convert column back to categorical with new categories
+                adata_cut.obs[col] = pd.Categorical(adata_cut.obs[col])
+            else:
+                # Update entries with low frequency categories to 'remaining {col}'
+                adata_cut.obs.loc[adata_cut.obs[col].isin(low_freq_categories), col] = (
+                    f"remaining {col}"
+                )
+
+                # Convert column back to categorical with new categories
+                adata_cut.obs[col] = pd.Categorical(adata_cut.obs[col])
+
+        else:
+            print(f"Column {col} not found in adata_cut.obs")
+
+    return adata_cut
+
+
+def fix_non_numeric_nans(adata: anndata.AnnData) -> None:
+    """
+    For each column in ``adata.obs`` that is not strictly numeric,
+    replace NaN with 'unknown'. This prevents mixed float/string
+    issues that SCVI can run into when sorting categorical columns.
+
+    Parameters
+    ----------
+    adata : anndata.AnnData
+        The AnnData object to fix in-place. Must have .obs attribute.
+    """
+    from pandas.api.types import is_numeric_dtype, is_categorical_dtype
+
+    for col in adata.obs.columns:
+        if is_numeric_dtype(adata.obs[col]):
+            # strictly numeric -> do nothing
+            continue
+
+        if is_categorical_dtype(adata.obs[col]):
+            # For a categorical column, we must add a new category
+            # before filling with it
+            if "unknown" not in adata.obs[col].cat.categories:
+                adata.obs[col] = adata.obs[col].cat.add_categories(["unknown"])
+            adata.obs[col] = adata.obs[col].fillna("unknown")
+        else:
+            # For object/string columns, cast to str, then fillna
+            adata.obs[col] = adata.obs[col].astype(str).fillna("unknown")
 
 
 def setup_logging():
