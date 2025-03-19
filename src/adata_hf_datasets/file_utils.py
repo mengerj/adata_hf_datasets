@@ -384,47 +384,86 @@ def get_share_link(nextcloud_url, username, password, remote_path):
 
 def download_file_from_share_link(share_link, save_path, chunk_size=8192):
     """
-    Downloads a file from a Nextcloud share link and checks if it's a valid .h5ad file.
+    Downloads a file from a Nextcloud share link and validates it based on its suffix.
 
-    Parameters:
-        share_link (str): The full share link URL to the file.
-        save_path (str): The local path where the file should be saved.
+    Parameters
+    ----------
+    share_link : str
+        The full share link URL to the file.
+    save_path : str
+        The local path where the file should be saved.
+    chunk_size : int, optional
+        Size of each chunk in bytes during streaming; defaults to 8192.
 
-    Returns:
-        bool: True if the download was successful and the file is a valid .h5ad, False otherwise.
+    Returns
+    -------
+    bool
+        True if the download was successful and the file is valid based on its suffix;
+        False otherwise.
 
-    Example:
-        success = download_file_from_share_link('https://nxc-fredato.imbi.uni-freiburg.de/s/Zs6pAa8P5ynDTiP',
-                                                'path/to/save/file.h5ad')
-        print("Download successful:", success)
+    References
+    ----------
+    Data is expected to come from a Nextcloud share link and is validated in memory.
     """
-    # Send a GET request to the share link
+    # Step 1: Stream download the file
     try:
-        # Step 1: Stream download the file
         with requests.get(share_link, stream=True) as response:
             response.raise_for_status()
 
             with open(save_path, "wb") as file:
                 for chunk in response.iter_content(chunk_size=chunk_size):
                     file.write(chunk)
+    except requests.exceptions.RequestException as e:
+        logger.error(f"Failed to download the file from '{share_link}': {e}")
+        return False
 
-        # Step 2: Validate the file structure
-        try:
+    # Step 2: Validate based on suffix
+    file_suffix = os.path.splitext(save_path)[1].lower()
+
+    try:
+        if file_suffix == ".h5ad":
+            # Validate as an anndata-compatible HDF5 file
             with h5py.File(save_path, "r") as h5_file:
-                # Check if required keys exist in the HDF5 structure
-                required_keys = ["X", "obs", "var"]  # Common in .h5ad files
+                required_keys = ["X", "obs", "var"]  # Common in .h5ad
                 if all(key in h5_file for key in required_keys):
-                    print("File is a valid .h5ad file.")
+                    logger.info("File is a valid .h5ad file.")
                     return True
                 else:
-                    print("⚠️ File is an HDF5 file but missing required .h5ad keys.")
+                    logger.warning(
+                        "File is an HDF5 file but missing required .h5ad keys."
+                    )
                     return False
-        except Exception as e:
-            print(f"Error while checking the file: {e}")
-            return False
 
-    except requests.exceptions.RequestException as e:
-        print(f"Failed to download the file: {e}")
+        elif file_suffix == ".npz":
+            # Validate as a .npz file (we can at least confirm we can load it)
+            try:
+                np.load(save_path, allow_pickle=True)
+                logger.info("File is a valid .npz file.")
+                return True
+            except Exception as e:
+                logger.error(f"Error while validating the downloaded file: {e}")
+                return False
+
+        elif file_suffix == ".npy":
+            # Validate as a .npy file
+            try:
+                np.load(save_path, allow_pickle=True)
+                logger.info("File is a valid .npy file.")
+                return True
+            except Exception as e:
+                logger.error(f"Error while validating the downloaded file: {e}")
+                return False
+
+        else:
+            # If your use-case requires more file types, add them here
+            logger.warning(
+                f"No specific validation logic for files of type '{file_suffix}'. "
+                "Skipping validation."
+            )
+            return True
+
+    except Exception as e:
+        logger.error(f"Error while validating the downloaded file: {e}")
         return False
 
 

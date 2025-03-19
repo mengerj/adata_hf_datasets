@@ -192,6 +192,8 @@ class SCVIEmbedder(BaseAnnDataEmbedder):
         batch_key: str,
         layer_key: str = "counts",
         n_cells: int = 5000,
+        batch_size=128,
+        num_workers=2,
         **kwargs,
     ) -> None:
         """
@@ -223,6 +225,9 @@ class SCVIEmbedder(BaseAnnDataEmbedder):
             raise ImportError("scvi-tools is not installed.")
 
         logger.info("Setting up scVI model with embedding_dim=%d", self.embedding_dim)
+
+        logger.info("Setting number of workers for dataloader to %d", num_workers)
+        scvi.settings.dl_num_workers = num_workers
 
         # Ensure batch_key has no missing values
         adata.obs[batch_key] = adata.obs[batch_key].cat.add_categories("other")
@@ -256,7 +261,7 @@ class SCVIEmbedder(BaseAnnDataEmbedder):
             )
 
         logger.info("Training scVI model.")
-        self.model.train(max_epochs=50)
+        self.model.train(max_epochs=200, batch_size=batch_size)
 
     def embed(self, adata: anndata.AnnData, obsm_key: str = "X_scvi", **kwargs) -> None:
         """Use the trained scVI model to compute latent embeddings for each cell."""
@@ -378,7 +383,7 @@ class GeneformerEmbedder(BaseAnnDataEmbedder):
         logging.info("Geneformer model is pretrained and does not require fitting.")
         pass
 
-    def embed(self, adata, obsm_key: str = "X_geneformer") -> None:
+    def embed(self, adata, obsm_key: str = "X_geneformer", batch_size=16) -> None:
         """Calling the embedding function of geneformer, based on the previously tokenized dataset and the chosen model configurations.
         If you encoder memory issues, try lowering the batch_size. Default is 10.
 
@@ -416,7 +421,7 @@ class GeneformerEmbedder(BaseAnnDataEmbedder):
             # initialise the transcriptome tokenizer
             tk = TranscriptomeTokenizer(
                 custom_attr_name_dict={"sample_index": "sample_index"},
-                nproc=1,
+                nproc=6,
                 gene_median_file=self.gene_median_file,
                 token_dictionary_file=self.token_dictionary_file,
                 gene_mapping_file=self.ensembl_mapping_dict,
@@ -436,6 +441,7 @@ class GeneformerEmbedder(BaseAnnDataEmbedder):
                 "Tokenized geneformer dataset already exists. Skipping tokenization."
             )
         self.out_dataset_dir = self.tmp_dir
+        self.input_dict_defaults["forward_batch_size"] = batch_size
         extractor = EmbExtractor(**self.input_dict_defaults)
 
         embs = extractor.extract_embs(
@@ -454,7 +460,7 @@ class GeneformerEmbedder(BaseAnnDataEmbedder):
         # self._kill_process()
         # Clean up the tmp files
         # remove the tmp files
-        os.system(f"rm -r {self.tmp_dir}")
+        os.system(f"rm -rf {self.tmp_dir}")
         return adata
 
     def _kill_process(self):

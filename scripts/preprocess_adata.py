@@ -15,13 +15,13 @@ References
 
 import os
 import sys
-import logging
 from pathlib import Path
 import anndata
 
 import hydra
 from omegaconf import DictConfig
 from dotenv import load_dotenv
+from hydra.core.hydra_config import HydraConfig
 
 from adata_hf_datasets.utils import (
     setup_logging,
@@ -30,8 +30,9 @@ from adata_hf_datasets.utils import (
     split_anndata,
 )
 from adata_hf_datasets.initial_embedder import InitialEmbedder
+from adata_hf_datasets.sys_monitor import SystemMonitor
 
-logger = logging.getLogger(__name__)
+logger = setup_logging()
 
 
 @hydra.main(version_base=None, config_path="../conf", config_name="preprocess_adata")
@@ -50,15 +51,20 @@ def main(cfg: DictConfig):
         - train_split (float): Fraction of data in the train set
         - split_dataset (bool): Whether to split into train/val or keep single
     """
-    setup_logging()
     load_dotenv(override=True)
+
+    hydra_run_dir = HydraConfig.get().run.dir
+    output_dir = cfg.output_dir
+    monitor = SystemMonitor(logger=logger)
+    monitor.start()
 
     files = cfg.files
     methods = cfg.methods
     batch_keys = cfg.batch_keys
-    output_dir = cfg.output_dir
     train_split = cfg.train_split
     split_dataset = cfg.split_dataset
+    batch_size = cfg.batch_size
+    num_workers = cfg.num_workers
 
     # Validate length of batch_keys vs. files
     if len(batch_keys) != len(files):
@@ -77,7 +83,12 @@ def main(cfg: DictConfig):
             output_dir=output_dir,
             train_split=train_split,
             split_dataset=split_dataset,
+            batch_size=batch_size,
+            num_workers=num_workers,
         )
+    monitor.stop()
+    monitor.save(hydra_run_dir)
+    monitor.plot_metrics(hydra_run_dir)
 
 
 def preprocess_and_save_adata(
@@ -87,6 +98,8 @@ def preprocess_and_save_adata(
     output_dir,
     train_split=0.9,
     split_dataset=True,
+    batch_size=32,
+    num_workers=1,
 ):
     """
     Preprocess a single raw AnnData file: load, remove zero-variance features,
@@ -147,8 +160,10 @@ def preprocess_and_save_adata(
     for method in methods:
         logger.info("Embedding with method: %s", method)
         embedder = InitialEmbedder(method=method)
-        embedder.fit(adata, batch_key=batch_key)
-        adata = embedder.embed(adata)
+        embedder.fit(
+            adata, batch_key=batch_key, batch_size=batch_size, num_workers=num_workers
+        )
+        adata = embedder.embed(adata, batch_size=batch_size)
 
     # Either split or keep as single
     os.makedirs(output_subdir, exist_ok=True)

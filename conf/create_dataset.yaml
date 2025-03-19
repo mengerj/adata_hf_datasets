@@ -2,21 +2,21 @@
 # If split_dataset is true, we expect processed_paths_train/val for "train"/"val" HF splits.
 # If split_dataset is false, we expect processed_paths_all for a single "test" (or "all") split.
 
-split_dataset: true
+split_dataset: false
 
 # These get used only if split_dataset is true
 processed_paths_train:
+  #- "data/RNA/processed/train/geo_70k/train.h5ad"
   - "data/RNA/processed/train/cellxgene_pseudo_bulk_3_5k/train.h5ad"
-  #- "data/RNA/processed/train/cellxgene_pseudo_bulk_3_5k/train.h5ad"
 processed_paths_val:
+  #- "data/RNA/processed/train/geo_70k/val.h5ad"
   - "data/RNA/processed/train/cellxgene_pseudo_bulk_3_5k/val.h5ad"
-  #- "data/RNA/processed/train/cellxgene_pseudo_bulk_3_5k/val.h5ad"
 
 # This gets used only if split_dataset is false (a single dataset).
 processed_paths_all:
-  - "data/RNA/processed/test/human_pancreas_norm_complexBatch/all.h5ad"
+  - "data/RNA/processed/test/tabula_sapiens_bone_marrow/all.h5ad"
 
-caption_key: "tissue"
+caption_key: "cell_type"
 negatives_per_sample: 2
 
 # For test sets without a proper text caption, you might set dataset_type="single". For train/val, you might use "pairs" or "multiplets".

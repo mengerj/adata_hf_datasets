@@ -72,6 +72,7 @@ class SystemMonitor:
                         self.gpu_handles.append(handle)
                     except ValueError:
                         handle = pynvml.nvmlDeviceGetHandleByUUID(entry)
+                        self.gpu_handles.append(handle)
             else:
                 if self.gpu_indices is not None:
                     for idx in self.gpu_indices:
