@@ -1,0 +1,26 @@
+# Input file path (preprocessed data)
+input_files:
+  - "data/RNA/processed/train/cellxgene_pseudo_bulk_3_5k/train.h5ad"
+  - "data/RNA/processed/train/cellxgene_pseudo_bulk_3_5k/val.h5ad"
+
+# Embedding method to use
+# One of: ["scvi_fm", "geneformer", "pca", "hvg"]
+method: "geneformer"
+
+# Batch key in adata.obs (used by scvi_fm)
+batch_key: "batch"
+# batch sized used by geneformer
+batch_size: 16
+# Optional: Override default cache directories
+# If not specified, will use system-appropriate user cache directories
+# cache_dir: "path/to/custom/model/cache"
+# file_cache_dir: "path/to/custom/data/cache"
+
+# Number of cells to process at once
+chunk_size: 10000
+
+# Dimension of the embedding
+embedding_dim: 64
+
+# Whether to overwrite existing files
+overwrite: true
