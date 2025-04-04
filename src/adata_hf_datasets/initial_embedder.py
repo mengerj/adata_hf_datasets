@@ -11,6 +11,7 @@ import scanpy as sc
 from anndata.experimental import AnnLoader
 import scipy.sparse as sp
 import numpy as np
+from appdirs import user_cache_dir
 
 logger = logging.getLogger(__name__)
 
@@ -666,7 +667,7 @@ class SCVIEmbedder(BaseEmbedder):
         """
         super().__init__(embedding_dim=embedding_dim)
         self.model = None
-        self.kwargs = kwargs
+        self.init_kwargs = kwargs
 
     def prepare(self, adata_path: str, **kwargs):
         """
@@ -691,16 +692,16 @@ class SCVIEmbedder(BaseEmbedder):
         # Decide which approach to use based on the presence of certain kwargs.
         hub_repo_id = kwargs.get("hub_repo_id", self.init_kwargs.get("hub_repo_id"))
         reference_s3_bucket = kwargs.get(
-            "reference_s3_bucket", "cellxgene-contrib-public"
+            "reference_s3_bucket", self.init_kwargs.get("reference_s3_bucket")
         )
         reference_s3_path = kwargs.get(
-            "reference_s3_path", "models/scvi/2024-02-12/homo_sapiens/modelhub"
+            "reference_s3_path", self.init_kwargs.get("reference_s3_path")
         )
         reference_adata_url = kwargs.get(
             "reference_adata_url",
-            "https://cellxgene-contrib-public.s3.amazonaws.com/models/scvi/2024-02-12/homo_sapiens/adata-spinal-cord-minified.h5ad",
+            self.init_kwargs.get("reference_adata_url"),
         )
-        cache_dir = kwargs.get("cache_dir", None)
+        cache_dir = kwargs.get("cache_dir", self.init_kwargs.get("cache_dir"))
         file_cache_dir = kwargs.get(
             "file_cache_dir", self.init_kwargs.get("file_cache_dir")
         )
@@ -722,7 +723,7 @@ class SCVIEmbedder(BaseEmbedder):
                 s3_path=reference_s3_path,
                 pull_anndata=False,
                 config=botocore.config.Config(signature_version=botocore.UNSIGNED),
-                cache_dir=cache_dir,
+                cache_dir=Path(cache_dir),
             )
         else:
             raise ValueError("No valid SCVI loading parameters provided.")
@@ -734,8 +735,8 @@ class SCVIEmbedder(BaseEmbedder):
             else:
                 if not file_cache_dir.endswith("/"):
                     file_cache_dir += "/"
-                save_dir = Path(file_cache_dir + "adata.h5ad")
-            adata_path = os.path.join(save_dir.name, "cellxgene_reference_adata.h5ad")
+                save_dir = Path(file_cache_dir)
+            adata_path = os.path.join(save_dir, "cellxgene_reference_adata.h5ad")
             logger.info("Reading reference adata from URL %s", reference_adata_url)
             reference_adata = sc.read(adata_path, backup_url=reference_adata_url)
         else:
@@ -760,16 +761,33 @@ class SCVIEmbedder(BaseEmbedder):
             Single-cell dataset to be used as 'query'.
         """
         logger.info("Preparing query AnnData and loading into SCVI model.")
+
+        # Check if counts layer exists
+        if "counts" not in query_adata.layers:
+            raise ValueError(
+                "No 'counts' layer found in adata. Run preprocessing first."
+            )
+
+        # X will be modified to match the genes in the reference data and the training size of the scvi Model. But we
+        # need to keep the original object for later.
+        self.adata_backup = query_adata.copy()
+        query_adata.X = query_adata.layers["counts"].copy()
+
         # Set batch key as expected from training data
         query_adata.obs["batch"] = query_adata.obs[self.batch_key].astype("category")
+
         # Prepare scvi fields
         SCVI.prepare_query_anndata(query_adata, self.scvi_model)
+
         # fix non-numerics
         fix_non_numeric_nans(query_adata)
+
         # Load query data
         query_model = SCVI.load_query_data(query_adata, self.scvi_model)
         query_model.is_trained = True
         self.scvi_model = query_model
+
+        logger.info("Successfully prepared query data for SCVI")
 
     @staticmethod
     def _setup_model_with_ref(model, reference_adata):
@@ -852,6 +870,8 @@ class SCVIEmbedder(BaseEmbedder):
             "Computing SCVI latent representation, storing in `%s`...", obsm_key
         )
         latent_repr = self.scvi_model.get_latent_representation()
+        # restore the original adata
+        adata = self.adata_backup
         adata.obsm[obsm_key] = latent_repr
         return adata
 
@@ -870,7 +890,9 @@ class SCVIEmbedderFM(SCVIEmbedder):
         embedding_dim : int
             Dimensionality of the embedding.
         init_kwargs : dict
-            Additional keyword arguments.
+            Additional keyword arguments including:
+            - cache_dir: Override default cache directory for model files
+            - file_cache_dir: Override default cache directory for reference data files
 
         References
         ----------
@@ -878,14 +900,37 @@ class SCVIEmbedderFM(SCVIEmbedder):
           'cellxgene-contrib-public' S3 bucket at the specified path.
         - The reference AnnData is provided via the reference_adata_url parameter.
         """
+        # Get the default cache directories using appdirs
+        app_name = "adata_hf_datasets"
+        default_cache_root = user_cache_dir(app_name)
+
+        # Create default paths for different types of cache
+        default_model_cache = os.path.join(
+            default_cache_root, "models", "scvi_cellxgene"
+        )
+        default_data_cache = os.path.join(default_cache_root, "reference_data", "scvi")
+
+        # Ensure the cache directories exist
+        os.makedirs(default_model_cache, exist_ok=True)
+        os.makedirs(default_data_cache, exist_ok=True)
+
+        # Use provided cache dirs or defaults
+        cache_dir = init_kwargs.pop("cache_dir", default_model_cache)
+        file_cache_dir = init_kwargs.pop("file_cache_dir", default_data_cache)
+
         default_kwargs = {
             "reference_s3_bucket": "cellxgene-contrib-public",
             "reference_s3_path": "models/scvi/2024-02-12/homo_sapiens/modelhub",
             "reference_adata_url": "https://cellxgene-contrib-public.s3.amazonaws.com/models/scvi/2024-02-12/homo_sapiens/adata-spinal-cord-minified.h5ad",
-            "cache_dir": "../models/scvi_cellxgene",
-            "file_cache_dir": "data/RNA/scvi_reference_data/cellxgene_2024-02-12_homo_sapiens/",
+            "cache_dir": cache_dir,
+            "file_cache_dir": file_cache_dir,
         }
-        # Merge user overrides
+
+        # Log cache locations
+        logger.info(f"Using model cache directory: {cache_dir}")
+        logger.info(f"Using reference data cache directory: {file_cache_dir}")
+
+        # Merge user overrides with defaults
         default_kwargs.update(init_kwargs)
 
         # Call parent constructor
@@ -987,7 +1032,7 @@ class InitialEmbedder:
         adata_path: str,
         obsm_key: str | None = None,
         output_path: str | None = None,
-        batch_size: int = 10000,
+        chunk_size: int = 10000,
         **embed_kwargs,
     ):
         """
@@ -1003,7 +1048,7 @@ class InitialEmbedder:
             Key in `adata.obsm` to store the embeddings (default: "X_{self.method}").
         output_path : str, optional
             Where to write the embedded AnnData. If None, overwrites `adata_path`.
-        batch_size : int, optional
+        chunk_size : int, optional
             Number of observations to load in each chunk for memory-limited processing.
         **embed_kwargs : dict
             Additional kwargs for the underlying embedder's `embed` method.
@@ -1056,7 +1101,7 @@ class InitialEmbedder:
         # Otherwise, we do chunk-based processing to avoid loading the whole adata object into memory:
         logger.info("Using chunk-based approach for method '%s'.", self.method)
         adata = sc.read(adata_path, backed="r")
-        loader = AnnLoader(adatas=adata, batch_size=batch_size)
+        loader = AnnLoader(adatas=adata, batch_size=chunk_size)
         chunk_list = []
 
         # Use a context manager to ensure the temporary directory is properly cleaned up
