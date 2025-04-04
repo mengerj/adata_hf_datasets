@@ -1,15 +1,12 @@
 # conf/preprocess_adata.yaml
-files:
-  - "data/RNA/raw/train/cellxgene_pseudo_bulk_3_5k.h5ad"
 
-## !!! make sure to adjust out dir train/test accordingly !!
+# Input file path
+input_file: "data/RNA/raw/train/cellxgene_pseudo_bulk_3_5k.h5ad"
+
+# Output directory for processed files
 output_dir: "data/RNA/processed/train"
-## !!! make sure this fits the current dataset
-batch_keys: ["tech"] # match length of 'files' #dataset_title for cellxgene data, and study for geo data #For test datasets, see batch_keys.json
-methods: ["hvg", "pca", "scvi", "geneformer"]
-
-num_workers: 4
-batch_size: 128
+overwrite: true
+# Train/validation split configuration
 train_split: 0.9
 
 # If false, the script will NOT split into train/val but instead
