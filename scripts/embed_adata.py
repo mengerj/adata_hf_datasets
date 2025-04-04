@@ -107,9 +107,8 @@ def main(cfg: DictConfig):
                 return
 
             # Initialize embedder
-            embedder = InitialEmbedder(
-                method=cfg.method, embedding_dim=cfg.embedding_dim
-            )
+            embedding_dim = cfg.embedding_dim_map[cfg.method]
+            embedder = InitialEmbedder(method=cfg.method, embedding_dim=embedding_dim)
 
             # Log event before preparation
             monitor.log_event(f"Starting preparation for {cfg.method}")

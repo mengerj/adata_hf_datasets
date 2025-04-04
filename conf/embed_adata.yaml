@@ -20,7 +20,11 @@ batch_size: 16
 chunk_size: 10000
 
 # Dimension of the embedding
-embedding_dim: 64
+embedding_dim_map:
+  scvi_fm: 50
+  geneformer: 512
+  pca: 50
+  hvg: 1000
 
 # Whether to overwrite existing files
 overwrite: true
