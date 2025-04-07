@@ -18,7 +18,6 @@ from pathlib import Path
 import hydra
 from omegaconf import DictConfig
 from dotenv import load_dotenv
-import anndata as ad
 from adata_hf_datasets.utils import setup_logging, split_anndata
 from adata_hf_datasets.pp import pp_adata
 from adata_hf_datasets.sys_monitor import SystemMonitor
@@ -50,10 +49,6 @@ def main(cfg: DictConfig):
     output_dir = cfg.output_dir
     train_split = cfg.train_split
     split_dataset = cfg.split_dataset
-    adata = ad.read_h5ad(input_file)
-    monitor.log_event("loaded full adata")
-    del adata
-
     # Create output directory structure
     file_stem = Path(input_file).stem
     output_subdir = Path(output_dir) / file_stem
