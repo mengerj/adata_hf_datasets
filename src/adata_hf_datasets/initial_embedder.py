@@ -103,7 +103,13 @@ class HighlyVariableGenesEmbedder(BaseEmbedder):
         ensure_log_norm(adata)
         # First save the raw counts as a layer
 
-    def embed(self, adata: anndata.AnnData, obsm_key: str = "X_hvg", **kwargs) -> None:
+    def embed(
+        self,
+        adata: anndata.AnnData,
+        obsm_key: str = "X_hvg",
+        batch_key: str | None = None,
+        **kwargs,
+    ) -> None:
         """
         Stores the expression of the selected highly variable genes as an embedding in `adata.obsm`.
 
@@ -121,7 +127,7 @@ class HighlyVariableGenesEmbedder(BaseEmbedder):
         # check if any genes contain inf values
         # remove cells with infinity values
         sc.pp.highly_variable_genes(
-            adata, n_top_genes=self.embedding_dim, layer="log-norm"
+            adata, n_top_genes=self.embedding_dim, layer="log-norm", batch_key=batch_key
         )
 
         if "highly_variable" not in adata.var:
@@ -854,7 +860,7 @@ class SCVIEmbedderFM(SCVIEmbedder):
     SCVI embedder preconfigured as a foundation model (FM) loading weights from an scvi model trained on the cellxgene corpus.
     """
 
-    def __init__(self, embedding_dim: int = 64, **init_kwargs):
+    def __init__(self, embedding_dim: int = 50, **init_kwargs):
         """
         Initialize the SCVI FM embedder with defaults for bucket/paths.
 
