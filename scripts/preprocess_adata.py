@@ -22,6 +22,7 @@ import anndata as ad
 from adata_hf_datasets.utils import setup_logging, split_anndata
 from adata_hf_datasets.pp import pp_adata
 from adata_hf_datasets.sys_monitor import SystemMonitor
+from adata_hf_datasets.plotting import qc_evaluation_plots
 from hydra.core.hydra_config import HydraConfig
 
 
@@ -50,9 +51,6 @@ def main(cfg: DictConfig):
     output_dir = cfg.output_dir
     train_split = cfg.train_split
     split_dataset = cfg.split_dataset
-    adata = ad.read_h5ad(input_file)
-    monitor.log_event("loaded full adata")
-    del adata
 
     # Create output directory structure
     file_stem = Path(input_file).stem
@@ -73,7 +71,13 @@ def main(cfg: DictConfig):
         # First preprocess to a temporary file
         temp_processed = output_subdir / "temp_processed.h5ad"
         logger.info("Preprocessing data with pp_adata...")
-        pp_adata(infile=input_file, outfile=str(temp_processed))
+        pp_adata(
+            infile=input_file,
+            outfile=str(temp_processed),
+            category_threshold=cfg.category_threshold,
+            categories=cfg.categories,
+            tag=str(hydra_run_dir),
+        )
 
         # Then split and save
         logger.info(
@@ -82,6 +86,10 @@ def main(cfg: DictConfig):
         import anndata
 
         adata = anndata.read_h5ad(temp_processed)
+        # Create some plots to check the data
+        qc_evaluation_plots(
+            adata, save_plots=True, save_dir=hydra_run_dir, batch_key=cfg.colour_by
+        )
         train_adata, val_adata = split_anndata(adata, train_size=train_split)
         del adata
 
@@ -103,8 +111,14 @@ def main(cfg: DictConfig):
             return
 
         logger.info("Processing single dataset without splitting...")
-        pp_adata(infile=input_file, outfile=str(all_out_path))
+        pp_adata(infile=input_file, outfile=str(all_out_path), tag=str(hydra_run_dir))
         logger.info("Saved processed dataset: %s", all_out_path)
+        adata = ad.read_h5ad(all_out_path)
+        # Create some plots to check the data
+        qc_evaluation_plots(
+            adata, save_plots=True, save_dir=hydra_run_dir, batch_key=cfg.colour_by
+        )
+        del adata
 
     monitor.stop()
     monitor.print_summary()

@@ -4,13 +4,10 @@ import pandas as pd
 import logging
 import scanpy as sc
 import os
-from adata_hf_datasets.utils import (
-    consolidate_low_frequency_categories,
-    is_raw_counts,
-    ensure_log_norm,
-)
+from adata_hf_datasets.utils import consolidate_low_frequency_categories
 import numpy as np
 import scipy.sparse as sp
+from scipy.stats import median_abs_deviation
 import gc
 
 logger = logging.getLogger(__name__)
@@ -21,10 +18,11 @@ def pp_adata(
     outfile: str,
     min_cells: int = 10,
     min_genes: int = 200,
-    columns: list[str] | None = None,
+    categories: list[str] | None = None,
     category_threshold: int = 1,
-    remove: bool = True,
+    remove: bool = True,  # relates only to the removal of low-frequency categories
     call_geneformer: bool = True,
+    tag: str | None = None,
 ) -> None:
     """
     Create an initial preprocessed AnnData file ready for embeddings.
@@ -45,14 +43,16 @@ def pp_adata(
         Minimum number of cells for gene filtering.
     min_genes : int, optional
         Minimum number of genes for cell filtering.
-    columns : List[str] | None, optional
-        Columns in `adata.obs` to consolidate low-frequency categories.
+    categories : List[str] | None, optional
+        categories in `adata.obs` to consolidate low-frequency categories.
     category_threshold : int, optional
         Frequency threshold for category consolidation.
     remove : bool, optional
         If True, remove low-frequency categories entirely.
     call_geneformer : bool, optional
         If True, call `pp_adata_geneformer` on the AnnData after general preprocessing.
+    tag : str | None, optional
+        Optional tag to include into the uns object of the AnnData object.
 
     Returns
     -------
@@ -65,22 +65,40 @@ def pp_adata(
     """
     logger.info("Reading AnnData from %s", infile)
     adata = sc.read(infile)
+    if "counts" in adata.layers:
+        adata.X = adata.layers["counts"]  # start with counts
+    elif is_raw_counts(adata.X):
+        adata.layers["counts"] = adata.X.copy()
+    else:
+        logger.error("X does not contain raw counts. Cannot create 'counts' layer.")
+        raise ValueError("X does not contain raw counts. Cannot create 'counts' layer.")
+    if tag:
+        adata.uns["tag"] = tag
     try:
-        # 1) Basic preprocessing in memory
+        # 1) Basic quality control
+        adata = pp_quality_control(
+            adata,
+            nmads_main=5,
+            nmads_mt=3,
+            pct_counts_mt_threshold=8.0,
+            percent_top=[20, 50, 100],
+        )
+
+        # 2) Basic preprocessing in memory
         adata = pp_adata_general(
             adata=adata,
             min_cells=min_cells,
             min_genes=min_genes,
-            columns=columns,
+            categories=categories,
             category_threshold=category_threshold,
             remove=remove,
         )
 
-        # 2) Optionally call Geneformer preprocessing
+        # 3) Optionally call Geneformer preprocessing
         if call_geneformer:
             adata = pp_adata_geneformer(adata)
 
-        # 3) Write final output
+        # 4) Write final output
         logger.info("Writing final preprocessed AnnData to %s", outfile)
         os.makedirs(os.path.dirname(outfile), exist_ok=True)
         adata.write(outfile)
@@ -101,7 +119,7 @@ def pp_adata_general(
     adata: anndata.AnnData,
     min_cells: int = 10,
     min_genes: int = 200,
-    columns: list[str] | None = None,
+    categories: list[str] | None = None,
     category_threshold: int = 1,
     remove: bool = True,
 ) -> anndata.AnnData:
@@ -112,7 +130,7 @@ def pp_adata_general(
     1. Makes gene and cell names unique.
     2. Filters out genes expressed in fewer than `min_cells` cells and cells
        expressing fewer than `min_genes` genes.
-    3. Consolidates low-frequency categories in specified columns of `adata.obs`.
+    3. Consolidates low-frequency categories in specified categories of `adata.obs`.
     4. Checks if `adata.X` contains raw counts. If so, stores a copy in
        `adata.layers["counts"]`; otherwise raises an error.
     5. Normalizes and log-transforms the data (in place).
@@ -125,8 +143,8 @@ def pp_adata_general(
         Minimum number of cells in which a gene must be expressed to keep that gene.
     min_genes : int, optional
         Minimum number of genes a cell must express to keep that cell.
-    columns : List[str] | None, optional
-        Columns in `adata.obs` to consolidate low-frequency categories.
+    categories : List[str] | None, optional
+        categories in `adata.obs` to consolidate low-frequency categories.
         If None, no consolidation is performed.
     category_threshold : int, optional
         Frequency threshold for consolidating categories. Categories with fewer
@@ -154,16 +172,16 @@ def pp_adata_general(
     sc.pp.filter_genes(adata, min_cells=min_cells)
     sc.pp.filter_cells(adata, min_genes=min_genes)
 
-    # 2) Consolidate low-frequency categories if columns is not None
-    if columns is not None:
+    # 2) Consolidate low-frequency categories if categories is not None
+    if categories is not None:
         logger.info(
-            "Consolidating low-frequency categories in columns: %s with threshold=%d remove=%s",
-            columns,
+            "Consolidating low-frequency categories in categories: %s with threshold=%d remove=%s",
+            categories,
             category_threshold,
             remove,
         )
         adata = consolidate_low_frequency_categories(
-            adata, columns, category_threshold, remove=remove
+            adata, categories, category_threshold, remove=remove
         )
 
     # 3) Store counts in a new layer if X is raw
@@ -240,215 +258,421 @@ def pp_adata_geneformer(
     return adata
 
 
-'''
-def pp_adata(
-    infile: str,
-    outfile: str,
-    min_cells: int = 10,
-    min_genes: int = 200,
-    columns: list[str] | None = None,
-    category_threshold: int = 1,
-    remove: bool = True,
-) -> None:
+def pp_quality_control(
+    adata: anndata.AnnData,
+    nmads_main: int = 5,
+    nmads_mt: int = 3,
+    pct_counts_mt_threshold: float = 8.0,
+    percent_top: list[int] | None = None,
+    log1p_for_qc: bool = True,
+) -> anndata.AnnData:
     """
-    Create an initial preprocessed AnnData file ready for embeddings.
+    Perform quality control filtering on single-cell RNA-seq data based on various metrics.
 
-    This function performs the following steps:
-    1. Calls `pp_geneformer` on the input file to ensure stable metadata.
-    2. Reads the output of `pp_geneformer`, removes zero-variance cells and genes,
-       and consolidates low-frequency categories in specified columns.
-    3. Normalizes, log-transforms, and scales the entire dataset (no PCA).
-
-    The final preprocessed data is written to `outfile`.
+    This function:
+    1. Labels certain genes (mitochondrial, ribosomal, hemoglobin) in `adata.var`.
+    2. Calculates QC metrics for these gene sets (e.g., % mitochondrial reads).
+    3. Identifies outlier cells using a median absolute deviation (MAD) heuristic
+       on metrics like total counts, number of genes, % counts in top genes, etc.
+    4. Filters out low-quality cells (e.g., outliers, high % mt).
 
     Parameters
     ----------
-    infile : str
-        Path to the input AnnData file (H5AD).
-    outfile : str
-        Path to the output AnnData file after preprocessing.
-    columns : List[str] | None, optional
-        Columns in `adata.obs` to consolidate low-frequency categories.
-        If None, no columns are processed for consolidation.
-    category_threshold : int, optional
-        Frequency threshold for low-frequency category consolidation.
-        Defaults to 1 (i.e., categories with <1 occurrence are consolidated/removed).
-    remove : bool, optional
-        If True, remove rows containing low-frequency categories entirely.
-        Otherwise, relabel them as 'remaining <col>'.
-        Defaults to True.
+    adata : anndata.AnnData
+        The AnnData object containing single-cell data.
+    nmads_main : int, optional
+        The number of MADs to define outliers for main QC metrics (total counts,
+        number of genes, etc.). Default is 5.
+    nmads_mt : int, optional
+        The number of MADs to define outliers for mitochondrial percent. Default is 3.
+    pct_counts_mt_threshold : float, optional
+        An absolute threshold for % mitochondrial counts. Cells above this are flagged
+        as outliers. Default is 8.0 (i.e., 8%).
+    percent_top : list of int, optional
+        A list of top gene counts for sc.pp.calculate_qc_metrics (e.g., [20, 50, 100]).
+        If None, defaults to [20].
+    log1p_for_qc : bool, optional
+        Whether to compute log1p values for the QC metrics. Default is True.
 
     Returns
     -------
-    None
-        Writes the final AnnData object to `outfile`.
+    anndata.AnnData
+        A filtered AnnData object with low-quality cells removed.
 
-    Notes
-    -----
-    - Zero-variance genes/cells are removed by explicitly checking variance across
-      each gene and each cell.
-    - The entire dataset is scaled (no PCA is performed here).
-    - You can adapt to chunked or backed-mode reading if memory is limited.
+    References
+    ----------
+    Typical single-cell QC steps might also include:
+    * Checking for doublets (e.g., with Scrublet or scDblFinder).
+    * Checking for additional gene families (RBC, cell-cycle markers, etc.).
+    * Using platform/chemistry-specific thresholds (10x vs. Smart-seq).
+    * Considering isotype controls or other library-specific signals.
+
+    Examples
+    --------
+    >>> adata = sc.read_h5ad("my_raw_data.h5ad")
+    >>> adata = pp_quality_control(adata, nmads_main=5, nmads_mt=3, pct_counts_mt_threshold=8.0)
+    >>> print(adata)
     """
-    logger.info("Starting combined preprocessing for initial embeddings.")
 
-    try:
-        adata = sc.read(infile)
-        # 0) Make ids unique
-        adata.var_names_make_unique()
-        adata.obs_names_make_unique()
-        # 1) Remove genes and cells with low amount of cells and genes
-        sc.pp.filter_genes(adata, min_cells=min_cells)
-        sc.pp.filter_cells(adata, min_genes=min_genes)
-        # 2) Consolidate low-frequency categories if columns is not None
-        if columns is not None:
-            logger.info(
-                "Consolidating low-frequency categories in columns: %s with threshold=%d remove=%s",
-                columns,
-                category_threshold,
-                remove,
-            )
-            adata = consolidate_low_frequency_categories(
-                adata, columns, category_threshold, remove=remove
-            )
+    logger.info("Starting quality control checks.")
 
-        # 3) Store counts in a new layer
-        if "counts" not in adata.layers:
-            # Check if X contains raw counts
-            if is_raw_counts(adata.X):
-                adata.layers["counts"] = adata.X.copy()
-            else:
-                logger.error("X does not contain raw counts. Cannot create 'counts' layer.")
-                raise ValueError("X does not contain raw counts. Cannot create 'counts' layer.")
-        # 4) Normalize and log-transform
-        ensure_log_norm(adata)
+    # 1. Label relevant gene categories in adata.var
+    logger.info("Labeling mitochondrial, ribosomal, and hemoglobin genes in adata.var")
+    adata.var["mt"] = adata.var_names.str.upper().str.startswith("MT-")
+    adata.var["ribo"] = adata.var_names.str.upper().str.startswith(("RPS", "RPL"))
+    # For hemoglobin, we exclude parentheses and 'P' if you want to skip "HBP"
+    # Adjust the regex if needed for your species naming convention
+    adata.var["hb"] = adata.var_names.str.upper().str.contains(r"^HB[^P]")
 
-        # write to temp file with is used for geneformer
-        temp_file = outfile.replace(".h5ad", "_temp.h5ad")
-        logger.info("Writing preprocessed AnnData to %s", temp_file)
-        os.makedirs(os.path.dirname(temp_file), exist_ok=True)
-        adata.write(temp_file)
-        # Explicitly close the AnnData object
-        adata.file.close() if hasattr(
-            adata, "file"
-        ) and adata.file is not None else None
-        del adata
+    # 2. Calculate QC metrics
+    if percent_top is None:
+        percent_top = [20]
+    logger.info(
+        "Calculating QC metrics with percent_top=%s, log1p=%s, for gene sets [mt, ribo, hb].",
+        percent_top,
+        log1p_for_qc,
+    )
+    sc.pp.calculate_qc_metrics(
+        adata,
+        qc_vars=["mt", "ribo", "hb"],
+        inplace=True,
+        percent_top=percent_top,
+        log1p=log1p_for_qc,
+    )
 
-        # 5) Call pp_geneformer and write result to file
-        pp_geneformer(infile=temp_file, outfile=outfile, overwrite=True)
+    # 3. Define a helper function for outlier detection using median absolute deviation
+    def is_outlier(metric_values: np.ndarray, nmads: int) -> pd.Series:
+        """
+        Returns a boolean mask where True indicates the cell is an outlier
+        based on the given metric array and nmads.
+        """
+        M = metric_values
+        med = np.median(M)
+        mad = median_abs_deviation(M)
+        lower_bound = med - nmads * mad
+        upper_bound = med + nmads * mad
+        outlier_mask = (M < lower_bound) | (M > upper_bound)
+        return outlier_mask
 
-        # Clean up temporary file
-        if os.path.exists(temp_file):
-            try:
-                os.remove(temp_file)
-                logger.info(f"Cleaned up temporary file: {temp_file}")
-            except OSError as e:
-                logger.warning(f"Could not remove temporary file {temp_file}: {e}")
+    # 4. Main QC outliers: total counts, number of genes, % counts in top X genes
+    # Because we used `log1p=True`, relevant columns are "log1p_total_counts" & "log1p_n_genes_by_counts".
+    logger.info(
+        "Flagging outliers for total counts, number of genes, and %% in top genes."
+    )
+    outlier_main = is_outlier(
+        adata.obs["log1p_total_counts"].values, nmads_main
+    ) | is_outlier(adata.obs["log1p_n_genes_by_counts"].values, nmads_main)
+    # e.g. 'pct_counts_in_top_20_genes' if percent_top=[20].
+    if f"pct_counts_in_top_{percent_top[0]}_genes" in adata.obs.columns:
+        outlier_main |= is_outlier(
+            adata.obs[f"pct_counts_in_top_{percent_top[0]}_genes"].values, nmads_main
+        )
 
-    except Exception as e:
-        logger.error(f"Error during preprocessing: {e}")
-        # Clean up temporary file in case of error
-        temp_file = outfile.replace(".h5ad", "_temp.h5ad")
-        if os.path.exists(temp_file):
-            try:
-                os.remove(temp_file)
-                logger.info(f"Cleaned up temporary file after error: {temp_file}")
-            except OSError as e:
-                logger.warning(f"Could not remove temporary file {temp_file}: {e}")
-        raise
+    # 5. Mitochondrial outliers
+    logger.info("Flagging outliers for mitochondrial fraction.")
+    # The metric from sc.pp.calculate_qc_metrics is "pct_counts_mt"
+    mt_metric = adata.obs["pct_counts_mt"].values
+    outlier_mt = is_outlier(mt_metric, nmads_mt) | (mt_metric > pct_counts_mt_threshold)
 
-    logger.info("Done. Final preprocessed file: %s", outfile)
+    # Combine all outliers
+    adata.obs["outlier"] = outlier_main
+    adata.obs["mt_outlier"] = outlier_mt
+
+    # 6. Filter out the outliers
+    n_before = adata.n_obs
+    adata = adata[~adata.obs["outlier"] & ~adata.obs["mt_outlier"]].copy()
+    n_after = adata.n_obs
+
+    logger.info(
+        "Filtered out %d cells as outliers (main or mt). Remaining cells: %d.",
+        n_before - n_after,
+        n_after,
+    )
+
+    logger.info("QC filtering complete.")
+    return adata
 
 
-def pp_geneformer(
-    infile: str,
-    outfile: str,
-    overwrite: bool = False,
-):
+def is_log_transformed(X: np.ndarray, tol: float = 1e-3) -> bool:
     """
-    Preprocess an AnnData file for Geneformer embeddings.
+    Check if the data is likely log-transformed using a naive heuristic:
+    * We expect few or no negative values,
+    * The maximum value typically less than ~50 for log1p scRNA-seq data.
 
     Parameters
     ----------
-    infile : str
-        Path to the input AnnData file (H5AD).
-    outfile : str
-        Path to the output AnnData file after preprocessing.
-    overwrite : bool, optional
-        If True, overwrite the output file if it exists.
+    X : numpy.ndarray
+        The expression matrix to check.
+    tol : float, optional
+        Tolerance for negative values. If any value is below -tol, we say it's not log-transformed.
+
+    Returns
+    -------
+    bool
+        True if the data appears log-transformed, False otherwise.
+    """
+    if np.min(X) < -tol:
+        return False
+    max_val = np.max(X)
+    return max_val < 100
+
+
+def is_normalized(X: np.ndarray, axis: int = 1, var_threshold: float = 0.2) -> bool:
+    """
+    Check if the data is likely normalized by testing row-sum consistency.
+    Specifically, we calculate the ratio of standard deviation to mean of
+    all row sums and compare it against a threshold.
+
+    If row sums are relatively consistent (i.e., ratio < var_threshold),
+    we assume the data is "normalized."
+
+    Parameters
+    ----------
+    X : numpy.ndarray
+        The expression matrix to check.
+        By default, rows are cells and columns are genes.
+    axis : int, optional
+        The axis along which to sum. Default is 1 (summing each row/cell).
+    var_threshold : float, optional
+        The cutoff for the ratio (std/mean) of row sums.
+        If std/mean < var_threshold, we declare the data normalized.
+
+    Returns
+    -------
+    bool
+        True if the data appears normalized, False otherwise.
 
     Notes
     -----
-    - If your data is absolutely huge, you may need an advanced chunked approach
-      (e.g. reading partial slices). For moderate data, 'backed' mode
-      might suffice if you have enough memory for the partial steps.
-    - This function modifies obs and var. It must be able to write changes to disk,
-      so be mindful of anndata's limitations in 'backed' mode.
-    - One simpler approach is to read the entire data if you have enough memory to at
-      least hold obs and var (but not necessarily X). Then write out the new file.
+    * This is a naive heuristic. For real single-cell data, row sums
+      can still vary significantly, depending on the pipeline.
+    * Adjust `var_threshold` based on domain knowledge or empirical observations.
     """
-    if Path(outfile).exists() and not overwrite:
-        raise FileExistsError(
-            f"Output file {outfile} already exists. Set overwrite=True to replace it."
+    # Ensure X is dense for quick stats
+    if sp.issparse(X):
+        X_dense = X.toarray()
+    else:
+        X_dense = X
+
+    sums = X_dense.sum(axis=axis)
+    sums = np.array(sums).ravel()
+    mean_sum = sums.mean()
+    std_sum = sums.std()
+
+    if mean_sum == 0:
+        logger.warning(
+            "Row sums are zero. Data might be empty or already transformed in a different way."
         )
+        return False
 
-    logger.info("Loading AnnData from %s ...", infile)
-    try:
-        # A direct approach is to load in memory if you can handle obs,var in memory:
-        adata = sc.read(infile)  # or None if you want to keep X on disk
+    ratio = std_sum / mean_sum
+    logger.debug("Row sum ratio: std/mean=%.3f, threshold=%.3f", ratio, var_threshold)
+    return ratio < var_threshold
 
-        # 1. Add ensembl IDs if not present
-        if "ensembl_id" not in adata.var.columns:
-            logger.info("Adding 'ensembl_id' to adata.var.")
-            add_ensembl_ids(adata)  # user-provided function
 
-        # 2. Add n_counts if not present
-        if "n_counts" not in adata.obs.columns:
-            logger.info("Calculating n_counts, this requires scanning the data once.")
-            # Adjust percent_top based on the number of genes to prevent IndexError
-            n_genes = adata.n_vars
-            percent_top = []
-            # Only include percentages that make sense for the dataset size
-            for p in [50, 100, 200, 500]:
-                if p < n_genes:
-                    percent_top.append(p)
+def ensure_log_norm(
+    adata: anndata.AnnData, in_place: bool = True, var_threshold: float = 0.2
+) -> None:
+    """
+    Checks if `adata.X` is log-transformed and normalized.
+    If not, applies sc.pp.log1p() and sc.pp.normalize_total() in place.
 
-            if len(percent_top) > 0:
-                sc.pp.calculate_qc_metrics(adata, inplace=True, percent_top=percent_top)
-            else:
-                # If dataset is too small, skip percent_top calculations
-                sc.pp.calculate_qc_metrics(adata, inplace=True, percent_top=[])
+    Parameters
+    ----------
+    adata : anndata.AnnData
+        The AnnData object whose .X matrix will be checked/preprocessed.
+    in_place : bool, optional
+        If True, modifies `adata.X` in place.
+    var_threshold : float, optional
+        Threshold used by `is_normalized` to decide if data appears normalized.
 
-            adata.obs["n_counts"] = adata.obs.total_counts
+    Raises
+    ------
+    ValueError
+        If data cannot be processed or if no modifications can be done.
 
-        # 3. Attach a stable sample index
-        if "sample_index" not in adata.obs.columns:
-            logger.info("Adding a stable sample_index to obs.")
-            n_obs = adata.shape[0]
-            adata.obs["sample_index"] = range(n_obs)
+    Notes
+    -----
+    * The checks used here are naive heuristics. Adjust them for your data as needed.
+    """
+    logger.info("Checking if data in adata.X appears log-transformed and normalized.")
+    # check if adata is backed and load to memory
+    if adata.isbacked:
+        adata = adata.to_memory()
+    if sp.issparse(adata.X):
+        X_arr = adata.X.copy().toarray()
+    else:
+        X_arr = adata.X.copy()
 
-        # Force full write to a new file, removing the old .backed references
-        logger.info("Writing preprocessed AnnData to %s", outfile)
-        os.makedirs(os.path.dirname(outfile), exist_ok=True)
-        adata.write(outfile)
+    already_log = is_log_transformed(X_arr)
+    already_norm = is_normalized(X_arr, var_threshold=var_threshold)
 
-        # Explicitly close the AnnData object
-        adata.file.close() if hasattr(
-            adata, "file"
-        ) and adata.file is not None else None
-        del adata
+    if not already_norm:
+        logger.info(
+            "Data does not appear to be normalized. Applying sc.pp.normalize_total() in place."
+        )
+        sc.pp.normalize_total(adata)  # modifies adata.X in place
+    else:
+        logger.info("Data already appears to be normalized.")
 
-    except Exception as e:
-        logger.error(f"Error during Geneformer preprocessing: {e}")
-        raise
-    finally:
-        # Ensure we clean up any remaining file handles
-        import gc
+    if not already_log:
+        logger.info(
+            "Data does not appear to be log-transformed. Applying sc.pp.log1p() in place."
+        )
+        sc.pp.log1p(adata)  # modifies adata.X in place
+    else:
+        logger.info("Data already appears to be log-transformed.")
 
-        gc.collect()
 
-    logger.info("Preprocessing done. Preprocessed file: %s", outfile)
-'''
+def is_data_scaled(
+    X,
+    sample_genes: int = 1000,
+    sample_cells: int = 1000,
+    mean_tol: float = 0.2,
+    std_tol: float = 0.2,
+    fraction_thresh: float = 0.8,
+) -> bool:
+    """
+    Checks if data is likely z-score scaled (per-gene mean ~ 0, std ~ 1).
+    Operates by sampling a subset of cells and genes (optional) to
+    compute means & stds per gene.
+
+    Parameters
+    ----------
+    X : np.ndarray or scipy.sparse.spmatrix
+        Expression matrix with shape (n_cells, n_genes).
+    sample_genes : int, optional
+        Number of genes to randomly sample (if total genes > sample_genes).
+    sample_cells : int, optional
+        Number of cells to randomly sample (if total cells > sample_cells).
+    mean_tol : float, optional
+        Tolerance around 0 for the mean. For example, 0.2 means a gene's
+        mean must be in [-0.2, 0.2] to be considered "scaled."
+    std_tol : float, optional
+        Tolerance around 1 for the std. For example, 0.2 means a gene's
+        std must be in [0.8, 1.2] to be considered "scaled."
+    fraction_thresh : float, optional
+        Fraction of genes that must meet the above mean/std criteria
+        for the dataset to be considered scaled. For example, 0.8 means
+        at least 80% of sampled genes must have mean in [-mean_tol, mean_tol]
+        and std in [1-std_tol, 1+std_tol].
+
+    Returns
+    -------
+    bool
+        True if data is likely scaled, False otherwise.
+
+    Notes
+    -----
+    * If the data is huge, we convert to dense after subselecting some rows
+      and columns. For extremely large data, consider chunked approaches
+      or adjust sampling.
+    * For single-cell data, typical z-score scaling is done per gene
+      (columns) after normalization and log transform.
+    """
+    n_cells, n_genes = X.shape
+
+    # 1) Randomly sample cells and genes if needed
+    if n_genes > sample_genes:
+        gene_idx = np.random.choice(n_genes, sample_genes, replace=False)
+    else:
+        gene_idx = np.arange(n_genes)
+
+    if n_cells > sample_cells:
+        cell_idx = np.random.choice(n_cells, sample_cells, replace=False)
+    else:
+        cell_idx = np.arange(n_cells)
+
+    # Subset the matrix
+    if sp.issparse(X):
+        X_sub = X[cell_idx, :][:, gene_idx].toarray()
+    else:
+        X_sub = X[cell_idx][:, gene_idx]
+
+    # 2) Compute mean and std for each gene (columns)
+    gene_means = X_sub.mean(axis=0)
+    gene_stds = X_sub.std(axis=0, ddof=1)  # unbiased estimator
+
+    # 3) Check how many genes fall in the acceptable range
+    mean_mask = np.abs(gene_means) <= mean_tol
+    std_mask = (gene_stds >= (1 - std_tol)) & (gene_stds <= (1 + std_tol))
+    combined_mask = mean_mask & std_mask
+
+    fraction_scaled = np.mean(combined_mask)
+    logger.debug("Fraction of genes that appear scaled: %.3f", fraction_scaled)
+
+    return fraction_scaled >= fraction_thresh
+
+
+def is_raw_counts(
+    X,
+    min_val: float = -1e-6,
+    max_noninteger_fraction: float = 0.01,
+    check_sparsity: bool = True,
+) -> bool:
+    """
+    Check if a matrix `X` likely contains raw (integer) single-cell counts.
+
+    Parameters
+    ----------
+    X : np.ndarray or sparse matrix
+        The expression matrix to check. Rows are cells, columns are genes.
+    min_val : float, optional
+        Minimum allowed value (just under 0 to account for floating point noise).
+        If we detect values significantly below 0, we assume it's not raw counts.
+    max_noninteger_fraction : float, optional
+        Maximum fraction of entries that can be non-integer before we say
+        it's not raw counts.
+        For example, 0.01 means only up to 1% of entries can be non-integer.
+    check_sparsity : bool, optional
+        Whether to expect a decent fraction of zeros for typical scRNA data.
+        If True, we also confirm that at least e.g. 30% of entries are zeros.
+        This is a naive heuristic that can be toggled off for non-sparse data.
+
+    Returns
+    -------
+    bool
+        True if `X` likely contains raw (integer) counts, False otherwise.
+
+    Notes
+    -----
+    This function uses several heuristics:
+      1. Negligible negative values (min(X) >= min_val).
+      2. The fraction of non-integer entries is below `max_noninteger_fraction`.
+      3. (Optional) The data is somewhat sparse (for scRNA-seq, typically many zeros).
+
+    Adjust thresholds according to your dataset’s characteristics.
+    """
+    # Convert to a dense array for checks if it's sparse.
+    # For large datasets, you may want to sample cells/genes instead of converting fully!
+    if sp.issparse(X):
+        X_dense = X.toarray()
+    else:
+        X_dense = X
+
+    # 1. Check for negative values
+    if np.min(X_dense) < min_val:
+        return False
+
+    # 2. Check fraction of non-integer values
+    #    We'll say a value is "integer" if |val - round(val)| < some tiny epsilon
+    diffs = np.abs(X_dense - np.round(X_dense))
+    # we can treat near-zero as integer
+    epsilon = 1e-6
+    noninteger_mask = diffs > epsilon
+    fraction_noninteger = np.mean(noninteger_mask)
+
+    if fraction_noninteger > max_noninteger_fraction:
+        return False
+
+    # 3. Optional check for sparsity (only if typical scRNA-seq data)
+    if check_sparsity:
+        # e.g. expect at least 30% zeros in typical scRNA raw count data
+        zero_fraction = np.mean(X_dense == 0)
+        if zero_fraction < 0.3:
+            return False
+
+    return True
 
 
 def check_ensembl_ids(ensembl_ids):
