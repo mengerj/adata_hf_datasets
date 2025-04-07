@@ -1,6 +1,10 @@
 import anndata
 import logging
-from adata_hf_datasets.utils import fix_non_numeric_nans
+from adata_hf_datasets.utils import (
+    fix_non_numeric_nans,
+    ensure_log_norm,
+    is_data_scaled,
+)
 from scvi.hub import HubModel
 from scvi.model import SCVI
 from pathlib import Path
@@ -12,6 +16,7 @@ from anndata.experimental import AnnLoader
 import scipy.sparse as sp
 import numpy as np
 from appdirs import user_cache_dir
+import pandas as pd
 
 logger = logging.getLogger(__name__)
 
@@ -94,18 +99,9 @@ class HighlyVariableGenesEmbedder(BaseEmbedder):
         """
         logger.info("Normalizing and log-transforming data before HVG selection.")
         adata = sc.read(adata_path, backed="r")
+        # check if the data is already normalized
+        ensure_log_norm(adata)
         # First save the raw counts as a layer
-        if "log-norm" not in adata.layers:
-            adata = adata.to_memory()
-            logger.warning(
-                "No log-norm layer found. Creating one. This might be memory intensive, so better use pp_adata before."
-            )
-            adata.layers["log-norm"] = adata.X.copy()
-            sc.pp.log1p(adata, layer="log-norm")
-            sc.pp.normalize_total(adata, target_sum=1e4)
-            adata.write(adata_path)
-        else:
-            logger.info("Using existing log-norm layer.")
 
     def embed(self, adata: anndata.AnnData, obsm_key: str = "X_hvg", **kwargs) -> None:
         """
@@ -121,8 +117,9 @@ class HighlyVariableGenesEmbedder(BaseEmbedder):
             Additional keyword arguments. Not used.
         """
         logger.info("Selecting top %d highly variable genes.", self.embedding_dim)
-        if "log-norm" not in adata.layers:
-            raise ValueError("No log-norm layer found. Run prepare() first.")
+
+        # check if any genes contain inf values
+        # remove cells with infinity values
         sc.pp.highly_variable_genes(
             adata, n_top_genes=self.embedding_dim, layer="log-norm"
         )
@@ -218,48 +215,21 @@ class PCAEmbedder(BaseEmbedder):
                 np.random.choice(adata_sub.shape[0], n_cells, replace=False), :
             ]
         adata_sub = adata_sub.to_memory()
-        if "log-norm-scaled" not in adata_sub.layers:
-            logger.warning(
-                "No log-norm-scaled layer found. Creating one. This is memory intensive, so better use pp_adata before."
-            )
-            self._log_norm_scale(adata_sub)
-        else:
-            logger.info("Using existing log-norm-scaled layer.")
 
-        X = (
-            adata_sub.layers["log-norm-scaled"].toarray()
-            if sp.issparse(adata_sub.layers["log-norm-scaled"])
-            else adata_sub.layers["log-norm-scaled"]
-        )
+        if not is_data_scaled(adata_sub.X):
+            logger.info("Data is not scaled. Scaling data before PCA.")
+            sc.pp.scale(adata_sub)
+        X = adata_sub.X.toarray() if sp.issparse(adata_sub.X) else adata_sub.X
         self._pca_model = PCA(n_components=self.embedding_dim)  # Pass kwargs to PCA
         self._pca_model.fit(X)
 
     def embed(self, adata: anndata.AnnData, obsm_key: str = "X_pca", **kwargs) -> None:
         """Transform the data via PCA and store in `adata.obsm[obsm_key]`."""
         if self._pca_model is None:
-            raise RuntimeError("PCA model is not fit yet. Call `fit(adata)` first.")
-        if "log-norm-scaled" not in adata.layers:
-            adata = adata.to_memory()
-            self._log_norm_scale(adata)
-        else:
-            logger.info("Using existing log-norm-scaled layer.")
-        X = (
-            adata.layers["log-norm-scaled"].toarray()
-            if sp.issparse(adata.layers["log-norm-scaled"])
-            else adata.layers["log-norm-scaled"]
-        )
+            raise RuntimeError("PCA model is not fit yet. Call `prepare(adata)` first.")
+        X = adata.X.toarray() if sp.issparse(adata.X) else adata.X
         adata.obsm[obsm_key] = self._pca_model.transform(X)
         return adata
-
-    def _log_norm_scale(self, adata):
-        """Log-normalize and scale the data before PCA. Store in layers."""
-        logger.info("Log-transforming data before PCA.")
-        adata.layers["log-norm"] = adata.X.copy()
-        sc.pp.log1p(adata, layer="log-norm")
-        sc.pp.normalize_total(adata, target_sum=1e4)
-        logger.info("Scaling data before PCA.")
-        adata.layers["log-norm-scaled"] = adata.layers["log-norm"].copy()
-        sc.pp.scale(adata, layer="log-norm-scaled")
 
 
 class GeneformerEmbedder(BaseEmbedder):
@@ -586,39 +556,42 @@ class GeneformerEmbedder(BaseEmbedder):
         if not self.adata_path:
             raise ValueError("Run prepare first to set the adata_path.")
 
-        # Create the extractor with updated batch size
-        extractor_params = dict(self.emb_extractor_init)
-        extractor_params["forward_batch_size"] = batch_size
-        extractor = EmbExtractor(**extractor_params)
+        # Check if csv with embeddings already exists (is simultaniously created for both splits of the dataset and therefore doesnt need to be recreated)
+        embs_csv_path = self.out_dataset_dir / "geneformer_embeddings.csv"
+        if not embs_csv_path.exists():
+            # Create the extractor with updated batch size
+            extractor_params = dict(self.emb_extractor_init)
+            extractor_params["forward_batch_size"] = batch_size
+            extractor = EmbExtractor(**extractor_params)
 
-        logger.info(
-            "Extracting geneformer embeddings from model at %s...", self.model_dir
-        )
-        embs_df = extractor.extract_embs(
-            str(self.model_dir),
-            str(dataset_path),
-            str(self.out_dataset_dir),
-            output_prefix=f"{self.dataset_name}_embeddings",
-            cell_state=None,
-        )
+            logger.info(
+                "Extracting geneformer embeddings from model at %s...", self.model_dir
+            )
+            embs_df = extractor.extract_embs(
+                str(self.model_dir),
+                str(dataset_path),
+                str(self.out_dataset_dir),
+                output_prefix=f"{self.dataset_name}_embeddings",
+                cell_state=None,
+            )
+        else:
+            logger.info(
+                "Geneformer embeddings already exist at %s. Skipping extraction.",
+                embs_csv_path,
+            )
+            embs_df = pd.read_csv(embs_csv_path)
 
-        # Sort by sample_index to align with the original order
-        embs_sorted = embs_df.loc[embs_df["sample_index"].sort_values().index]
-        embs_matrix = embs_sorted.drop(columns=["sample_index"]).values
-
-        # Reload the same data from the temporary .h5ad so we can retrieve obs, var, etc.
+        # Load the adata to attach the embeddings
         processed_adata_path = self.adata_path
         if not processed_adata_path.exists():
             raise ValueError(f"No processed AnnData found at {processed_adata_path}.")
-
         adata = sc.read(processed_adata_path, backed="r")
-        # logger.info("Loaded processed AnnData from %s.", processed_adata_path)
-
-        # Attach embeddings (in the correct order) back to the *original* adata
-        # here we rely on the fact that `processed_adata` and `adata` have the same shape
-        # and that sample_index was introduced in `.prepare()`.
-        # If you want to strictly match them by 'sample_index', you can reindex `adata`
-        # or reorder the matrix accordingly. For simplicity, we assume consistent ordering.
+        og_ids = adata.obs["sample_index"].values
+        # Filter and sort embs_df to align with og_ids
+        # drop the "Unamed: 0" column
+        embs_df = embs_df.drop(columns=["Unnamed: 0"], errors="ignore")
+        embs_sorted = embs_df.set_index("sample_index").loc[og_ids].reset_index()
+        embs_matrix = embs_sorted.drop(columns=["sample_index"]).values
         adata.obsm[obsm_key] = embs_matrix
         logger.info(
             "Stored Geneformer embeddings of shape %s in adata.obsm[%r].",

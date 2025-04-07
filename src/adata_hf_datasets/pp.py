@@ -3,11 +3,15 @@ import anndata
 import pandas as pd
 import logging
 import scanpy as sc
-from pathlib import Path
 import os
-from adata_hf_datasets.utils import consolidate_low_frequency_categories
+from adata_hf_datasets.utils import (
+    consolidate_low_frequency_categories,
+    is_raw_counts,
+    ensure_log_norm,
+)
 import numpy as np
 import scipy.sparse as sp
+import gc
 
 logger = logging.getLogger(__name__)
 
@@ -15,8 +19,235 @@ logger = logging.getLogger(__name__)
 def pp_adata(
     infile: str,
     outfile: str,
+    min_cells: int = 10,
+    min_genes: int = 200,
     columns: list[str] | None = None,
-    threshold: int = 1,
+    category_threshold: int = 1,
+    remove: bool = True,
+    call_geneformer: bool = True,
+) -> None:
+    """
+    Create an initial preprocessed AnnData file ready for embeddings.
+
+    This function:
+    1. Reads the input AnnData from `infile`.
+    2. Runs `pp_adata_inmemory` on the in-memory object.
+    3. Optionally calls `pp_geneformer_inmemory` (if `call_geneformer=True`).
+    4. Writes the result to `outfile`.
+
+    Parameters
+    ----------
+    infile : str
+        Path to the input AnnData file (H5AD).
+    outfile : str
+        Path to the output AnnData file after preprocessing.
+    min_cells : int, optional
+        Minimum number of cells for gene filtering.
+    min_genes : int, optional
+        Minimum number of genes for cell filtering.
+    columns : List[str] | None, optional
+        Columns in `adata.obs` to consolidate low-frequency categories.
+    category_threshold : int, optional
+        Frequency threshold for category consolidation.
+    remove : bool, optional
+        If True, remove low-frequency categories entirely.
+    call_geneformer : bool, optional
+        If True, call `pp_adata_geneformer` on the AnnData after general preprocessing.
+
+    Returns
+    -------
+    None
+        Writes the final AnnData object to `outfile`.
+
+    References
+    ----------
+    Data is read from disk, processed fully in memory, then written to disk.
+    """
+    logger.info("Reading AnnData from %s", infile)
+    adata = sc.read(infile)
+    try:
+        # 1) Basic preprocessing in memory
+        adata = pp_adata_general(
+            adata=adata,
+            min_cells=min_cells,
+            min_genes=min_genes,
+            columns=columns,
+            category_threshold=category_threshold,
+            remove=remove,
+        )
+
+        # 2) Optionally call Geneformer preprocessing
+        if call_geneformer:
+            adata = pp_adata_geneformer(adata)
+
+        # 3) Write final output
+        logger.info("Writing final preprocessed AnnData to %s", outfile)
+        os.makedirs(os.path.dirname(outfile), exist_ok=True)
+        adata.write(outfile)
+
+    except Exception as e:
+        logger.error(f"Error during preprocessing: {e}")
+        raise
+    finally:
+        if hasattr(adata, "file") and adata.file is not None:
+            adata.file.close()
+        del adata
+        gc.collect()
+
+    logger.info("Done. Final preprocessed file: %s", outfile)
+
+
+def pp_adata_general(
+    adata: anndata.AnnData,
+    min_cells: int = 10,
+    min_genes: int = 200,
+    columns: list[str] | None = None,
+    category_threshold: int = 1,
+    remove: bool = True,
+) -> anndata.AnnData:
+    """
+    Create an initial preprocessed AnnData object in memory ready for embeddings.
+
+    This function performs the following steps:
+    1. Makes gene and cell names unique.
+    2. Filters out genes expressed in fewer than `min_cells` cells and cells
+       expressing fewer than `min_genes` genes.
+    3. Consolidates low-frequency categories in specified columns of `adata.obs`.
+    4. Checks if `adata.X` contains raw counts. If so, stores a copy in
+       `adata.layers["counts"]`; otherwise raises an error.
+    5. Normalizes and log-transforms the data (in place).
+
+    Parameters
+    ----------
+    adata : anndata.AnnData
+        The AnnData object to preprocess.
+    min_cells : int, optional
+        Minimum number of cells in which a gene must be expressed to keep that gene.
+    min_genes : int, optional
+        Minimum number of genes a cell must express to keep that cell.
+    columns : List[str] | None, optional
+        Columns in `adata.obs` to consolidate low-frequency categories.
+        If None, no consolidation is performed.
+    category_threshold : int, optional
+        Frequency threshold for consolidating categories. Categories with fewer
+        than this many occurrences are either removed or renamed to 'remaining <col>'.
+    remove : bool, optional
+        If True, remove rows (cells) containing low-frequency categories. Otherwise,
+        rename them. Defaults to True.
+
+    Returns
+    -------
+    anndata.AnnData
+        The preprocessed AnnData object (modified in place, but also returned).
+
+    References
+    ----------
+    Data is assumed to be single-cell RNA-seq counts in `adata.X` before processing.
+    """
+    logger.info("Starting in-memory preprocessing for initial embeddings.")
+
+    # 0) Make ids unique
+    adata.var_names_make_unique()
+    adata.obs_names_make_unique()
+
+    # 1) Remove genes and cells below thresholds
+    sc.pp.filter_genes(adata, min_cells=min_cells)
+    sc.pp.filter_cells(adata, min_genes=min_genes)
+
+    # 2) Consolidate low-frequency categories if columns is not None
+    if columns is not None:
+        logger.info(
+            "Consolidating low-frequency categories in columns: %s with threshold=%d remove=%s",
+            columns,
+            category_threshold,
+            remove,
+        )
+        adata = consolidate_low_frequency_categories(
+            adata, columns, category_threshold, remove=remove
+        )
+
+    # 3) Store counts in a new layer if X is raw
+    if "counts" not in adata.layers:
+        if is_raw_counts(adata.X):
+            logger.info("Storing raw counts in adata.layers['counts']")
+            adata.layers["counts"] = adata.X.copy()
+        else:
+            logger.error("X does not contain raw counts. Cannot create 'counts' layer.")
+            raise ValueError(
+                "X does not contain raw counts. Cannot create 'counts' layer."
+            )
+
+    # 4) Normalize and log-transform (in place)
+    ensure_log_norm(adata)
+
+    logger.info("In-memory preprocessing complete.")
+    return adata
+
+
+def pp_adata_geneformer(
+    adata: anndata.AnnData,
+) -> anndata.AnnData:
+    """
+    Preprocess an AnnData object for Geneformer embeddings, in memory.
+
+    The following steps are performed:
+    1. Add ensembl IDs if not present in `adata.var['ensembl_id']`.
+    2. Add `n_counts` to `adata.obs` if not already present, by running QC metrics.
+    3. Add a stable sample index in `adata.obs['sample_index']` if it doesn't exist.
+
+    Parameters
+    ----------
+    adata : anndata.AnnData
+        The AnnData object to be preprocessed for Geneformer embeddings.
+
+    Returns
+    -------
+    anndata.AnnData
+        The modified AnnData object (in place, but also returned).
+
+    References
+    ----------
+    Data is typically in log-transformed or raw form. This function itself
+    doesn't enforce a particular transformation, but it expects an
+    AnnData with standard .obs and .var annotations.
+    """
+    logger.info("Preprocessing in-memory AnnData for Geneformer.")
+
+    # 1. Add ensembl IDs if not present
+    if "ensembl_id" not in adata.var.columns:
+        logger.info("Adding 'ensembl_id' to adata.var.")
+        add_ensembl_ids(adata)  # user-provided function
+
+    # 2. Add n_counts if not present
+    if "n_counts" not in adata.obs.columns:
+        logger.info("Calculating n_counts, which requires scanning the data once.")
+        n_genes = adata.n_vars
+        percent_top = []
+        for p in [50, 100, 200, 500]:
+            if p < n_genes:
+                percent_top.append(p)
+
+        sc.pp.calculate_qc_metrics(adata, inplace=True, percent_top=percent_top)
+        adata.obs["n_counts"] = adata.obs["total_counts"]
+
+    # 3. Attach a stable sample index
+    if "sample_index" not in adata.obs.columns:
+        logger.info("Adding a stable sample_index to obs.")
+        n_obs = adata.shape[0]
+        adata.obs["sample_index"] = range(n_obs)
+
+    logger.info("Geneformer in-memory preprocessing complete.")
+    return adata
+
+
+'''
+def pp_adata(
+    infile: str,
+    outfile: str,
+    min_cells: int = 10,
+    min_genes: int = 200,
+    columns: list[str] | None = None,
+    category_threshold: int = 1,
     remove: bool = True,
 ) -> None:
     """
@@ -39,7 +270,7 @@ def pp_adata(
     columns : List[str] | None, optional
         Columns in `adata.obs` to consolidate low-frequency categories.
         If None, no columns are processed for consolidation.
-    threshold : int, optional
+    category_threshold : int, optional
         Frequency threshold for low-frequency category consolidation.
         Defaults to 1 (i.e., categories with <1 occurrence are consolidated/removed).
     remove : bool, optional
@@ -63,36 +294,34 @@ def pp_adata(
 
     try:
         adata = sc.read(infile)
-        # 1) Remove zero-variance genes and cells
-        logger.info("Removing zero-variance genes and cells.")
-        #    Genes with zero standard deviation across cells:
-        adata = remove_zero_variance_genes(adata)
-        #    Cells with zero standard deviation across genes
-        adata = remove_zero_variance_cells(adata)
-
+        # 0) Make ids unique
+        adata.var_names_make_unique()
+        adata.obs_names_make_unique()
+        # 1) Remove genes and cells with low amount of cells and genes
+        sc.pp.filter_genes(adata, min_cells=min_cells)
+        sc.pp.filter_cells(adata, min_genes=min_genes)
         # 2) Consolidate low-frequency categories if columns is not None
         if columns is not None:
             logger.info(
                 "Consolidating low-frequency categories in columns: %s with threshold=%d remove=%s",
                 columns,
-                threshold,
+                category_threshold,
                 remove,
             )
             adata = consolidate_low_frequency_categories(
-                adata, columns, threshold, remove=remove
+                adata, columns, category_threshold, remove=remove
             )
 
         # 3) Store counts in a new layer
-        # if adata is a backed object
-        adata.layers["counts"] = adata.X.copy()
-        # 4) Normalize, log-transform, and scale the entire dataset
-        logger.info("log-transforming the dataset.")
-        sc.pp.log1p(adata)
-        logger.info("normalizing a new layer of the dataset")
-        adata.layers["log-norm"] = adata.X.copy()
-        sc.pp.normalize_total(adata, target_sum=1e4, layer="log-norm")
-        adata.layers["log-norm-scaled"] = adata.layers["log-norm"].copy()
-        sc.pp.scale(adata, layer="log-norm-scaled")
+        if "counts" not in adata.layers:
+            # Check if X contains raw counts
+            if is_raw_counts(adata.X):
+                adata.layers["counts"] = adata.X.copy()
+            else:
+                logger.error("X does not contain raw counts. Cannot create 'counts' layer.")
+                raise ValueError("X does not contain raw counts. Cannot create 'counts' layer.")
+        # 4) Normalize and log-transform
+        ensure_log_norm(adata)
 
         # write to temp file with is used for geneformer
         temp_file = outfile.replace(".h5ad", "_temp.h5ad")
@@ -219,6 +448,7 @@ def pp_geneformer(
         gc.collect()
 
     logger.info("Preprocessing done. Preprocessed file: %s", outfile)
+'''
 
 
 def check_ensembl_ids(ensembl_ids):
