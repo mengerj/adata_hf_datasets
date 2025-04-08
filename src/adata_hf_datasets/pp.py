@@ -9,6 +9,7 @@ import numpy as np
 import scipy.sparse as sp
 from scipy.stats import median_abs_deviation
 import gc
+from pysradb import SRAweb
 
 logger = logging.getLogger(__name__)
 
@@ -391,6 +392,175 @@ def pp_quality_control(
 
     logger.info("QC filtering complete.")
     return adata
+
+
+def fetch_sra_metadata(
+    adata: anndata.AnnData,
+    sample_id_key: str = "accession",
+    sra_key: str = "sample_accession",
+    exp_id_key: str = "experiment_accession",
+    new_cols: str | list[str] = [
+        "library_layout",
+        "library_source",
+        "instrument_model",
+    ],
+    fallback: str = "unknown",
+) -> None:
+    """
+    Fetch various metadata fields (e.g., 'library_layout', 'library_source')
+    from SRA for all unique IDs in `adata.obs[sample_id_key]`, and store them in
+    `adata.obs[new_cols]`.
+
+    This function:
+    1) Extracts all unique IDs from `adata.obs[sample_id_key]`.
+    2) Calls `db.sra_metadata` once to get metadata in a single batch.
+    3) Ensures that every requested ID is found in the SRA results (and logs or sets fallback if missing).
+    4) Also removes extra rows from the SRA results that do not correspond to your unique IDs.
+    5) Merges and assigns the requested columns to `adata.obs`.
+
+    Parameters
+    ----------
+    adata : anndata.AnnData
+        AnnData with IDs in `adata.obs[sample_id_key]`.
+    sample_id_key : str, optional
+        The column in `adata.obs` containing SRA-based IDs (e.g., SRR).
+    sra_key : str, optional
+        The column in the returned SRA DataFrame to match your IDs against.
+        Defaults to "run_accession".
+    exp_id_key : str, optional
+        Has to be present in adata.obs and contain SRX IDs. Will be used to match with the db.
+    new_cols : str or List[str], optional
+        Metadata columns to copy from SRA results into `adata.obs`.
+    fallback : str, optional
+        Value to use if a column is missing or if some IDs are not found.
+        Defaults to "unknown".
+
+    Returns
+    -------
+    None
+        Modifies `adata.obs[new_cols]` in place.
+
+    Examples
+    --------
+    >>> adata = sc.read_h5ad("my_data.h5ad")
+    >>> fetch_sra_metadata(adata, sample_id_key="accession", sra_key="run_accession")
+    >>> adata.obs["library_layout"].value_counts()
+    """
+
+    if isinstance(new_cols, str):
+        new_cols = [new_cols]
+
+    logger.info("Fetching SRA metadata for %d samples.", adata.n_obs)
+
+    if sample_id_key not in adata.obs.columns:
+        raise ValueError(f"Column '{sample_id_key}' not found in adata.obs.")
+
+    # 1) Extract all unique IDs
+    unique_ids = adata.obs[sample_id_key].dropna().unique().tolist()
+    experiment_accession = adata.obs[exp_id_key].dropna().unique().tolist()
+    logger.info("Found %d unique IDs in adata.obs[%s].", len(unique_ids), sample_id_key)
+
+    if not unique_ids:
+        msg = f"No unique IDs found in adata.obs[{sample_id_key}]. Cannot proceed."
+        logger.error(msg)
+        raise ValueError(msg)
+
+    db = SRAweb()
+
+    # 2) Single batch query
+    try:
+        df_all = db.sra_metadata(unique_ids)
+    except Exception as e:
+        logger.error("Failed to fetch metadata for IDs: %s", e)
+        raise ValueError(f"Failed to fetch metadata for IDs: {e}")
+
+    if df_all is None or df_all.empty:
+        msg = (
+            "No metadata returned. Check if the IDs are valid or if SRA is accessible."
+        )
+        logger.error(msg)
+        raise ValueError(msg)
+
+    # 3) Check if sra_key is in df_all
+    if sra_key not in df_all.columns:
+        logger.error(
+            "sra_key='%s' not in returned columns. Found: %s", sra_key, df_all.columns
+        )
+        raise ValueError(f"sra_key='{sra_key}' not in returned metadata columns.")
+
+    # Identify the set of unique experimental ids
+    desired_ids = set(experiment_accession)
+    # ...and the set of IDs returned
+    returned_ids = set(df_all[exp_id_key].unique())
+    logger.info("Returned %d unique IDs from SRA metadata.", len(returned_ids))
+
+    # 4) Check for missing IDs
+    missing_ids = desired_ids - returned_ids
+    if missing_ids:
+        logger.warning(
+            "Some IDs in adata.obs[%s] were not found in the SRA metadata: %s",
+            sample_id_key,
+            missing_ids,
+        )
+        logger.warning("These will be assigned fallback='%s'.", fallback)
+
+    # 5) Filter out extra rows in df_all that we do not actually need
+    extra_ids = returned_ids - desired_ids
+    if extra_ids:
+        logger.info(
+            "Removing %d extra IDs not present in adata.obs[%s].",
+            len(extra_ids),
+            sample_id_key,
+        )
+        df_all = df_all[~df_all[exp_id_key].isin(extra_ids)]
+
+    # Now df_all only has rows that correspond to the IDs we asked for (though some might be missing).
+    # Next, check if new_cols exist. We'll apply fallback for missing columns.
+    missing_cols = [col for col in new_cols if col not in df_all.columns]
+    if missing_cols:
+        logger.warning(
+            "Some requested columns are missing in metadata: %s", missing_cols
+        )
+        # We'll still create them in adata.obs with fallback
+
+    # Subset the SRA DataFrame to only the columns that exist
+    keep_cols = [c for c in new_cols if c in df_all.columns]
+    df_map = df_all[[exp_id_key] + keep_cols].copy()
+    # some ids might map to several entries in the database, eg multiple runs for the same sample.
+    # Since we cant really assess which would be the correct entry, we will just keep the first and expect our metadata to be the same in all cases
+    df_map = df_map.drop_duplicates(subset=exp_id_key, keep="first")
+
+    # Merge
+    # if the columns are already in adata.obs, remove them first
+
+    obs_reset = adata.obs.reset_index(drop=False)
+    cols_to_drop = [c for c in keep_cols if c in obs_reset.columns]
+    obs_reset = obs_reset.drop(columns=cols_to_drop, errors="ignore")
+    merged = obs_reset.merge(
+        df_map,
+        how="left",
+        left_on=exp_id_key,
+        right_on=exp_id_key,
+    )
+
+    # 6) Assign columns to adata.obs, fill fallback for missing rows or columns
+    for col in new_cols:
+        if col in merged.columns:
+            adata.obs[col] = merged[col].fillna(fallback).values
+        else:
+            # This means the column was never in df_all
+            adata.obs[col] = fallback
+            logger.warning(
+                "Column '%s' not found in SRA metadata. Using fallback='%s'.",
+                col,
+                fallback,
+            )
+
+    logger.info(
+        "Successfully added columns %s to adata.obs using fallback='%s'.",
+        new_cols,
+        fallback,
+    )
 
 
 def is_log_transformed(X: np.ndarray, tol: float = 1e-3) -> bool:
