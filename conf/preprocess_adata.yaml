@@ -5,6 +5,12 @@ input_file: "data/RNA/raw/train/cellxgene_pseudo_bulk_3_5k.h5ad"
 
 # Output directory for processed files
 output_dir: "data/RNA/processed/train"
+
+colour_by: "assay" #This is for colouring pca and checking distrubution of n_genes_by_counts
+categories:
+  - "cell_type"
+  - "dataset_title"
+category_threshold: 10 # remove all categories that have less than the threshold
 overwrite: true
 # Train/validation split configuration
 train_split: 0.9
