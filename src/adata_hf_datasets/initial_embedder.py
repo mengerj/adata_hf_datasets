@@ -2,9 +2,8 @@ import anndata
 import logging
 from adata_hf_datasets.utils import (
     fix_non_numeric_nans,
-    ensure_log_norm,
-    is_data_scaled,
 )
+from adata_hf_datasets.pp import ensure_log_norm, is_data_scaled
 from scvi.hub import HubModel
 from scvi.model import SCVI
 from pathlib import Path
@@ -98,10 +97,11 @@ class HighlyVariableGenesEmbedder(BaseEmbedder):
             Additional keyword arguments for `scanpy.pp.highly_variable_genes`.
         """
         logger.info("Normalizing and log-transforming data before HVG selection.")
-        adata = sc.read(adata_path, backed="r")
+        adata = sc.read(adata_path)
         # check if the data is already normalized
         ensure_log_norm(adata)
         # First save the raw counts as a layer
+        adata.write_h5ad(adata_path)
 
     def embed(
         self,
