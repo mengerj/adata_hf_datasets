@@ -82,7 +82,7 @@ def raw_adata_path(tmp_path):
     np.random.seed(42)
     # Create integer counts instead of floating point values for compatibility with Geneformer
     X = np.random.randint(
-        0, 10, size=(200, 100)
+        0, 100000, size=(200, 100)
     )  # Integer values 0-9 instead of floats
     adata = anndata.AnnData(X=X)
     # (No guarantee it has sample_index, n_counts, etc.)
@@ -311,7 +311,7 @@ def test_scvi_fm_prepare(processed_adata_path, tmp_path):
         _args, kwargs = mock_pull.call_args
         assert kwargs["s3_bucket"] == "cellxgene-contrib-public"
         assert kwargs["s3_path"] == "models/scvi/2024-02-12/homo_sapiens/modelhub"
-        assert kwargs["cache_dir"] == str(cache_dir)
+        assert str(kwargs["cache_dir"]) == str(cache_dir)
         assert not kwargs[
             "pull_anndata"
         ]  # Should be False to avoid downloading reference data

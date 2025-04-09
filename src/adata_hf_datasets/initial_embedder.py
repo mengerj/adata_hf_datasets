@@ -2,9 +2,8 @@ import anndata
 import logging
 from adata_hf_datasets.utils import (
     fix_non_numeric_nans,
-    ensure_log_norm,
-    is_data_scaled,
 )
+from adata_hf_datasets.pp import ensure_log_norm, is_data_scaled
 from scvi.hub import HubModel
 from scvi.model import SCVI
 from pathlib import Path
@@ -98,10 +97,11 @@ class HighlyVariableGenesEmbedder(BaseEmbedder):
             Additional keyword arguments for `scanpy.pp.highly_variable_genes`.
         """
         logger.info("Normalizing and log-transforming data before HVG selection.")
-        adata = sc.read(adata_path, backed="r")
+        adata = sc.read(adata_path)
         # check if the data is already normalized
         ensure_log_norm(adata)
         # First save the raw counts as a layer
+        adata.write_h5ad(adata_path)
 
     def embed(
         self,
@@ -127,7 +127,7 @@ class HighlyVariableGenesEmbedder(BaseEmbedder):
         # check if any genes contain inf values
         # remove cells with infinity values
         sc.pp.highly_variable_genes(
-            adata, n_top_genes=self.embedding_dim, layer="log-norm", batch_key=batch_key
+            adata, n_top_genes=self.embedding_dim, batch_key=batch_key
         )
 
         if "highly_variable" not in adata.var:
@@ -152,11 +152,7 @@ class HighlyVariableGenesEmbedder(BaseEmbedder):
                 )
 
         hvg_mask = adata.var["highly_variable"].values
-        X = (
-            adata.layers["log-norm"].toarray()
-            if sp.issparse(adata.layers["log-norm"])
-            else adata.layers["log-norm"]
-        )
+        X = adata.X.toarray() if sp.issparse(adata.X) else adata.X
         adata.obsm[obsm_key] = X[:, hvg_mask]
         # return to sparse matrix
         adata.obsm[obsm_key] = sp.csr_matrix(adata.obsm[obsm_key])
