@@ -1,11 +1,11 @@
 #!/bin/bash
-#SBATCH --job-name=geo_700k
-#SBATCH --output=pp_adata700k.out
-#SBATCH --error=pp_adata700k.err
-#SBATCH --mem=400G               # Request memory
-#SBATCH --time=48:00:00         # Max job time
+#SBATCH --job-name=pp
+#SBATCH --output=pp_adata.out
+#SBATCH --error=pp_adata.err
+#SBATCH --mem=250G               # Request memory
+#SBATCH --time=24:00:00         # Max job time
 
-INPUT_FILE="data/RNA/raw/train/geo_700k.h5ad"
+INPUT_FILE="data/RNA/raw/train/cellxgene_pseudo_bulk_350k.h5ad"
 OUTPUT_DIR="data/RNA/processed/train"
 SPLIT_DATASET=true
 # If false, the script will NOT split into train/val but instead

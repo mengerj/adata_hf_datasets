@@ -2,7 +2,8 @@
 input_files:
   - "data/RNA/processed/train/cellxgene_pseudo_bulk_3_5k/train.h5ad"
   - "data/RNA/processed/train/cellxgene_pseudo_bulk_3_5k/val.h5ad"
-
+# per default, the output dir is build based on the input file name
+output_dir: null
 # Embedding method to use
 # One of: ["scvi_fm", "geneformer", "pca", "hvg"]
 method: "hvg"
@@ -17,7 +18,7 @@ batch_size: 16
 # file_cache_dir: "path/to/custom/data/cache"
 
 # Number of cells to process at once
-chunk_size: 10000
+chunk_size: 350000
 
 # Dimension of the embedding
 embedding_dim_map:
