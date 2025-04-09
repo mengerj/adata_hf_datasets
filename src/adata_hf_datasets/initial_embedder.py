@@ -127,7 +127,7 @@ class HighlyVariableGenesEmbedder(BaseEmbedder):
         # check if any genes contain inf values
         # remove cells with infinity values
         sc.pp.highly_variable_genes(
-            adata, n_top_genes=self.embedding_dim, layer="log-norm", batch_key=batch_key
+            adata, n_top_genes=self.embedding_dim, batch_key=batch_key
         )
 
         if "highly_variable" not in adata.var:
@@ -152,11 +152,7 @@ class HighlyVariableGenesEmbedder(BaseEmbedder):
                 )
 
         hvg_mask = adata.var["highly_variable"].values
-        X = (
-            adata.layers["log-norm"].toarray()
-            if sp.issparse(adata.layers["log-norm"])
-            else adata.layers["log-norm"]
-        )
+        X = adata.X.toarray() if sp.issparse(adata.X) else adata.X
         adata.obsm[obsm_key] = X[:, hvg_mask]
         # return to sparse matrix
         adata.obsm[obsm_key] = sp.csr_matrix(adata.obsm[obsm_key])

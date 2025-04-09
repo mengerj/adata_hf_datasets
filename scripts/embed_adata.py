@@ -19,7 +19,6 @@ from pathlib import Path
 import hydra
 from omegaconf import DictConfig
 from dotenv import load_dotenv
-import anndata as ad
 from adata_hf_datasets.utils import setup_logging
 from adata_hf_datasets.initial_embedder import InitialEmbedder
 from adata_hf_datasets.sys_monitor import SystemMonitor
@@ -27,36 +26,6 @@ from hydra.core.hydra_config import HydraConfig
 
 
 logger = setup_logging()
-
-
-def verify_layers(adata_path: str | Path) -> bool:
-    """
-    Verify that the required layers exist in the AnnData file.
-    Uses backed mode to avoid loading full object into memory.
-
-    Parameters
-    ----------
-    adata_path : str | Path
-        Path to the AnnData file to verify.
-
-    Returns
-    -------
-    bool
-        True if all required layers exist, False otherwise.
-    """
-    adata = ad.read_h5ad(adata_path, backed="r")
-    required_layers = ["log-norm"]  # Add more if needed
-
-    missing_layers = [layer for layer in required_layers if layer not in adata.layers]
-
-    if missing_layers:
-        logger.error(
-            f"Missing required layers: {missing_layers}. Run preprocess_adata.py first."
-        )
-        return False
-
-    logger.info("All required layers present")
-    return True
 
 
 @hydra.main(version_base=None, config_path="../conf", config_name="embed_adata")
@@ -85,10 +54,6 @@ def main(cfg: DictConfig):
             input_file = Path(input_file)
             if not input_file.is_file():
                 raise FileNotFoundError(f"Input file not found: {input_file}")
-
-            # Verify input file has required layers
-            if not verify_layers(input_file):
-                raise ValueError("Input file missing required layers")
 
             # Create output directory structure
             # Replace 'processed' with 'processed_with_emb' in the path
