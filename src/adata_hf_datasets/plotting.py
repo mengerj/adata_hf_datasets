@@ -6,6 +6,7 @@ import numpy as np
 import anndata
 import scanpy as sc
 import matplotlib.pyplot as plt
+import seaborn as sns
 
 logger = logging.getLogger(__name__)
 
@@ -13,11 +14,11 @@ logger = logging.getLogger(__name__)
 def qc_evaluation_plots(
     adata: anndata.AnnData,
     subset_cells: int = 5000,
-    batch_key: Optional[str] = None,
     qc_vars: Optional[List[str]] = None,
     percent_top: Optional[List[int]] = None,
     log1p_for_qc: bool = True,
     metrics_of_interest: Optional[List[str]] = None,
+    categories_of_interest: Optional[List[str]] = None,
     save_plots: bool = False,
     save_dir: Optional[str] = None,
 ) -> None:
@@ -31,9 +32,6 @@ def qc_evaluation_plots(
         The AnnData object to evaluate. Should contain raw or preprocessed data.
     subset_cells : int, optional
         Maximum number of cells to keep in the subset for plotting. Default is 5000.
-    batch_key : str, optional
-        Column in `adata.obs` specifying batch labels. If provided, we will
-        color PCA plots by batch and produce a plot of n_genes_by_counts vs. batch.
     qc_vars : list of str, optional
         List of boolean columns in `adata.var` for which to calculate QC metrics
         (e.g. ["mt", "ribo", "hb"]). If None, defaults to ["mt", "ribo", "hb"].
@@ -46,6 +44,8 @@ def qc_evaluation_plots(
         Keys in `adata.obs` to color PCA plots and produce distribution plots.
         If None, defaults to typical metrics:
         ["total_counts", "n_genes_by_counts", "pct_counts_mt"].
+    categories_of_interest : list of str, optional
+        Keys in `adata.obs` to color PCA plots and group violin plots of the metrics of interest
     save_plots : bool, optional
         If True, saves each generated plot to `save_dir`. If False, displays them interactively.
     save_dir : str, optional
@@ -75,6 +75,7 @@ def qc_evaluation_plots(
 
     if save_plots and save_dir is not None:
         # 1) Configure Scanpy
+        sc.set_figure_params()
         sc.settings.figdir = save_dir  # Where to save
         sc.settings.file_format_figs = "png"  # Save in PNG
         sc.settings.autosave = True  # Will save automatically
@@ -124,8 +125,7 @@ def qc_evaluation_plots(
     # 4) Define metrics_of_interest if none given
     if metrics_of_interest is None:
         # total_counts and n_genes_by_counts always come from sc.pp.calculate_qc_metrics
-        # "pct_counts_mt" is typical if "mt" in qc_vars
-        metrics_of_interest = ["total_counts", "n_genes_by_counts", "pct_counts_mt"]
+        metrics_of_interest = ["total_counts", "n_genes_by_counts"]
     logger.info("Metrics of interest for plotting: %s", metrics_of_interest)
 
     # 5) PCA: We'll assume data is log-transformed, but let's do minimal steps if needed.
@@ -138,7 +138,7 @@ def qc_evaluation_plots(
 
     # 6A) PCA scatter, colored by QC metrics
     logger.info("Generating PCA plots for metrics of interest...")
-    for metric in metrics_of_interest:
+    for metric in metrics_of_interest + categories_of_interest:
         if metric not in adata_sub.obs.columns:
             logger.warning(
                 "Metric %s not found in adata.obs, skipping PCA color plot.", metric
@@ -201,67 +201,68 @@ def qc_evaluation_plots(
     # --------------------------------------------------------
     # NEW CHUNK: Batch-specific QC inspection
     # --------------------------------------------------------
-    if batch_key is not None and batch_key in adata_sub.obs.columns:
-        logger.info("Investigating the effect of batch label '%s'.", batch_key)
+    for category in categories_of_interest:
+        if category is not None and category in adata_sub.obs.columns:
+            # Check if the entries in adata.obs are categorial
+            if not adata_sub.obs[category].dtype.name.startswith("category"):
+                logger.info("Converting %s to categorical type.", category)
+                adata_sub.obs[category] = adata_sub.obs[category].astype("category")
 
-        # 1) PCA colored by batch
-        sc.pl.pca(
-            adata_sub, color=batch_key, show=not save_plots, save=f"_pca_{batch_key}"
-        )
+            logger.info("Investigating the effect of categorial label '%s'.", category)
 
-        # 2) Distribution of n_genes_by_counts by batch
-        #    (This helps see if certain batches systematically have more genes.)
-        if "n_genes_by_counts" in adata_sub.obs.columns:
-            sc.pl.violin(
-                adata_sub,
-                keys="n_genes_by_counts",
-                groupby=batch_key,
-                rotation=45,
-                stripplot=True,  # add dots on top
-                jitter=0.4,
-                show=not save_plots,
-                save=f"_violin_{batch_key}_n_genes",
-            )
+            for metric in metrics_of_interest:
+                # Distribution of n_genes_by_counts by batch (Seaborn violin)
+                if metric in adata_sub.obs.columns:
+                    logger.info(
+                        "Plotting '%s' by '%s' with violinplot.", metric, category
+                    )
+
+                    # Prepare a small DataFrame for Seaborn
+                    df = adata_sub.obs[[category, metric]].copy()
+                    df.dropna(inplace=True)
+
+                    plt.figure(figsize=(6, 5))
+
+                    # Main violin (horizontal)
+                    sns.violinplot(
+                        data=df,
+                        y=category,  # group categories on y-axis
+                        x=metric,  # numeric metric on x-axis
+                        orient="h",  # horizontal orientation
+                        color="white",  # base color for violins
+                        edgecolor="black",
+                    )
+
+                    # Optional stripplot on top for individual points
+                    sns.stripplot(
+                        data=df,
+                        y=category,
+                        x=metric,
+                        orient="h",
+                        color="black",
+                        alpha=0.4,
+                        size=2,
+                        jitter=0.4,
+                    )
+
+                    plt.title(f"{metric} by {category}")
+                    plt.tight_layout()
+
+                    if save_plots and save_dir is not None:
+                        os.makedirs(save_dir, exist_ok=True)
+                        outpath = os.path.join(
+                            save_dir, f"violin_{category}_{metric}.png"
+                        )
+                        plt.savefig(outpath, dpi=150)
+                        plt.close()
+                    else:
+                        plt.show()
+
+                else:
+                    logger.warning(
+                        f"{metric} not found in adata.obs. Skipping violin by batch."
+                    )
+
         else:
-            logger.warning(
-                "`n_genes_by_counts` not found in adata.obs. Skipping violin by batch."
-            )
-
+            logger.info("No batch key provided or not found in adata.obs.")
     logger.info("Finished generating QC evaluation plots.")
-
-
-def _move_scanpy_figure(filename, save_dir, new_name=None):
-    """
-    Internal helper to move the default scanpy output figure to `save_dir`.
-    By default, scanpy saves figure outputs to the local `figures` folder
-    with `save=True` in sc.pl.* calls.
-
-    Parameters
-    ----------
-    filename : str
-        The name of the figure file that was saved by scanpy (e.g., 'pca_metric.png').
-    save_dir : str
-        The directory to which to move the figure.
-    new_name : str, optional
-        Rename the figure file when moving. If None, keep the original name.
-    """
-    import shutil
-
-    source_path = os.path.join("figures", filename)
-    if not os.path.exists(source_path):
-        # Might be in the current directory if the user changed scanpy settings
-        if os.path.exists(filename):
-            source_path = filename
-        else:
-            return  # Can't locate the figure
-
-    if new_name is None:
-        new_name = filename
-    target_path = os.path.join(save_dir, new_name)
-
-    os.makedirs(save_dir, exist_ok=True)
-    try:
-        shutil.move(source_path, target_path)
-        logger.info("Moved figure from %s to %s", source_path, target_path)
-    except Exception as e:
-        logger.warning("Could not move figure: %s", e)
