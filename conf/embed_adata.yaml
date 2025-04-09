@@ -5,10 +5,10 @@ input_files:
 
 # Embedding method to use
 # One of: ["scvi_fm", "geneformer", "pca", "hvg"]
-method: "geneformer"
+method: "hvg"
 
 # Batch key in adata.obs (used by scvi_fm)
-batch_key: "batch"
+batch_key: "dataset_title"
 # batch sized used by geneformer
 batch_size: 16
 # Optional: Override default cache directories

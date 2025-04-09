@@ -56,49 +56,41 @@ def main(cfg: DictConfig):
     file_stem = Path(input_file).stem
     output_subdir = Path(output_dir) / file_stem
     output_subdir.mkdir(parents=True, exist_ok=True)
+    adata = ad.read_h5ad(input_file)
 
     if split_dataset:
-        # Check if files already exist
-        train_out_path = output_subdir / "train.h5ad"
-        val_out_path = output_subdir / "val.h5ad"
-        if train_out_path.is_file() and val_out_path.is_file() and not cfg.overwrite:
-            logger.info(
-                "Processed train/val .h5ad already found for '%s'; skipping reprocessing.",
-                file_stem,
-            )
-            return
-
-        # First preprocess to a temporary file
-        temp_processed = output_subdir / "temp_processed.h5ad"
-        logger.info("Preprocessing data with pp_adata...")
-        pp_adata(
-            infile=input_file,
-            outfile=str(temp_processed),
-            category_threshold=cfg.category_threshold,
-            categories=cfg.categories,
-            tag=str(hydra_run_dir),
-        )
-
-        # Then split and save
         logger.info(
             "Splitting data: train=%.2f, val=%.2f", train_split, 1 - train_split
         )
-        import anndata
-
-        adata = anndata.read_h5ad(temp_processed)
-        # Create some plots to check the data
-        qc_evaluation_plots(
-            adata, save_plots=True, save_dir=hydra_run_dir, batch_key=cfg.colour_by
-        )
         train_adata, val_adata = split_anndata(adata, train_size=train_split)
         del adata
+        # processess each split
+        for adata_split, split in zip([train_adata, val_adata], ["train", "val"]):
+            out_path = output_subdir / f"{split}.h5ad"
+            if out_path.is_file() and not cfg.overwrite:
+                logger.info(
+                    "Processed split .h5ad already found for '%s'; skipping reprocessing.",
+                    file_stem,
+                )
+                continue
+            logger.info("Processing %s split...", split)
+            adata_split = pp_adata(
+                adata=adata_split,
+                category_threshold=cfg.category_threshold,
+                categories=list(cfg.categories),
+                tag=str(hydra_run_dir),
+            )
+            # Create some plots to check the data
+            qc_evaluation_plots(
+                adata_split,
+                save_plots=True,
+                save_dir=hydra_run_dir + "/" + split,
+                metrics_of_interest=list(cfg.metrics_of_interest),
+                categories_of_interest=list(cfg.categories_of_interest),
+            )
 
-        train_adata.write_h5ad(str(train_out_path))
-        val_adata.write_h5ad(str(val_out_path))
-        logger.info("Saved processed splits: %s, %s", train_out_path, val_out_path)
-
-        # Clean up temporary file
-        temp_processed.unlink()
+            adata_split.write_h5ad(str(out_path))
+            logger.info("Saved %s split to: %s", split, out_path)
 
     else:
         # Single dataset scenario
@@ -111,12 +103,15 @@ def main(cfg: DictConfig):
             return
 
         logger.info("Processing single dataset without splitting...")
-        pp_adata(infile=input_file, outfile=str(all_out_path), tag=str(hydra_run_dir))
+        adata = pp_adata(adata=adata, tag=str(hydra_run_dir))
         logger.info("Saved processed dataset: %s", all_out_path)
-        adata = ad.read_h5ad(all_out_path)
         # Create some plots to check the data
         qc_evaluation_plots(
-            adata, save_plots=True, save_dir=hydra_run_dir, batch_key=cfg.colour_by
+            adata,
+            save_plots=True,
+            save_dir=hydra_run_dir + "/all",
+            metrics_of_interest=list(cfg.metrics_of_interest),
+            categories_of_interest=list(cfg.categories_of_interest),
         )
         del adata
 

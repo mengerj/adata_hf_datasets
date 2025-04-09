@@ -3,80 +3,100 @@ import anndata
 import pandas as pd
 import logging
 import scanpy as sc
-import os
 from adata_hf_datasets.utils import consolidate_low_frequency_categories
 import numpy as np
 import scipy.sparse as sp
 from scipy.stats import median_abs_deviation
-import gc
 from pysradb import SRAweb
+from sklearn.mixture import GaussianMixture
 
 logger = logging.getLogger(__name__)
 
 
 def pp_adata(
-    infile: str,
-    outfile: str,
+    adata: anndata.AnnData,
     min_cells: int = 10,
     min_genes: int = 200,
-    categories: list[str] | None = None,
+    categories: list[str] = None,
     category_threshold: int = 1,
-    remove: bool = True,  # relates only to the removal of low-frequency categories
+    remove: bool = True,
     call_geneformer: bool = True,
     tag: str | None = None,
-) -> None:
+) -> anndata.AnnData:
     """
-    Create an initial preprocessed AnnData file ready for embeddings.
+    Create an initial preprocessed AnnData in memory, ready for embeddings.
 
     This function:
-    1. Reads the input AnnData from `infile`.
-    2. Runs `pp_adata_inmemory` on the in-memory object.
-    3. Optionally calls `pp_geneformer_inmemory` (if `call_geneformer=True`).
-    4. Writes the result to `outfile`.
+    1. Ensures that `adata.X` is raw counts (if not, raises an error).
+       Also stores the raw counts in `adata.layers["counts"]`.
+    2. Optionally inserts a `tag` into `adata.uns`.
+    3. Runs basic quality control (e.g., removing outlier cells).
+    4. Runs general preprocessing (e.g., filtering genes/cells,
+       consolidating low-frequency categories).
+    5. Optionally calls a geneformer-like step for final touches.
+    6. Returns the modified `adata` in memory.
 
     Parameters
     ----------
-    infile : str
-        Path to the input AnnData file (H5AD).
-    outfile : str
-        Path to the output AnnData file after preprocessing.
+    adata : anndata.AnnData
+        The AnnData object to preprocess in memory.
     min_cells : int, optional
         Minimum number of cells for gene filtering.
     min_genes : int, optional
         Minimum number of genes for cell filtering.
     categories : List[str] | None, optional
-        categories in `adata.obs` to consolidate low-frequency categories.
+        Categories in `adata.obs` to consolidate low-frequency categories.
     category_threshold : int, optional
         Frequency threshold for category consolidation.
     remove : bool, optional
-        If True, remove low-frequency categories entirely.
+        If True, remove rows (cells) containing low-frequency categories entirely.
+        Otherwise, relabel them as 'remaining <col>'. Defaults to True.
     call_geneformer : bool, optional
-        If True, call `pp_adata_geneformer` on the AnnData after general preprocessing.
+        If True, call a Geneformer-like in-memory step for additional metadata or steps.
     tag : str | None, optional
         Optional tag to include into the uns object of the AnnData object.
 
     Returns
     -------
-    None
-        Writes the final AnnData object to `outfile`.
+    anndata.AnnData
+        The preprocessed AnnData object.
 
-    References
-    ----------
-    Data is read from disk, processed fully in memory, then written to disk.
+    Notes
+    -----
+    - This function modifies `adata` in place but also returns it.
+    - If you have a file-based workflow, you can read your file externally, call
+      this function, then write out the result.
+    - The sub-steps `pp_quality_control`, `pp_adata_general`, and `pp_adata_geneformer`
+      are assumed to be your previously defined in-memory functions.
+
+    Examples
+    --------
+    >>> adata = sc.read_h5ad("my_raw_data.h5ad")
+    >>> adata = pp_adata_inmemory(adata, min_cells=10, min_genes=200, ...)
+    >>> adata.write("my_preprocessed_data.h5ad")
     """
-    logger.info("Reading AnnData from %s", infile)
-    adata = sc.read(infile)
+    logger.info(
+        "Starting preprocessing. Raw data has %d cells and %d genes.",
+        adata.n_obs,
+        adata.n_vars,
+    )
     if "counts" in adata.layers:
-        adata.X = adata.layers["counts"]  # start with counts
+        logger.info("Using pre-existing `adata.layers['counts']` as raw counts.")
+        adata.X = adata.layers["counts"]
     elif is_raw_counts(adata.X):
+        logger.info("Storing adata.X as raw counts in `adata.layers['counts']`.")
         adata.layers["counts"] = adata.X.copy()
     else:
         logger.error("X does not contain raw counts. Cannot create 'counts' layer.")
         raise ValueError("X does not contain raw counts. Cannot create 'counts' layer.")
+
+    # 1) Optionally add a 'tag' into adata.uns
     if tag:
+        logger.info("Storing tag='%s' in adata.uns.", tag)
         adata.uns["tag"] = tag
+
     try:
-        # 1) Basic quality control
+        logger.info("Running quality control on data.")
         adata = pp_quality_control(
             adata,
             nmads_main=5,
@@ -85,7 +105,8 @@ def pp_adata(
             percent_top=[20, 50, 100],
         )
 
-        # 2) Basic preprocessing in memory
+        # 3) Basic in-memory preprocessing
+        logger.info("Running general preprocessing (filtering, low-frequency cat).")
         adata = pp_adata_general(
             adata=adata,
             min_cells=min_cells,
@@ -95,25 +116,21 @@ def pp_adata(
             remove=remove,
         )
 
-        # 3) Optionally call Geneformer preprocessing
+        # 4) Optionally call Geneformer preprocessing
         if call_geneformer:
+            logger.info("Running Geneformer in-memory step.")
             adata = pp_adata_geneformer(adata)
-
-        # 4) Write final output
-        logger.info("Writing final preprocessed AnnData to %s", outfile)
-        os.makedirs(os.path.dirname(outfile), exist_ok=True)
-        adata.write(outfile)
 
     except Exception as e:
         logger.error(f"Error during preprocessing: {e}")
         raise
-    finally:
-        if hasattr(adata, "file") and adata.file is not None:
-            adata.file.close()
-        del adata
-        gc.collect()
 
-    logger.info("Done. Final preprocessed file: %s", outfile)
+    logger.info(
+        "Preprocessing done. Now there are %d cells and %d genes left.",
+        adata.n_obs,
+        adata.n_vars,
+    )
+    return adata
 
 
 def pp_adata_general(
@@ -184,7 +201,10 @@ def pp_adata_general(
         adata = consolidate_low_frequency_categories(
             adata, categories, category_threshold, remove=remove
         )
-
+    # verify that there are still cells left
+    if adata.n_obs == 0:
+        logger.error("No cells left after filtering. Exiting.")
+        raise ValueError("No cells left after filtering. Exiting.")
     # 3) Store counts in a new layer if X is raw
     if "counts" not in adata.layers:
         if is_raw_counts(adata.X):
@@ -1007,3 +1027,87 @@ def remove_zero_variance_cells(adata):
     else:
         logger.info("No cells with zero variance found.")
         return adata
+
+
+def fit_GMM(
+    adata: anndata.AnnData,
+    column_name: str = "n_genes_by_counts",
+    n_components: int = 2,
+    label_prefix: str = None,
+) -> None:
+    """
+    Fit a Gaussian Mixture Model (GMM) to the specified column in adata.obs and label
+    each sample as 'low' or 'high' based on their cluster mean.
+
+    Parameters
+    ----------
+    adata : anndata.AnnData
+        AnnData object containing single-cell or bulk RNA-seq data.
+    column_name : str
+        The key in `adata.obs` for the column to fit the GMM to.
+    n_components : int
+        Number of components for the GMM.
+    label_prefix : str, optional
+        Prefix for the label column in `adata.obs`. If None, defaults to
+        f"{column_name}_label".
+
+    Returns
+    -------
+    None
+        Modifies `adata.obs` in place by adding a column with cluster labels.
+
+    Notes
+    -----
+    - The cluster with the lower mean is labeled 'low' and the cluster with the
+      higher mean is labeled 'high'.
+    - Samples with missing values in `column_name` get NaN in the label column.
+    """
+    if label_prefix is None:
+        label_prefix = column_name
+
+    if column_name not in adata.obs.columns:
+        raise ValueError(f"{column_name} not found in adata.obs.")
+
+    # Extract the numeric array
+    arr = adata.obs[column_name].dropna().values.reshape(-1, 1)
+
+    # Fit a GMM with n_components
+    gmm = GaussianMixture(n_components=n_components, random_state=42)
+    gmm.fit(arr)
+
+    # Predict cluster labels (0, 1, etc.)
+    labels_numeric = gmm.predict(arr)
+
+    # Compute the means of each cluster
+    means = []
+    for cluster_id in range(n_components):
+        cluster_points = arr[labels_numeric == cluster_id]
+        means.append((cluster_id, cluster_points.mean()))
+    # Sort by mean to identify which cluster is "low" and which is "high"
+    means_sorted = sorted(means, key=lambda x: x[1])  # sort by the mean value
+
+    # The cluster with the smaller mean
+    low_cluster_id = means_sorted[0][0]
+    # The cluster with the larger mean
+    high_cluster_id = means_sorted[-1][0]
+
+    # Map numeric labels to string labels
+    str_labels = []
+    for lbl in labels_numeric:
+        if lbl == low_cluster_id:
+            str_labels.append("low")
+        elif lbl == high_cluster_id:
+            str_labels.append("high")
+        else:
+            # If n_components > 2, you might need to label these differently
+            str_labels.append(f"cluster_{lbl}")
+    # log how many samples are in each cluster
+    counts = pd.Series(str_labels).value_counts()
+    logger.info(f"Cluster counts: {counts.to_dict()}")
+    # Attach these labels back to adata.obs
+    valid_index = adata.obs[column_name].dropna().index
+    adata.obs.loc[valid_index, f"{label_prefix}_label"] = str_labels
+
+    # For samples with missing column_name, set them to NaN
+    mask_missing = adata.obs[column_name].isna()
+    adata.obs.loc[mask_missing, f"{label_prefix}_label"] = np.nan
