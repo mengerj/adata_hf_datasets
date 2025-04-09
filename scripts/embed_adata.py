@@ -4,9 +4,8 @@ Apply initial embeddings to preprocessed AnnData files.
 
 This script:
 1. Reads a preprocessed AnnData file
-2. Verifies required layers exist
-3. Applies the selected initial embedder
-4. Saves the result in a new directory structure
+2. Applies the selected initial embedder
+3. Saves the result in a new directory structure
 
 References
 ----------
