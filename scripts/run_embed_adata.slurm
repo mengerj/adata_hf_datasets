@@ -1,37 +1,45 @@
 #!/bin/bash
 #SBATCH --job-name=initial_emb
-#SBATCH --output=initial_emb.out
-#SBATCH --error=initial_emb.err
+#SBATCH --output=initial_emb_%a.out
+#SBATCH --error=initial_emb_%a.err
 #SBATCH --partition=gpu
 #SBATCH --gres=gpu:1           # Request 1 GPU
-#SBATCH --mem=60G               # Request memory
-#SBATCH --time=1:00:00         # Max job time
+#SBATCH --mem=64G
+#SBATCH --time=6:00:00
+#SBATCH --array=0-1
 
-INPUT_FILES='["data/RNA/processed/train/cellxgene_pseudo_bulk_3_5k/train.h5ad",
-             "data/RNA/processed/train/cellxgene_pseudo_bulk_3_5k/val.h5ad"]'
 METHOD="geneformer"
-batch_key="dataset_title" #only relevant for scvi
-batch_size=32 #batch sized used by geneformer
-# If false, the script will NOT split into train/val but instead
-# output a single 'all.h5ad' file. This can be used for test data or
-# "single" data scenario.
-echo "Starting job"
-# Source the setup script to ensure the environment is ready
+batch_key="dataset_title"
+batch_size=32
+
+INPUT_FILES=(
+    "data/RNA/processed/train/cellxgene_pseudo_bulk_350k/train.h5ad"
+    "data/RNA/processed/train/cellxgene_pseudo_bulk_350k/val.h5ad"
+)
+
+input_file=${INPUT_FILES[$SLURM_ARRAY_TASK_ID]}
+# Create temporary directory for this job
+#tmp_dir=$(mktemp -d /tmp/emb_job_${SLURM_ARRAY_TASK_ID}_XXXX)
+
+# Copy input file preserving its original name
+#cp "$input_file" "$tmp_dir/$(basename "$input_file")"
+
+#tmp_input_file="$tmp_dir/$(basename "$input_file")"
+
+# Determine output directory based on original input file path
+#output_dir=$(dirname "$input_file" | sed 's/processed/processed_with_emb/')
+
+# Activate environment
 source .venv/bin/activate
-echo "venv activated"
-echo "==== Debugging Python Environment ===="
-which python
-which python3
-which pip
-python --version
-python -c "import sys; print('sys.path:', sys.path)"
-python -c "import transformers; print('Transformers path:', transformers.__file__)"
-python -c "import transformers; print(transformers.__version__)"
-python -c "from transformers import AdamW; print('AdamW imported successfully')"
-echo "======================================"
-#python3 scripts/verify_gpu.py
-# Now run your Python script
+
+echo "Processing $input_file, outputting to $output_dir"
+
 python3 scripts/embed_adata.py \
-    ++input_file=$INPUT_FILE \
-    ++output_dir=$OUTPUT_DIR \
-    ++split_dataset=$SPLIT_DATASET \
+    ++method=$METHOD \
+    ++batch_key=$batch_key \
+    ++batch_size=$batch_size \
+    ++input_files='["'"$input_file"'"]'
+#    ++output_dir="$output_dir"
+
+# Cleanup temporary input file
+rm "$tmp_input_file"
