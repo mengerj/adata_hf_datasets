@@ -3,7 +3,10 @@ import anndata
 import pandas as pd
 import logging
 import scanpy as sc
-from adata_hf_datasets.utils import consolidate_low_frequency_categories
+from adata_hf_datasets.utils import (
+    consolidate_low_frequency_categories,
+    stable_numeric_id,
+)
 import numpy as np
 import scipy.sparse as sp
 from scipy.stats import median_abs_deviation
@@ -269,11 +272,8 @@ def pp_adata_geneformer(
         sc.pp.calculate_qc_metrics(adata, inplace=True, percent_top=percent_top)
         adata.obs["n_counts"] = adata.obs["total_counts"]
 
-    # 3. Attach a stable sample index
-    if "sample_index" not in adata.obs.columns:
-        logger.info("Adding a stable sample_index to obs.")
-        n_obs = adata.shape[0]
-        adata.obs["sample_index"] = range(n_obs)
+    # Convert obs_names (which might be string-based) to stable numeric IDs:
+    adata.obs["sample_index"] = [stable_numeric_id(str(idx)) for idx in adata.obs_names]
 
     logger.info("Geneformer in-memory preprocessing complete.")
     return adata

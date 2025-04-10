@@ -57,7 +57,7 @@ def main(cfg: DictConfig):
     output_subdir = Path(output_dir) / file_stem
     output_subdir.mkdir(parents=True, exist_ok=True)
     adata = ad.read_h5ad(input_file)
-
+    sample_indices = []
     if split_dataset:
         logger.info(
             "Splitting data: train=%.2f, val=%.2f", train_split, 1 - train_split
@@ -88,9 +88,16 @@ def main(cfg: DictConfig):
                 metrics_of_interest=list(cfg.metrics_of_interest),
                 categories_of_interest=list(cfg.categories_of_interest),
             )
-
+            sample_indices.append(adata_split.obs["sample_index"])
             adata_split.write_h5ad(str(out_path))
             logger.info("Saved %s split to: %s", split, out_path)
+            del adata_split
+        # check that sample indices are unique across splits
+        if len(sample_indices) != len(set(sample_indices)):
+            logger.error(
+                "Sample indices are not unique across splits. This could be a hashing error in pp_geneformer."
+            )
+            sys.exit(1)
 
     else:
         # Single dataset scenario

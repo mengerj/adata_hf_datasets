@@ -399,7 +399,6 @@ class GeneformerEmbedder(BaseEmbedder):
         This includes:
          - Adding Ensembl IDs to `adata.var["ensembl_id"]` if not present.
          - Calculating and storing `adata.obs["n_counts"]` if not present.
-         - Creating a `sample_index` column in `adata.obs`.
          - Writing the AnnData to a temporary H5AD file.
          - Optionally tokenizing the data using `TranscriptomeTokenizer` if it
            has not been tokenized previously (i.e., if the .dataset file doesn't exist).
@@ -429,6 +428,13 @@ class GeneformerEmbedder(BaseEmbedder):
         self.adata_path = Path(adata_path)
         # save the tokenized dataset in the same directory as the adata
         self.adata_dir = self.adata_path.parent
+        # check if adata_dir has other files than "train.h5ad" and "val.h5ad", and give a warning
+        if len(list(self.adata_dir.glob("*.h5ad"))) > 2:
+            logger.warning(
+                "The directory %s contains more than two .h5ad files. "
+                "Geneformer will tokenize all files in the directory, so remove any besides train and val.",
+                self.adata_dir,
+            )
         self.out_dataset_dir = self.adata_path.parent / "geneformer"
         adata = sc.read(self.adata_path, backed="r")
         # 1. Make sure the data has the required fields
