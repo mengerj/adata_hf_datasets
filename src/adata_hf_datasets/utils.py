@@ -13,9 +13,30 @@ import tempfile
 from string import Template
 import scipy.sparse as sp
 import pandas as pd
-
+import hashlib
 
 logger = logging.getLogger(__name__)
+
+
+def stable_numeric_id(s: str) -> int:
+    """
+    Convert a string to a stable 64-bit numeric ID using part of an MD5 hash.
+
+    Parameters
+    ----------
+    s : str
+        Input string to be hashed.
+
+    Returns
+    -------
+    int
+        A 64-bit integer derived from the hash of `s`.
+    """
+    # Compute MD5 hash of the string
+    md5_bytes = hashlib.md5(s.encode("utf-8")).digest()
+    # Take the first 4 bytes of the MD5 digest and interpret them as an unsigned big-endian integer
+    numeric_id = int.from_bytes(md5_bytes[:4], byteorder="big", signed=False)
+    return numeric_id
 
 
 def split_anndata(adata: anndata.AnnData, train_size: float = 0.8):
