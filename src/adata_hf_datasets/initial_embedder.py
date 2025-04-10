@@ -1077,10 +1077,12 @@ class InitialEmbedder:
         logger.info("Using chunk-based approach for method '%s'.", self.method)
         adata = sc.read(adata_path, backed="r")
         loader = AnnLoader(adatas=adata, batch_size=chunk_size)
+        output_path = Path(output_path)
+        chunk_dir = output_path.parent / f"{output_path.stem}_chunks"
+        chunk_dir.mkdir(parents=True, exist_ok=True)
         chunk_list = []
 
-        # Use a context manager to ensure the temporary directory is properly cleaned up
-        with tempfile.TemporaryDirectory() as tmp_dir:
+        try:
             for i, chunk in enumerate(loader):
                 logger.info(
                     "Processing chunk %d with shape obs x var = %s x %s",
@@ -1092,24 +1094,31 @@ class InitialEmbedder:
                 # Move chunk fully into memory
                 chunk_in_memory = chunk.to_adata()
 
-                # Let the embedder produce embeddings
+                # Embed the chunk
                 chunk_adata = self.embedder.embed(
-                    adata_path=None,  # Not used because we're passing chunk_in_memory directly
+                    adata_path=None,
                     adata=chunk_in_memory,
                     obsm_key=obsm_key,
                     **embed_kwargs,
                 )
 
-                # Create a path for the chunk file within the temporary directory
-                chunk_path = Path(tmp_dir) / f"chunk_{i}.h5ad"
+                # Write chunk directly into the chunk directory
+                chunk_path = chunk_dir / f"chunk_{i}.h5ad"
                 chunk_adata.write_h5ad(chunk_path)
                 chunk_list.append(chunk_path)
-                del chunk_adata
 
-            # Concatenate all embedded chunks in memory
+                del chunk_adata, chunk_in_memory
+
+            # Concatenate all embedded chunks directly into final output
             anndata.experimental.concat_on_disk(
-                in_files=chunk_list, out_file=output_path
+                in_files=chunk_list, out_file=str(output_path)
             )
+
+        finally:
+            # Cleanup: Remove chunk files after concatenation
+            for file in chunk_list:
+                file.unlink()
+            chunk_dir.rmdir()
         # Write the final result to disk
         logger.info("Wrote final embedded AnnData to %s", output_path)
         # return the backed adata object
