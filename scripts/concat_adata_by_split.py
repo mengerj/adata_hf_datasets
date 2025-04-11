@@ -1,14 +1,13 @@
 #!/usr/bin/env python3
 
-import os
 import re
-import logging
 from pathlib import Path
 from typing import List, Dict
 from adata_hf_datasets.utils import setup_logging
 import anndata as ad
 
 logger = setup_logging()
+
 
 def group_files_by_prefix(data_dir: Path) -> Dict[str, Dict[str, List[Path]]]:
     """Group h5ad files by prefix and split (train/val).
@@ -39,13 +38,35 @@ def group_files_by_prefix(data_dir: Path) -> Dict[str, Dict[str, List[Path]]]:
     return grouped
 
 
-def concat_and_save(files: List[Path], output_file: Path) -> None:
-    """Concatenate h5ad files on disk and save to output file."""
-    logger.info("Concatenating %d files -> %s", len(files), output_file)
-    adatas = [ad.read_h5ad(f, backed="r") for f in files]
-    combined = ad.concat(adatas, join="outer", merge="unique", uns_merge="unique")
-    combined.write(output_file)
-    logger.info("Saved concatenated AnnData to %s", output_file)
+def merge_obsm_layers(file_paths: List[Path], output_file: Path) -> None:
+    """Merge multiple h5ad files by combining their .obsm layers.
+
+    Skips duplicate .obsm keys.
+    """
+    logger.info("Merging %d files -> %s", len(file_paths), output_file)
+
+    base_adata = ad.read_h5ad(file_paths[0], backed="r")
+    obs_names = base_adata.obs_names.copy()
+
+    merged_adata = ad.AnnData(obs=base_adata.obs.copy())
+
+    for file_path in file_paths:
+        logger.info("Reading obsm layers from %s", file_path)
+        adata = ad.read_h5ad(file_path, backed="r")
+
+        if not adata.obs_names.equals(obs_names):
+            raise ValueError(f"obs_names in {file_path} do not match the reference.")
+
+        for key in adata.obsm_keys():
+            if key in merged_adata.obsm:
+                logger.warning(
+                    "Skipping obsm key '%s' from %s — already exists.", key, file_path
+                )
+                continue
+            merged_adata.obsm[key] = adata.obsm[key]
+
+    logger.info("Saving merged AnnData to %s", output_file)
+    merged_adata.write_h5ad(output_file)
 
 
 def main(data_dir: str, output_dir: str) -> None:
@@ -58,15 +79,25 @@ def main(data_dir: str, output_dir: str) -> None:
     for prefix, splits in grouped_files.items():
         for split, files in splits.items():
             output_file = output_dir / f"{prefix}_{split}.h5ad"
-            concat_and_save(files, output_file)
+            merge_obsm_layers(files, output_file)
 
 
 if __name__ == "__main__":
     import argparse
 
-    parser = argparse.ArgumentParser(description="Concatenate h5ad files by split.")
-    parser.add_argument("--data-dir", required=True, help="Input directory with h5ad files")
-    parser.add_argument("--output-dir", required=True, help="Output directory")
+    parser = argparse.ArgumentParser(
+        description="Merge h5ad files by split, combining obsm layers."
+    )
+    parser.add_argument(
+        "--data-dir",
+        default="data/RNA/processed_with_emb/train/cellxgene_pseudo_bulk_35k",
+        help="Input directory with h5ad files",
+    )
+    parser.add_argument(
+        "--output-dir",
+        default="data/RNA/processed_with_emb/train/cellxgene_pseudo_bulk_35k/joined",
+        help="Output directory",
+    )
 
     args = parser.parse_args()
     main(args.data_dir, args.output_dir)
