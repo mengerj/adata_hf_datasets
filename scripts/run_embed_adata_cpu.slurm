@@ -2,15 +2,15 @@
 #SBATCH --job-name=cpu_initial_emb
 #SBATCH --output=cpu_initial_emb.out
 #SBATCH --error=cpu_initial_emb.err
-#SBATCH --mem=50G
+#SBATCH --mem=60G
 #SBATCH --time=12:00:00   # Adjust if needed
 
 batch_key="dataset_title"
 batch_size=32
 
-INPUT_FILES='["data/RNA/processed/train/cellxgene_pseudo_bulk_35k/train.h5ad","data/RNA/processed/train/cellxgene_pseudo_bulk_35k/val.h5ad"]'
+INPUT_FILES='["data/RNA/processed/train/cellxgene_pseudo_bulk_35k/all_train.h5ad","data/RNA/processed/train/cellxgene_pseudo_bulk_35k/all_val.h5ad"]'
 
-METHODS=("scvi_fm" "hvg" "pca")
+METHODS=("hvg" "pca" "scvi_fm")
 
 source .venv/bin/activate
 echo "Environment activated."

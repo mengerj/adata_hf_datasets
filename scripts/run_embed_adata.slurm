@@ -5,7 +5,7 @@
 #SBATCH --partition=gpu
 #SBATCH --gres=gpu:1           # Request 1 GPU
 #SBATCH --mem=64G
-#SBATCH --time=6:00:00
+#SBATCH --time=4:00:00
 #SBATCH --array=0-1
 
 METHOD="geneformer"
@@ -13,8 +13,8 @@ batch_key="dataset_title"
 batch_size=32
 
 INPUT_FILES=(
-    "data/RNA/processed/train/cellxgene_pseudo_bulk_3_5k/train.h5ad"
-    "data/RNA/processed/train/cellxgene_pseudo_bulk_3_5k/val.h5ad"
+    "data/RNA/processed/train/cellxgene_pseudo_bulk_35k/all_train.h5ad"
+    "data/RNA/processed/train/cellxgene_pseudo_bulk_35k/all_val.h5ad"
 )
 
 input_file=${INPUT_FILES[$SLURM_ARRAY_TASK_ID]}
