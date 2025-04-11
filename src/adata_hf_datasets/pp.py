@@ -12,6 +12,8 @@ import scipy.sparse as sp
 from scipy.stats import median_abs_deviation
 from pysradb import SRAweb
 from sklearn.mixture import GaussianMixture
+from pathlib import Path
+import os
 
 logger = logging.getLogger(__name__)
 
@@ -99,10 +101,11 @@ def pp_adata(
         adata.uns["tag"] = tag
 
     try:
+        # 2) Run quality control
         logger.info("Running quality control on data.")
         adata = pp_quality_control(
             adata,
-            nmads_main=5,
+            nmads_main=3,
             nmads_mt=3,
             pct_counts_mt_threshold=8.0,
             percent_top=[20, 50, 100],
@@ -412,6 +415,88 @@ def pp_quality_control(
 
     logger.info("QC filtering complete.")
     return adata
+
+
+def prepend_instrument_to_description(
+    adata: anndata.AnnData, instrument_key: str, description_key: str
+) -> None:
+    """Prepend instrument information to the description field of an AnnData object.
+
+    This function modifies `adata.obs[description_key]` in-place by prepending
+    a string indicating the instrument used for the measurement. The instrument
+    is sourced from `adata.obs[instrument_key]` for each observation.
+
+    Parameters
+    ----------
+    adata : AnnData
+        Annotated data matrix. Typically of shape (n_obs, n_vars).
+    instrument_key : str
+        Column name in `adata.obs` containing instrument identifiers.
+    description_key : str
+        Column name in `adata.obs` containing the existing description to be updated.
+
+    Raises
+    ------
+    KeyError
+        If `instrument_key` or `description_key` are not found in `adata.obs`.
+
+    Notes
+    -----
+    The updated description will be of the form:
+    "This measurement was conducted with <instrument>. <original_description>"
+    """
+    if instrument_key not in adata.obs.columns:
+        raise KeyError(f"'{instrument_key}' not found in adata.obs columns.")
+
+    if description_key not in adata.obs.columns:
+        raise KeyError(f"'{description_key}' not found in adata.obs columns.")
+
+    logger.info(
+        "Prepending instrument information from '%s' to description in '%s'.",
+        instrument_key,
+        description_key,
+    )
+
+    adata.obs[description_key] = (
+        "This measurement was conducted with "
+        + adata.obs[instrument_key].astype(str)
+        + ". "
+        + adata.obs[description_key].astype(str)
+    )
+    # print a random example
+    logger.info(
+        "Example: %s",
+        adata.obs[description_key].sample(1).values[0],
+    )
+
+
+def maybe_add_sra_metadata(
+    adata,
+    new_cols: str | list[str] = ["library_layout", "library_source", "instrument"],
+    sample_id_key: str = "accession",
+    sra_key: str = "sample_accession",
+    exp_id_key: str = "experiment_accession",
+):
+    """
+    Check if the data is from SRA and fetch metadata if so.
+
+    This function checks if the first entry in adata.obs.index starts with "SRX".
+    If so, it assumes the data is from SRA and calls fetch_sra_metadata.
+    Otherwise, it does nothing.
+    """
+    if adata.obs.index[1].startswith("SRX"):
+        logger.info("Data appears to be from SRA. Fetching metadata.")
+
+        adata.obs[exp_id_key] = adata.obs.index
+        fetch_sra_metadata(
+            adata,
+            sample_id_key=sample_id_key,
+            sra_key=sra_key,
+            exp_id_key=exp_id_key,
+            new_cols=new_cols,
+        )
+    else:
+        logger.info("Data does not appear to be from SRA. Skipping metadata fetching.")
 
 
 def fetch_sra_metadata(
@@ -1033,7 +1118,6 @@ def fit_GMM(
     adata: anndata.AnnData,
     column_name: str = "n_genes_by_counts",
     n_components: int = 2,
-    label_prefix: str = None,
 ) -> None:
     """
     Fit a Gaussian Mixture Model (GMM) to the specified column in adata.obs and label
@@ -1047,9 +1131,6 @@ def fit_GMM(
         The key in `adata.obs` for the column to fit the GMM to.
     n_components : int
         Number of components for the GMM.
-    label_prefix : str, optional
-        Prefix for the label column in `adata.obs`. If None, defaults to
-        f"{column_name}_label".
 
     Returns
     -------
@@ -1062,8 +1143,7 @@ def fit_GMM(
       higher mean is labeled 'high'.
     - Samples with missing values in `column_name` get NaN in the label column.
     """
-    if label_prefix is None:
-        label_prefix = column_name
+    label_prefix = column_name
 
     if column_name not in adata.obs.columns:
         raise ValueError(f"{column_name} not found in adata.obs.")
@@ -1095,9 +1175,9 @@ def fit_GMM(
     str_labels = []
     for lbl in labels_numeric:
         if lbl == low_cluster_id:
-            str_labels.append("low")
+            str_labels.append(f"low_{column_name}")
         elif lbl == high_cluster_id:
-            str_labels.append("high")
+            str_labels.append(f"high_{column_name}")
         else:
             # If n_components > 2, you might need to label these differently
             str_labels.append(f"cluster_{lbl}")
@@ -1111,3 +1191,191 @@ def fit_GMM(
     # For samples with missing column_name, set them to NaN
     mask_missing = adata.obs[column_name].isna()
     adata.obs.loc[mask_missing, f"{label_prefix}_label"] = np.nan
+
+
+def is_bimodal_by_gmm(arr, random_state=42):
+    gmm1 = GaussianMixture(n_components=1, random_state=random_state).fit(arr)
+    gmm2 = GaussianMixture(n_components=2, random_state=random_state).fit(arr)
+    # Compare BIC or AIC
+    if gmm2.bic(arr) < gmm1.bic(arr):
+        return True
+    return False
+
+
+def maybe_fit_bimodality(
+    adata: anndata.AnnData, column_name: str = "readsaligned_log"
+) -> bool:
+    """
+    If `column_name` exists in adata.obs, create a log-transformed version,
+    then fit a 2-component GMM using 'fit_GMM' to label cells as 'low'/'high'.
+
+    Parameters
+    ----------
+    adata : anndata.AnnData
+        AnnData object to be modified in place.
+    column_name : str, optional
+        Column in `adata.obs` with the raw alignment counts (e.g., 'readsaligned').
+
+    Returns
+    -------
+    None
+        Modifies `adata.obs` in place by adding a new column with labels ('low'/'high')
+        if `column_name` is found.
+
+    Notes
+    -----
+    - If `column_name` is missing, does nothing (we assume it's not a bulk dataset).
+    - We always fit a 2-component GMM. Cells are assigned 'low' or 'high'
+      in `adata.obs[label_col]`.
+    - If you want a more rigorous check for "bimodality," you could compare
+      GMM(2) vs. GMM(1) BIC/AIC inside this function.
+    """
+    label_col = f"{column_name}_label"
+    if column_name not in adata.obs:
+        logger.info(
+            "No '%s' found in adata.obs. Assuming not bulk; skipping GMM.", column_name
+        )
+        return False
+
+    arr = np.log1p(adata.obs[column_name].dropna().values.reshape(-1, 1))
+    if not is_bimodal_by_gmm(arr):
+        logger.info("readsaligned_log not strongly bimodal. Skipping GMM labeling.")
+        return False
+
+    # Fit a 2-component GMM using the function you provided
+    logger.info(
+        "Fitting GMM (n_components=2) on '%s' to label 'low'/'high'.", column_name
+    )
+    fit_GMM(adata, column_name=column_name, n_components=2)
+
+    # The above will create e.g. "readsaligned_log_label" with 'low', 'high' in adata.obs.
+    # If you had a unimodal distribution, you'll still get 2 clusters,
+    # but one might be tiny or they'd be close in means.
+    logger.info("GMM labeling done. New column in adata.obs['%s'] created.", label_col)
+    return True
+
+
+def split_adata_by_label(
+    adata: anndata.AnnData,
+    label_col: str = "readsaligned_log_label",
+    backed_path: str | Path | None = None,
+) -> dict[str, anndata.AnnData]:
+    """
+    Split the input AnnData into multiple subsets based on a categorical column (e.g., 'low'/'high').
+
+    Parameters
+    ----------
+    adata : anndata.AnnData
+        The AnnData object to split.
+    label_col : str
+        Column in `adata.obs` used to group cells (e.g., 'readsaligned_log_label').
+    labels : list of str, optional
+        The label values to split by. If None, automatically use unique values in `label_col`.
+    backed_path : str or Path, optional
+        If provided, the path to save the split AnnData objects. If None, uses in-memory copies.
+
+    Returns
+    -------
+    dict[str, anndata.AnnData]
+        Mapping from label value -> subset AnnData.
+
+    Notes
+    -----
+    - If `label_col` doesn't exist or is all missing, returns { 'all': adata }.
+    - If you only want certain label values, specify `labels`.
+    - This function can be used for e.g. 'low' vs. 'high' splitting after GMM labeling.
+    """
+    if label_col not in adata.obs.columns:
+        logger.warning(
+            "Label column '%s' not in adata.obs. Returning original adata only.",
+            label_col,
+        )
+        return {"all": adata}
+
+    unique_vals = adata.obs[label_col].dropna().unique().tolist()
+    if not unique_vals:
+        logger.warning(
+            "Label column '%s' is present but all values are NaN. Returning original adata only.",
+            label_col,
+        )
+        return {"all": adata}
+
+    labels = sorted(unique_vals)
+
+    subsets = {}
+    if backed_path is not None:
+        logger.info(
+            "Intermediate saving of AnnData to %s to avoid double in memory adata",
+            backed_path,
+        )
+        adata.write(backed_path)
+        del adata
+        for val in labels:
+            # If some label doesn't actually appear in the data, skip or create an empty subset
+            if val not in unique_vals:
+                logger.warning(
+                    "Label '%s' not found in '%s'. Skipping.", val, label_col
+                )
+                continue
+            adata_backed = sc.read_h5ad(backed_path, backed="r")
+            mask = adata_backed.obs[label_col] == val
+            sub_view = adata_backed[mask]
+            print(f"Subset has shape: {sub_view.shape} for label='{val}'")
+            subsets[val] = sub_view.to_memory()
+        adata_backed.file.close()
+        os.remove(backed_path)
+        del adata_backed
+    else:
+        for val in labels:
+            # If some label doesn't actually appear in the data, skip or create an empty subset
+            if val not in unique_vals:
+                logger.warning(
+                    "Label '%s' not found in '%s'. Skipping.", val, label_col
+                )
+                continue
+            mask = adata.obs[label_col] == val
+            subsets[val] = adata[mask].copy()
+            print(f"Subset has shape: {subsets[val].shape} for label='{val}'")
+
+    return subsets
+
+
+def split_if_bimodal(
+    adata: anndata.AnnData,
+    column_name: str = "readsaligned_log",
+    backed_path: str | Path | None = None,
+) -> dict[str, anndata.AnnData]:
+    """
+    Uses `maybe_fit_bimodality` on `column_name` to check if data is bimodal.
+    If so, calls `split_adata_by_label` to split into 'low'/'high' clusters (and any extra if n_components>2).
+    Otherwise returns {"all": adata}.
+
+    Parameters
+    ----------
+    adata : anndata.AnnData
+        The AnnData object to potentially split.
+    column_name : str
+        The column in `adata.obs` that is checked for bimodality. e.g. 'readsaligned_log'.
+    backed_path : str or Path, optional
+        If provided, the path to save the split AnnData objects. This is needed for very large datasets to avoid having it in memory twice.
+        If None, uses in-memory copies.
+
+    Returns
+    -------
+    dict[str, anndata.AnnData]
+        If `maybe_fit_bimodality` returns True, we get a dict of subsets (e.g., {"low": adata_low, "high": adata_high}).
+        If not bimodal, returns {"all": adata}.
+
+    Notes
+    -----
+    - This function expects that `maybe_fit_bimodality`, `split_adata_by_label`, etc.
+      are already defined and imported in the same scope.
+    - 'maybe_fit_bimodality' itself calls 'is_bimodal_by_gmm' (BIC check) and if True, calls 'fit_GMM'.
+    """
+    is_bi = maybe_fit_bimodality(adata, column_name=column_name)
+    if is_bi:
+        # The label column is typically f"{column_name}_label" in maybe_fit_bimodality.
+        label_col = f"{column_name}_label"
+        return split_adata_by_label(adata, label_col=label_col, backed_path=backed_path)
+    else:
+        return {"all": adata}

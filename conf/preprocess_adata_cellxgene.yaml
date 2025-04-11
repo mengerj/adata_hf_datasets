@@ -1,0 +1,41 @@
+# conf/preprocess_adata.yaml
+
+# Input file path
+input_file: "data/RNA/raw/train/cellxgene_pseudo_bulk_35k.h5ad"
+
+# Output directory for processed files
+output_dir: "data/RNA/processed/train"
+overwrite: true
+# Train/validation split configuration
+split_dataset: true
+train_split: 0.9
+# If false, the script will NOT split into train/val but instead
+# output a single 'all.h5ad' file. This can be used for test data.
+
+# whether to split the dataset based on the bimodal distrbution of some continous covariate.
+# Not needed for cellxgene dataset
+split_bimodal: false
+bimodal_col: null
+#to append the instrument to the description. Set any of them to null if you want to skip.
+instrument_key: "assay" #key in adata.obs that contains the instrument information
+description_key: "natural_language_annotation"
+# Filter certain low frequency categories
+#categories:
+#  - "cell_type"
+#  - "dataset_title"
+categories:
+  - "dataset_title"
+  - "cell_type"
+  - "tissue"
+  - "assay"
+category_threshold: 10 # remove all categories that have less than the threshold
+
+#For Plotting
+metrics_of_interest: #these numeric metrics will be plotted as a distribution
+  - "n_genes_by_counts"
+  - "total_counts"
+categories_of_interest: #This will be used to colour a pca, and check the distribution of the metrics_of_interest
+  - "dataset_title"
+  - "cell_type"
+  - "tissue"
+  - "assay"

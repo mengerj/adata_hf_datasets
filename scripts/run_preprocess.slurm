@@ -17,6 +17,7 @@ source .venv/bin/activate
 echo "venv activated"
 # Now run your Python script
 python3 scripts/preprocess_adata.py \
+    --config-name preprocess_adata_cellxgene \
     ++input_file=$INPUT_FILE \
     ++output_dir=$OUTPUT_DIR \
     ++split_dataset=$SPLIT_DATASET \

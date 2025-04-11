@@ -19,17 +19,26 @@ import hydra
 from omegaconf import DictConfig
 from dotenv import load_dotenv
 from adata_hf_datasets.utils import setup_logging, split_anndata
-from adata_hf_datasets.pp import pp_adata
+from adata_hf_datasets.pp import (
+    pp_adata,
+    split_if_bimodal,
+    prepend_instrument_to_description,
+    maybe_add_sra_metadata,
+)
 from adata_hf_datasets.sys_monitor import SystemMonitor
 from adata_hf_datasets.plotting import qc_evaluation_plots
 from hydra.core.hydra_config import HydraConfig
 import anndata as ad
+import numpy as np
+import scanpy as sc
 
 
 logger = setup_logging()
 
 
-@hydra.main(version_base=None, config_path="../conf", config_name="preprocess_adata")
+@hydra.main(
+    version_base=None, config_path="../conf", config_name="preprocess_adata_geo"
+)
 def main(cfg: DictConfig):
     """
     Main function for preprocessing raw AnnData files using Hydra config.
@@ -57,75 +66,99 @@ def main(cfg: DictConfig):
     output_subdir = Path(output_dir) / file_stem
     output_subdir.mkdir(parents=True, exist_ok=True)
     adata = ad.read_h5ad(input_file)
-    sample_indices = []
-    if split_dataset:
-        logger.info(
-            "Splitting data: train=%.2f, val=%.2f", train_split, 1 - train_split
+    # Optionally add SRA metadata
+    maybe_add_sra_metadata(adata)
+    # Optionally prepend instrument to description
+    if cfg.instrument_key and cfg.description_key:
+        prepend_instrument_to_description(
+            adata,
+            instrument_key=cfg.instrument_key,
+            description_key=cfg.description_key,
         )
-        train_adata, val_adata = split_anndata(adata, train_size=train_split)
-        del adata
-        # processess each split
-        for adata_split, split in zip([train_adata, val_adata], ["train", "val"]):
-            out_path = output_subdir / f"{split}.h5ad"
-            if out_path.is_file() and not cfg.overwrite:
+    if cfg.bimodal_col in adata.obs:
+        log_col = f"{cfg.bimodal_col}_log"
+        adata.obs[log_col] = sc.pp.log1p(adata.obs[cfg.bimodal_col])
+        adata_dict = (
+            split_if_bimodal(adata, column_name=log_col, backed_path=None)
+            if cfg.split_bimodal
+            else {"all": adata}
+        )
+    else:
+        adata_dict = {"all": adata}
+    # Process each split (not training/val but based on bimodality)
+    for split1, adata_split_bimodal in adata_dict.items():
+        sample_indices = []
+        if split_dataset:
+            logger.info(
+                "Splitting data: train=%.2f, val=%.2f", train_split, 1 - train_split
+            )
+            train_adata, val_adata = split_anndata(
+                adata_split_bimodal, train_size=train_split
+            )
+            del adata_split_bimodal
+            # processess each split
+            for adata_split, split in zip([train_adata, val_adata], ["train", "val"]):
+                out_path = output_subdir / f"{split1}_{split}.h5ad"
+                if out_path.is_file() and not cfg.overwrite:
+                    logger.info(
+                        "Processed split .h5ad already found for '%s'; skipping reprocessing.",
+                        file_stem,
+                    )
+                    continue
+                logger.info("Processing %s split...", split)
+                adata_split = pp_adata(
+                    adata=adata_split,
+                    category_threshold=cfg.category_threshold,
+                    categories=list(cfg.categories),
+                    tag=str(hydra_run_dir),
+                )
+                # Create some plots to check the data
+                qc_evaluation_plots(
+                    adata_split,
+                    save_plots=True,
+                    save_dir=hydra_run_dir + "/" + split1 + "_" + split,
+                    metrics_of_interest=list(cfg.metrics_of_interest),
+                    categories_of_interest=list(cfg.categories_of_interest),
+                )
+                sample_indices.append(adata_split.obs["sample_index"].values)
+                adata_split.write_h5ad(str(out_path))
+                logger.info("Saved %s split to: %s", split, out_path)
+                del adata_split
+            # check that sample indices are unique across splits
+            flat_indices = np.concatenate(sample_indices)
+            if len(flat_indices) != len(np.unique(flat_indices)):
+                logger.error(
+                    "Sample indices are not unique across splits. This could be a hashing error in pp_geneformer."
+                )
+                sys.exit(1)
+
+        else:
+            # Single dataset scenario
+            all_out_path = output_subdir / split1 + "_all.h5ad"
+            if all_out_path.is_file():
                 logger.info(
-                    "Processed split .h5ad already found for '%s'; skipping reprocessing.",
+                    "Processed single .h5ad already found for '%s'; skipping reprocessing.",
                     file_stem,
                 )
-                continue
-            logger.info("Processing %s split...", split)
-            adata_split = pp_adata(
-                adata=adata_split,
-                category_threshold=cfg.category_threshold,
-                categories=list(cfg.categories),
-                tag=str(hydra_run_dir),
-            )
+                return
+
+            logger.info("Processing single dataset without splitting...")
+            adata = pp_adata(adata=adata, tag=str(hydra_run_dir))
+            logger.info("Saved processed dataset: %s", all_out_path)
             # Create some plots to check the data
             qc_evaluation_plots(
-                adata_split,
+                adata,
                 save_plots=True,
-                save_dir=hydra_run_dir + "/" + split,
+                save_dir=hydra_run_dir + "/" + split1 + "_" + "all",
                 metrics_of_interest=list(cfg.metrics_of_interest),
                 categories_of_interest=list(cfg.categories_of_interest),
             )
-            sample_indices.append(adata_split.obs["sample_index"])
-            adata_split.write_h5ad(str(out_path))
-            logger.info("Saved %s split to: %s", split, out_path)
-            del adata_split
-        # check that sample indices are unique across splits
-        if len(sample_indices) != len(set(sample_indices)):
-            logger.error(
-                "Sample indices are not unique across splits. This could be a hashing error in pp_geneformer."
-            )
-            sys.exit(1)
+            del adata
 
-    else:
-        # Single dataset scenario
-        all_out_path = output_subdir / "all.h5ad"
-        if all_out_path.is_file():
-            logger.info(
-                "Processed single .h5ad already found for '%s'; skipping reprocessing.",
-                file_stem,
-            )
-            return
-
-        logger.info("Processing single dataset without splitting...")
-        adata = pp_adata(adata=adata, tag=str(hydra_run_dir))
-        logger.info("Saved processed dataset: %s", all_out_path)
-        # Create some plots to check the data
-        qc_evaluation_plots(
-            adata,
-            save_plots=True,
-            save_dir=hydra_run_dir + "/all",
-            metrics_of_interest=list(cfg.metrics_of_interest),
-            categories_of_interest=list(cfg.categories_of_interest),
-        )
-        del adata
-
-    monitor.stop()
-    monitor.print_summary()
-    monitor.save(hydra_run_dir)
-    monitor.plot_metrics(hydra_run_dir)
+        monitor.stop()
+        monitor.print_summary()
+        monitor.save(hydra_run_dir)
+        monitor.plot_metrics(hydra_run_dir)
 
 
 if __name__ == "__main__":
