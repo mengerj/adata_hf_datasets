@@ -1128,63 +1128,49 @@ class InitialEmbedder:
 
         # Otherwise, chunk-based approach for large memory or SCVI-like methods:
         logger.info("Using chunk-based approach for method '%s'.", self.method)
+        adata = sc.read(adata_path, backed="r")
+        loader = AnnLoader(adatas=adata, batch_size=chunk_size)
+        output_path = Path(output_path)
+        chunk_dir = output_path.parent / f"{output_path.stem}_chunks"
+        chunk_dir.mkdir(parents=True, exist_ok=True)
+        chunk_list = []
 
-        # We'll read the data in 'backed="r"' mode
-        # and ensure we close it even if an error occurs
-        adata_backed = None
         try:
-            adata_backed = sc.read(adata_path, backed="r")
-            loader = AnnLoader(adatas=adata_backed, batch_size=chunk_size)
-            chunk_list = []
-
-            with tempfile.TemporaryDirectory() as tmp_dir:
-                for i, chunk in enumerate(loader):
-                    logger.info(
-                        "Processing chunk %d with shape obs x var = %s x %s",
-                        i,
-                        chunk.n_obs,
-                        chunk.n_vars,
-                    )
-                    # Move chunk fully into memory
-                    chunk_in_memory = chunk.to_adata()
-
-                    # Let the embedder produce embeddings
-                    chunk_adata = self.embedder.embed(
-                        adata_path=None,  # not used, we pass chunk in memory
-                        adata=chunk_in_memory,
-                        obsm_key=obsm_key,
-                        **embed_kwargs,
-                    )
-
-                    # Write out the chunk to a temp file
-                    chunk_path = Path(tmp_dir) / f"chunk_{i}.h5ad"
-                    chunk_adata.write_h5ad(chunk_path)
-                    chunk_list.append(chunk_path)
-                    # Explicitly close the chunk_adata if it’s backed (rare in this snippet, but for safety)
-                    if hasattr(chunk_adata, "file") and chunk_adata.file is not None:
-                        chunk_adata.file.close()
-                    del chunk_adata, chunk_in_memory
-
-                # Now we concatenate all embedded chunks into a single file
-                anndata.experimental.concat_on_disk(
-                    in_files=chunk_list, out_file=output_path
+            for i, chunk in enumerate(loader):
+                logger.info(
+                    "Processing chunk %d with shape obs x var = %s x %s",
+                    i,
+                    chunk.n_obs,
+                    chunk.n_vars,
                 )
+                chunk_in_memory = chunk.to_adata()
+                # Embed the chunk
+                chunk_adata = self.embedder.embed(
+                    adata_path=None,
+                    adata=chunk_in_memory,
+                    obsm_key=obsm_key,
+                    **embed_kwargs,
+                )
+
+                # Write chunk directly into the chunk directory
+                chunk_path = chunk_dir / f"chunk_{i}.h5ad"
+                chunk_adata.write_h5ad(chunk_path)
+                chunk_list.append(chunk_path)
+
+                del chunk_adata, chunk_in_memory
+
+            # Concatenate all embedded chunks directly into final output
+            anndata.experimental.concat_on_disk(
+                in_files=chunk_list, out_file=str(output_path)
+            )
             logger.info("Wrote final embedded AnnData to %s", output_path)
 
-            # return a read-back of output in memory
-            adata_final = sc.read(output_path)
-            return adata_final
-
         finally:
+            # Cleanup: Remove chunk files after concatenation
+            for file in chunk_list:
+                file.unlink()
+            chunk_dir.rmdir()
             # Guarantee that if something goes wrong or we succeed, we close adata_backed
-            if (
-                adata_backed is not None
-                and hasattr(adata_backed, "file")
-                and adata_backed.file is not None
-            ):
-                adata_backed.file.close()
-                logger.info("Closed the backed AnnData file '%s'." % adata_path)
-
             # Just a final garbage-collection
             import gc
 
