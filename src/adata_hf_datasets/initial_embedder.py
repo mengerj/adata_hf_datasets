@@ -800,6 +800,9 @@ class SCVIEmbedder(BaseEmbedder):
                 ) from e
 
         # Set up the scVI model with reference data
+        # loaded minified reference adata with is expected to give a warning about empty cells
+        # but this is expected and can be ignored
+        logging.info("Reference AnnData is expected to be minified with empty cells.")
         self.scvi_model = self._setup_model_with_ref(model, reference_adata)
 
     def _prepare_query_adata(self, query_adata: str | Path):
