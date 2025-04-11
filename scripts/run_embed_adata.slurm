@@ -13,8 +13,8 @@ batch_key="dataset_title"
 batch_size=32
 
 INPUT_FILES=(
-    "data/RNA/processed/train/cellxgene_pseudo_bulk_350k/train.h5ad"
-    "data/RNA/processed/train/cellxgene_pseudo_bulk_350k/val.h5ad"
+    "data/RNA/processed/train/cellxgene_pseudo_bulk_3_5k/train.h5ad"
+    "data/RNA/processed/train/cellxgene_pseudo_bulk_3_5k/val.h5ad"
 )
 
 input_file=${INPUT_FILES[$SLURM_ARRAY_TASK_ID]}
