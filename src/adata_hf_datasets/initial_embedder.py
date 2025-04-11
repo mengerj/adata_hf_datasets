@@ -124,7 +124,9 @@ class HighlyVariableGenesEmbedder(BaseEmbedder):
         """
         logger.info("Selecting top %d highly variable genes.", self.embedding_dim)
 
-        # check if any genes contain inf values
+        # Check if enough valid genes are present in each batch
+        if batch_key is not None:
+            self._check_enough_genes_per_batch(adata, batch_key, self.embedding_dim)
         # remove cells with infinity values
         sc.pp.highly_variable_genes(
             adata, n_top_genes=self.embedding_dim, batch_key=batch_key
@@ -182,6 +184,74 @@ class HighlyVariableGenesEmbedder(BaseEmbedder):
         top_genes = adata.var["dispersions_norm"].nlargest(n_top).index
         adata.var["highly_variable"] = False
         adata.var.loc[top_genes, "highly_variable"] = True
+
+    def _check_enough_genes_per_batch(
+        self,
+        adata: anndata.AnnData,
+        batch_key: str,
+        embedding_dim: int,
+        var_threshold: float = 1e-8,
+    ) -> None:
+        """
+        Check whether each batch has at least `embedding_dim` genes with variance > var_threshold.
+        If any batch doesn't meet this, raise a ValueError suggesting ways to fix the issue.
+
+        Parameters
+        ----------
+        adata : anndata.AnnData
+            The AnnData object. Must have `adata.obs[batch_key]`.
+        batch_key : str
+            Column in `adata.obs` used to identify batches.
+        embedding_dim : int
+            The requested number of HVGs (n_top_genes).
+            Each batch must have at least this many candidate genes.
+        var_threshold : float, optional
+            Minimal variance to consider a gene "non-negligible". Defaults to 1e-8.
+
+        Raises
+        ------
+        ValueError
+            If any batch has fewer than `embedding_dim` genes above the variance threshold.
+        """
+        if batch_key not in adata.obs.columns:
+            logger.warning(
+                f"batch_key='{batch_key}' not found in adata.obs. Skipping batch check."
+            )
+            return
+
+        cell_counts = adata.obs[batch_key].value_counts()
+        logger.info(
+            "Checking that each batch has at least %d genes with variance > %g ...",
+            embedding_dim,
+            var_threshold,
+        )
+
+        # For each batch, compute how many genes pass the variance threshold
+        for bval in cell_counts.index:
+            sub = adata[adata.obs[batch_key] == bval]
+            if sub.n_obs == 0:
+                continue  # no cells here; skip
+
+            X = sub.X.toarray() if sp.issparse(sub.X) else sub.X
+            variances = X.var(axis=0)
+            var_nonzero = (variances > var_threshold).sum()
+
+            if var_nonzero < embedding_dim:
+                msg = (
+                    f"Batch '{bval}' has only {var_nonzero} genes with variance > {var_threshold}, "
+                    f"which is fewer than the requested {embedding_dim}. "
+                    "Scanpy will fail to select HVGs in this batch.\n"
+                    "Consider increasing chunk_size, lowering `embedding_dim`, merging small categories, "
+                    "or adjusting your QC thresholds."
+                )
+                logger.error(msg)
+                raise ValueError(msg)
+
+        logger.info(
+            "All batches have at least %d genes above variance threshold %g.",
+            embedding_dim,
+            var_threshold,
+        )
 
 
 class PCAEmbedder(BaseEmbedder):
@@ -1013,50 +1083,18 @@ class InitialEmbedder:
         adata_path: str,
         obsm_key: str | None = None,
         output_path: str | None = None,
-        chunk_size: int = 10000,
+        chunk_size: int = 50000,
         **embed_kwargs,
     ):
         """
-        Transform the data into the learned embedding space. If the embedder
-        requires a full AnnData in memory (e.g., SCVI), we perform chunk-based
-        processing and write out a concatenated result on disk.
-
-        Parameters
-        ----------
-        adata_path : str
-            Path to the single-cell data file (e.g., .h5ad) to embed.
-        obsm_key : str, optional
-            Key in `adata.obsm` to store the embeddings (default: "X_{self.method}").
-        output_path : str, optional
-            Where to write the embedded AnnData. If None, overwrites `adata_path`.
-        chunk_size : int, optional
-            Number of observations to load in each chunk for memory-limited processing.
-        **embed_kwargs : dict
-            Additional kwargs for the underlying embedder's `embed` method.
-
-        Returns
-        -------
-        anndata.AnnData
-            AnnData object on which embedding was performed (with an updated `obsm`).
-            - If chunk-based mode, returns the final *in-memory* concatenation.
-            - The same result is also written to `output_path` on disk.
-
-        Notes
-        -----
-        - Data is user-provided as `.h5ad` and loaded in chunks if needed.
-        - If the embedder does not require full AnnData, we simply call
-          `self.embedder.embed(adata_path, ...)` directly.
-        - If the embedder does need a full AnnData in memory (like scVI),
-          we load in chunks from disk using `AnnLoader`, call the embedder
-          on each chunk in memory, and concatenate the chunks on disk.
+        Transform the data into the learned embedding space.
         """
         if output_path is None:
-            # make a new outputpath based on input path +_"method name"_emb
             output_path = adata_path.replace(".h5ad", f"_{self.method}_emb.h5ad")
         if obsm_key is None:
             obsm_key = f"X_{self.method}"
 
-        # if the output file already exists, remove it and issue a warning
+        # if the output file already exists, remove it
         if os.path.exists(output_path):
             logger.warning(
                 "Output file %s already exists and will be overwritten.", output_path
@@ -1070,143 +1108,84 @@ class InitialEmbedder:
             obsm_key,
         )
 
-        # If the method doesn't require in memory AnnData, we can pass it directly.
+        # If the method doesn't require in-memory AnnData, we pass it directly:
         if not self.requires_mem_adata:
-            # The embedder itself is prepared to accept file paths directly:
-            adata_emb = self.embedder.embed(
-                adata_path=adata_path, obsm_key=obsm_key, **embed_kwargs
-            )
-            adata_emb.write_h5ad(output_path)
-            return adata_emb
+            try:
+                adata_emb = self.embedder.embed(
+                    adata_path=adata_path, obsm_key=obsm_key, **embed_kwargs
+                )
+                # After embedding, we can safely write:
+                adata_emb.write_h5ad(output_path)
+                return adata_emb
+            finally:
+                # Ensure if adata_emb was backed, we close it
+                if (
+                    adata_emb is not None
+                    and hasattr(adata_emb, "file")
+                    and adata_emb.file is not None
+                ):
+                    adata_emb.file.close()
 
-        # Otherwise, we do chunk-based processing to avoid loading the whole adata object into memory:
+        # Otherwise, chunk-based approach for large memory or SCVI-like methods:
         logger.info("Using chunk-based approach for method '%s'.", self.method)
-        adata = sc.read(adata_path, backed="r")
-        loader = AnnLoader(adatas=adata, batch_size=chunk_size)
-        chunk_list = []
 
-        # Use a context manager to ensure the temporary directory is properly cleaned up
-        with tempfile.TemporaryDirectory() as tmp_dir:
-            for i, chunk in enumerate(loader):
-                logger.info(
-                    "Processing chunk %d with shape obs x var = %s x %s",
-                    i,
-                    chunk.n_obs,
-                    chunk.n_vars,
+        # We'll read the data in 'backed="r"' mode
+        # and ensure we close it even if an error occurs
+        adata_backed = None
+        try:
+            adata_backed = sc.read(adata_path, backed="r")
+            loader = AnnLoader(adatas=adata_backed, batch_size=chunk_size)
+            chunk_list = []
+
+            with tempfile.TemporaryDirectory() as tmp_dir:
+                for i, chunk in enumerate(loader):
+                    logger.info(
+                        "Processing chunk %d with shape obs x var = %s x %s",
+                        i,
+                        chunk.n_obs,
+                        chunk.n_vars,
+                    )
+                    # Move chunk fully into memory
+                    chunk_in_memory = chunk.to_adata()
+
+                    # Let the embedder produce embeddings
+                    chunk_adata = self.embedder.embed(
+                        adata_path=None,  # not used, we pass chunk in memory
+                        adata=chunk_in_memory,
+                        obsm_key=obsm_key,
+                        **embed_kwargs,
+                    )
+
+                    # Write out the chunk to a temp file
+                    chunk_path = Path(tmp_dir) / f"chunk_{i}.h5ad"
+                    chunk_adata.write_h5ad(chunk_path)
+                    chunk_list.append(chunk_path)
+                    # Explicitly close the chunk_adata if it’s backed (rare in this snippet, but for safety)
+                    if hasattr(chunk_adata, "file") and chunk_adata.file is not None:
+                        chunk_adata.file.close()
+                    del chunk_adata, chunk_in_memory
+
+                # Now we concatenate all embedded chunks into a single file
+                anndata.experimental.concat_on_disk(
+                    in_files=chunk_list, out_file=output_path
                 )
+            logger.info("Wrote final embedded AnnData to %s", output_path)
 
-                # Move chunk fully into memory
-                chunk_in_memory = chunk.to_adata()
+            # return a read-back of output in memory
+            adata_final = sc.read(output_path)
+            return adata_final
 
-                # Let the embedder produce embeddings
-                chunk_adata = self.embedder.embed(
-                    adata_path=None,  # Not used because we're passing chunk_in_memory directly
-                    adata=chunk_in_memory,
-                    obsm_key=obsm_key,
-                    **embed_kwargs,
-                )
+        finally:
+            # Guarantee that if something goes wrong or we succeed, we close adata_backed
+            if (
+                adata_backed is not None
+                and hasattr(adata_backed, "file")
+                and adata_backed.file is not None
+            ):
+                adata_backed.file.close()
+                logger.info("Closed the backed AnnData file '%s'." % adata_path)
 
-                # Create a path for the chunk file within the temporary directory
-                chunk_path = Path(tmp_dir) / f"chunk_{i}.h5ad"
-                chunk_adata.write_h5ad(chunk_path)
-                chunk_list.append(chunk_path)
-                del chunk_adata
+            # Just a final garbage-collection
+            import gc
 
-            # Concatenate all embedded chunks in memory
-            anndata.experimental.concat_on_disk(
-                in_files=chunk_list, out_file=output_path
-            )
-        # Write the final result to disk
-        logger.info("Wrote final embedded AnnData to %s", output_path)
-        # return the backed adata object
-        return sc.read(output_path, backed="r")
-
-
-'''
-class InitialEmbedder:
-    """
-    Main interface for creating embeddings of single-cell data.
-    """
-
-    def __init__(
-        self,
-        method: str = "pca",
-        embedding_dim: int = 64,
-        **init_kwargs,
-    ):
-        """
-        Initialize the manager and select the embedding method.
-
-        Parameters
-        ----------
-        method : str
-            The embedding method to use. One of ["hvg", "pca", "scvi", "geneformer", ...].
-        embedding_dim : int
-            Dimensionality of the output embedding space.
-        init_kwargs : dict, optional
-            Additional keyword arguments to pass to the chosen embedder.
-        """
-        self.method = method
-        self.embedding_dim = embedding_dim
-        self.init_kwargs = init_kwargs or {}
-
-        # Dispatch to the correct embedder class
-        embedder_classes = {
-            # "hvg": HighlyVariableGenesEmbedder,
-            # "pca": PCAEmbedder,
-            "scvi_fm": SCVIEmbedderFM,
-            "geneformer": GeneformerEmbedder,
-        }
-
-        if method not in embedder_classes:
-            raise ValueError(f"Unknown embedding method: {method}")
-
-        self.embedder = embedder_classes[method](
-            embedding_dim=embedding_dim, **self.init_kwargs
-        )
-
-    def prepare(self, adata_path=None, **prepare_kwargs):
-        """
-        Prepare the embedder. For methods like PCA, this trains the model;
-        for SCVI, this loads from S3 or the Hub, etc.
-
-        Parameters
-        ----------
-        adata : anndata.AnnData, optional
-            The dataset to use for either training (PCA) or preparing query data (SCVI).
-        **prepare_kwargs : dict
-            Additional keyword arguments passed to the embedder's `prepare()` method.
-        """
-        logger.info(
-            "Preparing method '%s' with embedding_dim=%d",
-            self.method,
-            self.embedding_dim,
-        )
-        self.embedder.prepare(adata=adata_path, **prepare_kwargs)
-
-    def embed(self, adata_path, obsm_key=None, **embed_kwargs):
-        """
-        Transform the data into the learned embedding space.
-
-        Parameters
-        ----------
-        adata_path : str
-            Path to the AnnData file to embed.
-        obsm_key : str, optional
-            Key in `adata.obsm` to store the embeddings (default: "X_{method}").
-        **embed_kwargs : dict
-            Additional kwargs for the underlying embedder's `embed` method.
-
-        Returns
-        -------
-        anndata.AnnData
-            The same AnnData with the new embeddings in `adata.obsm[obsm_key]`.
-        """
-        if obsm_key is None:
-            obsm_key = f"X_{self.method}"
-
-        logger.info(
-            "Embedding data using method '%s'. Storing in '%s'.", self.method, obsm_key
-        )
-        return self.embedder.embed(adata_path = adata_path, obsm_key=obsm_key, **embed_kwargs)
-'''
+            gc.collect()
