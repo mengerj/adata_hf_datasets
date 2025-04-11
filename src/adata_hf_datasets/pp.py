@@ -14,6 +14,7 @@ from pysradb import SRAweb
 from sklearn.mixture import GaussianMixture
 from pathlib import Path
 import os
+import re
 
 logger = logging.getLogger(__name__)
 
@@ -484,10 +485,8 @@ def maybe_add_sra_metadata(
     If so, it assumes the data is from SRA and calls fetch_sra_metadata.
     Otherwise, it does nothing.
     """
-    if adata.obs.index[1].startswith("SRX"):
-        logger.info("Data appears to be from SRA. Fetching metadata.")
-
-        adata.obs[exp_id_key] = adata.obs.index
+    adata.obs[exp_id_key] = adata.obs.index
+    if filter_invalid_srx_ids(adata, column_name=exp_id_key):
         fetch_sra_metadata(
             adata,
             sample_id_key=sample_id_key,
@@ -497,6 +496,67 @@ def maybe_add_sra_metadata(
         )
     else:
         logger.info("Data does not appear to be from SRA. Skipping metadata fetching.")
+
+
+def filter_invalid_srx_ids(
+    adata: anndata.AnnData, column_name: str, pct_tolerate: float = 0.2
+) -> anndata.AnnData:
+    """Filter out cells from `adata` where `column_name` does not contain a valid SRX ID.
+
+    A valid SRX ID starts with 'SRX' followed by digits only (no special characters).
+
+    Parameters
+    ----------
+    adata : AnnData
+        Annotated data matrix.
+    column_name : str
+        Column in `adata.obs` to check for valid SRX IDs.
+
+    Returns
+    -------
+    AnnData
+        Filtered AnnData object containing only valid SRX IDs.
+
+    Raises
+    ------
+    KeyError
+        If `column_name` is not found in `adata.obs`.
+
+    Notes
+    -----
+    SRX IDs are used for identifying experiments in the SRA (Sequence Read Archive).
+    """
+    if column_name not in adata.obs.columns:
+        raise KeyError(f"'{column_name}' not found in adata.obs.")
+
+    pattern = re.compile(r"^SRX\d+$")
+    mask = adata.obs[column_name].astype(str).str.match(pattern)
+
+    n_invalid = (~mask).sum()
+    n_total = adata.n_obs
+    n_tolerated = int(n_total * pct_tolerate)
+    if n_invalid == n_total:
+        return False
+    if n_invalid > n_tolerated:
+        logger.error(
+            "More than %d%% of IDs are invalid. This might indicate a problem.",
+            pct_tolerate * 100,
+        )
+        logger.info("Example of an invalid ID: %s", adata.obs[~mask].index[0])
+        raise ValueError(
+            "More than %d%% of IDs are invalid. This might indicate a problem.",
+            pct_tolerate * 100,
+        )
+
+    if n_invalid > 0:
+        logger.warning(
+            "Removing %d invalid SRX IDs from column '%s' (out of %d cells).",
+            n_invalid,
+            column_name,
+            n_total,
+        )
+    adata = adata[mask]
+    return True
 
 
 def fetch_sra_metadata(
@@ -559,6 +619,8 @@ def fetch_sra_metadata(
 
     if sample_id_key not in adata.obs.columns:
         raise ValueError(f"Column '{sample_id_key}' not found in adata.obs.")
+
+    adata = deduplicate_samples_by_id(adata, sample_id_key)
 
     # 1) Extract all unique IDs
     unique_ids = adata.obs[sample_id_key].dropna().unique().tolist()
@@ -666,6 +728,63 @@ def fetch_sra_metadata(
         new_cols,
         fallback,
     )
+
+
+def deduplicate_samples_by_id(
+    adata: anndata.AnnData, sample_id_key: str
+) -> anndata.AnnData:
+    """Deduplicate samples in `adata` based on `sample_id_key`.
+
+    Rows with missing IDs (NA) are dropped.
+    If multiple observations share the same ID, one is selected randomly.
+
+    Parameters
+    ----------
+    adata : AnnData
+        Annotated data matrix.
+    sample_id_key : str
+        Column in `adata.obs` that contains sample IDs.
+
+    Returns
+    -------
+    AnnData
+        Deduplicated AnnData object.
+    """
+    if sample_id_key not in adata.obs.columns:
+        raise KeyError(f"'{sample_id_key}' not found in adata.obs.")
+
+    obs = adata.obs
+
+    n_obs_before = adata.n_obs
+    obs_no_na = obs.dropna(subset=[sample_id_key])
+    unique_ids = obs_no_na[sample_id_key].unique().tolist()
+
+    logger.info("Found %d unique IDs in adata.obs[%s].", len(unique_ids), sample_id_key)
+
+    if len(unique_ids) == len(obs_no_na):
+        logger.info(
+            "No duplicates found. Dropping %d samples with missing IDs.",
+            n_obs_before - len(obs_no_na),
+        )
+        return adata[obs_no_na.index].copy()
+
+    logger.warning(
+        "Found %d samples but only %d unique IDs. Deduplicating and dropping %d samples with missing IDs.",
+        n_obs_before,
+        len(unique_ids),
+        n_obs_before - len(obs_no_na),
+    )
+
+    # Randomly select one sample per unique ID
+    chosen_indices = (
+        obs_no_na.groupby(sample_id_key, group_keys=False)
+        .apply(lambda x: x.sample(1, random_state=42))
+        .index
+    )
+
+    logger.info("Keeping %d samples after deduplication.", len(chosen_indices))
+
+    return adata[chosen_indices].copy()
 
 
 def is_log_transformed(X: np.ndarray, tol: float = 1e-3) -> bool:
