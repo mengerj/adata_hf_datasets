@@ -15,6 +15,7 @@ from sklearn.mixture import GaussianMixture
 from pathlib import Path
 import os
 import re
+from tqdm import tqdm
 
 logger = logging.getLogger(__name__)
 
@@ -477,6 +478,7 @@ def maybe_add_sra_metadata(
     sample_id_key: str = "accession",
     sra_key: str = "sample_accession",
     exp_id_key: str = "experiment_accession",
+    chunk_size: int = 10000,
 ):
     """
     Check if the data is from SRA and fetch metadata if so.
@@ -484,78 +486,126 @@ def maybe_add_sra_metadata(
     This function checks if the first entry in adata.obs.index starts with "SRX".
     If so, it assumes the data is from SRA and calls fetch_sra_metadata.
     Otherwise, it does nothing.
+
+    Parameters
+    ----------
+    adata : anndata.AnnData
+        Annotated data matrix.
+    new_cols : str or list of str, optional
+        Metadata columns to copy from the SRA results into `adata.obs`.
+    sample_id_key : str, optional
+        The column in `adata.obs` containing SRA-based IDs (e.g., SRR or other sample-level accessions).
+    sra_key : str, optional
+        The column in the returned SRA DataFrame to match your IDs against.
+        Defaults to "sample_accession".
+    exp_id_key : str, optional
+        Has to be present in adata.obs and contain SRX IDs. Will be used to merge with the SRA metadata.
+    chunk_size : int, optional
+        Number of unique IDs to process per chunk. Defaults to 10000.
     """
     adata.obs[exp_id_key] = adata.obs.index
-    if filter_invalid_srx_ids(adata, column_name=exp_id_key):
+    # will be false if no srx ids are found
+    if filter_invalid_sra_ids(adata, srx_column=exp_id_key, srs_column=sample_id_key):
         fetch_sra_metadata(
             adata,
             sample_id_key=sample_id_key,
             sra_key=sra_key,
             exp_id_key=exp_id_key,
             new_cols=new_cols,
+            chunk_size=chunk_size,
         )
     else:
         logger.info("Data does not appear to be from SRA. Skipping metadata fetching.")
 
 
-def filter_invalid_srx_ids(
-    adata: anndata.AnnData, column_name: str, pct_tolerate: float = 0.2
+def filter_invalid_sra_ids(
+    adata: anndata.AnnData,
+    srx_column: str | None = None,
+    srs_column: str | None = None,
+    pct_tolerate: float = 0.2,
 ) -> anndata.AnnData:
-    """Filter out cells from `adata` where `column_name` does not contain a valid SRX ID.
+    """
+    Filter out cells from `adata` where the provided accession columns do not
+    contain valid IDs. For SRX IDs, a valid ID starts with 'SRX' followed by digits.
+    For SRS IDs, a valid ID starts with 'SRS' followed by digits.
 
-    A valid SRX ID starts with 'SRX' followed by digits only (no special characters).
+    If both are provided, a cell is kept only if it has valid IDs in both columns.
 
     Parameters
     ----------
-    adata : AnnData
+    adata : anndata.AnnData
         Annotated data matrix.
-    column_name : str
+    srx_column : str | None, optional
         Column in `adata.obs` to check for valid SRX IDs.
+    srs_column : str | None, optional
+        Column in `adata.obs` to check for valid SRS IDs.
+    pct_tolerate : float, optional
+        Fraction of cells that can be invalid before raising an error.
+        Defaults to 0.2.
 
     Returns
     -------
-    AnnData
-        Filtered AnnData object containing only valid SRX IDs.
+    anndata.AnnData
+        Filtered AnnData object containing only cells with valid IDs in all
+        specified accession columns.
 
     Raises
     ------
     KeyError
-        If `column_name` is not found in `adata.obs`.
-
-    Notes
-    -----
-    SRX IDs are used for identifying experiments in the SRA (Sequence Read Archive).
+        If any provided column is not found in `adata.obs`.
+    ValueError
+        If more than `pct_tolerate * 100` percent of cells in any column are invalid.
     """
-    if column_name not in adata.obs.columns:
-        raise KeyError(f"'{column_name}' not found in adata.obs.")
+    # Create an initial mask that is True for all cells.
+    final_mask = pd.Series([True] * adata.n_obs, index=adata.obs.index)
 
-    pattern = re.compile(r"^SRX\d+$")
-    mask = adata.obs[column_name].astype(str).str.match(pattern)
+    # Function to check a column against a regex, update final_mask
+    def _check_and_filter(col_name: str, pattern_str: str):
+        if col_name not in adata.obs.columns:
+            return False
+        pattern = re.compile(pattern_str)
+        # Cast to string and match
+        mask = adata.obs[col_name].astype(str).str.match(pattern)
+        n_invalid = (~mask).sum()
+        n_total = adata.n_obs
+        n_tolerated = int(n_total * pct_tolerate)
+        if n_invalid == n_total:
+            raise ValueError(f"All IDs in '{col_name}' are invalid.")
+        if n_invalid > n_tolerated:
+            logger.error(
+                "More than %.1f%% of IDs in column '%s' are invalid. Example invalid ID: %s",
+                pct_tolerate * 100,
+                col_name,
+                adata.obs[~mask].iloc[0],
+            )
+            raise ValueError(
+                f"More than {pct_tolerate * 100:.1f}% of IDs in column '{col_name}' are invalid."
+            )
+        if n_invalid > 0:
+            logger.warning(
+                "Removing %d invalid IDs in column '%s' out of %d cells.",
+                n_invalid,
+                col_name,
+                n_total,
+            )
+        # Return the boolean mask for valid IDs in this column.
+        return mask
 
-    n_invalid = (~mask).sum()
-    n_total = adata.n_obs
-    n_tolerated = int(n_total * pct_tolerate)
-    if n_invalid == n_total:
-        return False
-    if n_invalid > n_tolerated:
-        logger.error(
-            "More than %d%% of IDs are invalid. This might indicate a problem.",
-            pct_tolerate * 100,
-        )
-        logger.info("Example of an invalid ID: %s", adata.obs[~mask].index[0])
-        raise ValueError(
-            "More than %d%% of IDs are invalid. This might indicate a problem.",
-            pct_tolerate * 100,
-        )
+    # If srx_column is provided, check and update final_mask.
+    if srx_column is not None:
+        mask_srx = _check_and_filter(srx_column, r"^SRX\d+$")
+        final_mask &= mask_srx
 
-    if n_invalid > 0:
-        logger.warning(
-            "Removing %d invalid SRX IDs from column '%s' (out of %d cells).",
-            n_invalid,
-            column_name,
-            n_total,
-        )
-    adata = adata[mask]
+    # If srs_column is provided, check and update final_mask.
+    if srs_column is not None:
+        mask_srs = _check_and_filter(srs_column, r"^SRS\d+$")
+        final_mask &= mask_srs
+
+    adata = adata[final_mask]
+    logger.info(
+        "After filtering, %d cells remain out of %d.",
+        adata.n_obs,
+    )
     return True
 
 
@@ -567,38 +617,41 @@ def fetch_sra_metadata(
     new_cols: str | list[str] = [
         "library_layout",
         "library_source",
-        "instrument_model",
+        "instrument",
     ],
     fallback: str = "unknown",
+    chunk_size: int = 10000,
 ) -> None:
     """
-    Fetch various metadata fields (e.g., 'library_layout', 'library_source')
-    from SRA for all unique IDs in `adata.obs[sample_id_key]`, and store them in
-    `adata.obs[new_cols]`.
+    Fetch various metadata fields (e.g., 'library_layout', 'library_source', 'instrument_model')
+    from SRA for all unique IDs in `adata.obs[sample_id_key]`, processing in chunks,
+    and store them in `adata.obs[new_cols]`.
 
     This function:
-    1) Extracts all unique IDs from `adata.obs[sample_id_key]`.
-    2) Calls `db.sra_metadata` once to get metadata in a single batch.
-    3) Ensures that every requested ID is found in the SRA results (and logs or sets fallback if missing).
-    4) Also removes extra rows from the SRA results that do not correspond to your unique IDs.
-    5) Merges and assigns the requested columns to `adata.obs`.
+    1) Extracts all unique IDs from `adata.obs[sample_id_key]` and experimental accessions from `adata.obs[exp_id_key]`.
+    2) Splits the IDs into chunks (default size: 10,000) and calls `db.sra_metadata` for each chunk.
+    3) Concatenates the returned metadata into one DataFrame.
+    4) Checks that every requested experimental ID is found in the SRA results (and logs or sets fallback if missing).
+    5) Removes extra rows from the SRA results that do not correspond to your unique experimental IDs.
+    6) Merges and assigns the requested columns to `adata.obs`.
 
     Parameters
     ----------
     adata : anndata.AnnData
-        AnnData with IDs in `adata.obs[sample_id_key]`.
+        AnnData with IDs in `adata.obs[sample_id_key]` and experimental IDs in `adata.obs[exp_id_key]`.
     sample_id_key : str, optional
-        The column in `adata.obs` containing SRA-based IDs (e.g., SRR).
+        The column in `adata.obs` containing SRA-based IDs (e.g., SRR or other sample-level accessions).
     sra_key : str, optional
         The column in the returned SRA DataFrame to match your IDs against.
-        Defaults to "run_accession".
+        Defaults to "sample_accession".
     exp_id_key : str, optional
-        Has to be present in adata.obs and contain SRX IDs. Will be used to match with the db.
-    new_cols : str or List[str], optional
-        Metadata columns to copy from SRA results into `adata.obs`.
+        Has to be present in adata.obs and contain SRX IDs. Will be used to merge with the SRA metadata.
+    new_cols : str or list of str, optional
+        Metadata columns to copy from the SRA results into `adata.obs`.
     fallback : str, optional
-        Value to use if a column is missing or if some IDs are not found.
-        Defaults to "unknown".
+        Value to use if a column is missing or if some IDs are not found. Defaults to "unknown".
+    chunk_size : int, optional
+        Number of unique IDs to process per chunk. Defaults to 10000.
 
     Returns
     -------
@@ -608,7 +661,8 @@ def fetch_sra_metadata(
     Examples
     --------
     >>> adata = sc.read_h5ad("my_data.h5ad")
-    >>> fetch_sra_metadata(adata, sample_id_key="accession", sra_key="run_accession")
+    >>> fetch_sra_metadata(adata, sample_id_key="accession", sra_key="sample_accession",
+                           exp_id_key="experiment_accession")
     >>> adata.obs["library_layout"].value_counts()
     """
 
@@ -620,11 +674,15 @@ def fetch_sra_metadata(
     if sample_id_key not in adata.obs.columns:
         raise ValueError(f"Column '{sample_id_key}' not found in adata.obs.")
 
+    if exp_id_key not in adata.obs.columns:
+        raise ValueError(f"Column '{exp_id_key}' not found in adata.obs.")
+
+    # Deduplicate samples if needed (assuming deduplicate_samples_by_id is defined)
     adata = deduplicate_samples_by_id(adata, sample_id_key)
 
-    # 1) Extract all unique IDs
+    # 1) Extract all unique IDs and experimental accession IDs
     unique_ids = adata.obs[sample_id_key].dropna().unique().tolist()
-    experiment_accession = adata.obs[exp_id_key].dropna().unique().tolist()
+    experiment_accessions = adata.obs[exp_id_key].dropna().unique().tolist()
     logger.info("Found %d unique IDs in adata.obs[%s].", len(unique_ids), sample_id_key)
 
     if not unique_ids:
@@ -634,73 +692,81 @@ def fetch_sra_metadata(
 
     db = SRAweb()
 
-    # 2) Single batch query
-    try:
-        df_all = db.sra_metadata(unique_ids)
-    except Exception as e:
-        logger.error("Failed to fetch metadata for IDs: %s", e)
-        raise ValueError(f"Failed to fetch metadata for IDs: {e}")
+    # 2) Process the unique_ids in chunks.
+    chunks = [
+        unique_ids[i : i + chunk_size] for i in range(0, len(unique_ids), chunk_size)
+    ]
+    logger.info(
+        "Processing %d chunks of approximately %d IDs each.", len(chunks), chunk_size
+    )
 
-    if df_all is None or df_all.empty:
-        msg = (
-            "No metadata returned. Check if the IDs are valid or if SRA is accessible."
-        )
+    df_list = []
+    for chunk in tqdm(chunks, desc="Processing Chunks"):
+        try:
+            df_chunk = db.sra_metadata(chunk)
+            if df_chunk is not None and not df_chunk.empty:
+                df_list.append(df_chunk)
+        except Exception as e:
+            logger.error("Failed to fetch metadata for chunk: %s", e)
+            # Optionally, you can raise here or continue to process the others.
+            raise ValueError(f"Failed to fetch metadata for a chunk: {e}")
+
+    if df_list:
+        df_all = pd.concat(df_list, ignore_index=True)
+    else:
+        msg = "No metadata returned in any chunk. Check if the IDs are valid or if SRA is accessible."
         logger.error(msg)
         raise ValueError(msg)
 
-    # 3) Check if sra_key is in df_all
+    # 3) Check if the expected SRA column(s) exist.
     if sra_key not in df_all.columns:
         logger.error(
             "sra_key='%s' not in returned columns. Found: %s", sra_key, df_all.columns
         )
         raise ValueError(f"sra_key='{sra_key}' not in returned metadata columns.")
 
-    # Identify the set of unique experimental ids
-    desired_ids = set(experiment_accession)
-    # ...and the set of IDs returned
-    returned_ids = set(df_all[exp_id_key].unique())
-    logger.info("Returned %d unique IDs from SRA metadata.", len(returned_ids))
+    # 4) Identify the set of unique experimental IDs.
+    desired_experiment_ids = set(experiment_accessions)
+    returned_experiment_ids = set(df_all[exp_id_key].unique())
+    logger.info(
+        "Returned %d unique experimental IDs from SRA metadata.",
+        len(returned_experiment_ids),
+    )
 
-    # 4) Check for missing IDs
-    missing_ids = desired_ids - returned_ids
+    # Check for missing experimental IDs.
+    missing_ids = desired_experiment_ids - returned_experiment_ids
     if missing_ids:
         logger.warning(
-            "Some IDs in adata.obs[%s] were not found in the SRA metadata: %s",
-            sample_id_key,
+            "Some experimental IDs in adata.obs[%s] were not found in the SRA metadata: %s",
+            exp_id_key,
             missing_ids,
         )
         logger.warning("These will be assigned fallback='%s'.", fallback)
 
-    # 5) Filter out extra rows in df_all that we do not actually need
-    extra_ids = returned_ids - desired_ids
+    # 5) Remove extra rows from df_all that do not correspond to your desired experimental IDs.
+    extra_ids = returned_experiment_ids - desired_experiment_ids
     if extra_ids:
         logger.info(
-            "Removing %d extra IDs not present in adata.obs[%s].",
+            "Removing %d extra experimental IDs not present in adata.obs[%s].",
             len(extra_ids),
-            sample_id_key,
+            exp_id_key,
         )
         df_all = df_all[~df_all[exp_id_key].isin(extra_ids)]
 
-    # Now df_all only has rows that correspond to the IDs we asked for (though some might be missing).
-    # Next, check if new_cols exist. We'll apply fallback for missing columns.
+    # 6) Ensure that the requested new columns exist, and drop duplicates so each exp_id appears only once.
     missing_cols = [col for col in new_cols if col not in df_all.columns]
     if missing_cols:
         logger.warning(
             "Some requested columns are missing in metadata: %s", missing_cols
         )
-        # We'll still create them in adata.obs with fallback
 
-    # Subset the SRA DataFrame to only the columns that exist
-    keep_cols = [c for c in new_cols if c in df_all.columns]
+    keep_cols = [col for col in new_cols if col in df_all.columns]
     df_map = df_all[[exp_id_key] + keep_cols].copy()
-    # some ids might map to several entries in the database, eg multiple runs for the same sample.
-    # Since we cant really assess which would be the correct entry, we will just keep the first and expect our metadata to be the same in all cases
     df_map = df_map.drop_duplicates(subset=exp_id_key, keep="first")
 
-    # Merge
-    # if the columns are already in adata.obs, remove them first
-
+    # 7) Merge the SRA metadata into the adata.obs.
     obs_reset = adata.obs.reset_index(drop=False)
+    # Drop any conflicting columns before merging so we don't get suffixes.
     cols_to_drop = [c for c in keep_cols if c in obs_reset.columns]
     obs_reset = obs_reset.drop(columns=cols_to_drop, errors="ignore")
     merged = obs_reset.merge(
@@ -710,12 +776,11 @@ def fetch_sra_metadata(
         right_on=exp_id_key,
     )
 
-    # 6) Assign columns to adata.obs, fill fallback for missing rows or columns
+    # 8) Assign the new columns to adata.obs, filling missing values with fallback.
     for col in new_cols:
         if col in merged.columns:
             adata.obs[col] = merged[col].fillna(fallback).values
         else:
-            # This means the column was never in df_all
             adata.obs[col] = fallback
             logger.warning(
                 "Column '%s' not found in SRA metadata. Using fallback='%s'.",
@@ -723,11 +788,10 @@ def fetch_sra_metadata(
                 fallback,
             )
 
-    logger.info(
-        "Successfully added columns %s to adata.obs using fallback='%s'.",
-        new_cols,
-        fallback,
-    )
+    # logger.info(
+    #    "Successfully added columns %s to adata.obs using fallback='%s'.",
+    #    new_cols, fallback
+    # )
 
 
 def deduplicate_samples_by_id(
