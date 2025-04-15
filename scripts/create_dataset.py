@@ -232,7 +232,15 @@ def build_repo_id(base_repo_id, file_paths, dataset_type, caption_key):
     names = []
     for p in file_paths:
         p_obj = Path(p)
-        dataset_name = p_obj.parent.name  # e.g. "cellxgene_pseudo_bulk_3_5k"
+        if p_obj.parent.name == "joined":
+            # Use the directory before "joined" for the dataset name
+            dataset_name = p_obj.parent.parent.name
+        else:
+            # If 'joined' is not in the expected place, log a warning and use the immediate parent
+            logger.warning(
+                f"Expected 'joined' directory, but found '{p_obj.parent.name}' in path: {p}"
+            )
+            dataset_name = p_obj.parent.name
         if dataset_name not in names:
             names.append(dataset_name)
 
