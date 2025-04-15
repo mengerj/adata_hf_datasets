@@ -14,6 +14,7 @@ from string import Template
 import scipy.sparse as sp
 import pandas as pd
 import hashlib
+from datasets import DatasetInfo
 
 logger = logging.getLogger(__name__)
 
@@ -218,6 +219,7 @@ def annotate_and_push_dataset(
     embedding_generation: str | None = None,
     caption_generation: str | None = None,
     dataset_type_explanation: str | None = None,
+    metadata: dict | None = None,
 ) -> None:
     """Annotates and pushes the dataset to Hugging Face.
 
@@ -257,7 +259,11 @@ def annotate_and_push_dataset(
             )
 
         # Push dataset with README
-        dataset.push_to_hub(repo_id, private=private)
+        # Step 3: Define metadata with custom share_link
+        info = DatasetInfo(
+            metadata=metadata  # <--- Custom field
+        )
+        dataset.push_to_hub(repo_id, private=private, dataset_info=info)
 
         # Upload README file
         api = HfApi()
