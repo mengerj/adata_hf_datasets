@@ -5,8 +5,8 @@
 split_dataset: true
 
 # These get used only if split_dataset is true
-processed_path_train: "data/RNA/processed_with_emb/train/cellxgene_pseudo_bulk_350k/joined/all_train.h5ad"
-processed_path_val: "data/RNA/processed_with_emb/train/cellxgene_pseudo_bulk_350k/joined/all_val.h5ad"
+processed_path_train: "data/RNA/processed_with_emb/train/cellxgene_pseudo_bulk_35k/joined/all_train.h5ad"
+processed_path_val: "data/RNA/processed_with_emb/train/cellxgene_pseudo_bulk_35k/joined/all_val.h5ad"
 # This gets used only if split_dataset is false (a single dataset).
 processed_path_all: "data/RNA/processed/test/tabula_sapiens_bone_marrow/all.h5ad"
 #Which data representation to use
@@ -15,12 +15,14 @@ obs_key: "cell_sentence"
 
 # cell sentence generation. Will generate obs keys: "cell_sentence", "semantic_true", "semantic_similar"
 annotation_key: "cell_type"
+gene_name_column: "gene_name" #column in .var containing gene names
 include_label_prob: 0
 cs_length: 10
 
-caption_key: "natural_language_annotation"
+caption_key: "cell_type"
 negatives_per_sample: 2
-batch_key: "assay"
+#to sample negative samples from the same batch
+batch_key: "dataset_title"
 # For test sets without a proper text caption, you might set dataset_type="single". For train/val, you might use "pairs" or "multiplets".
 dataset_type: "pairs"
 

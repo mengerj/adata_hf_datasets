@@ -12,6 +12,9 @@ train_split: 0.9
 # If false, the script will NOT split into train/val but instead
 # output a single 'all.h5ad' file. This can be used for test data.
 
+#For batch aware highly variable gene selection:
+batch_key: "study"
+n_top_genes: 1000
 # whether to split the dataset based on the bimodal distrbution of some continous covariate.
 #In the geo dataset, a strong bimodal distribution was observed that couldnt be explained by any technical or biological covariate.
 split_bimodal: true
