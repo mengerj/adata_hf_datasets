@@ -1,11 +1,9 @@
 # conf/preprocess_adata.yaml
-defaults:
-  - preprocess_adata_default.yaml
 # Input file path
-input_file: "data/RNA/raw/train/cellxgene_pseudo_bulk_35k.h5ad"
+input_file: null
 
 # Output directory for processed files
-output_dir: "data/RNA/processed/train"
+output_dir: null
 overwrite: true
 # Train/validation split configuration
 split_dataset: true
@@ -13,18 +11,21 @@ train_split: 0.9
 # If false, the script will NOT split into train/val but instead
 # output a single 'all.h5ad' file. This can be used for test data.
 
+# whether to split the dataset based on the bimodal distrbution of some continous covariate.
+#In the geo dataset, a strong bimodal distribution was observed that couldnt be explained by any technical or biological covariate.
+split_bimodal: false
+bimodal_col: null #will be log-transformed internally
+
+#additional columns to add to the adata object from sra database
+extra_sra_cols:
+  - null
+sra_chunk_size: null #number of samples to fetch from sra at once. This is to avoid overloading the server.
 #to append the instrument to the description. Set any of them to null if you want to skip.
-instrument_key: "assay" #key in adata.obs that contains the instrument information
-description_key: "natural_language_annotation"
+instrument_key: null #key in adata.obs that contains the instrument information
+description_key: null
 # Filter certain low frequency categories
-#categories:
-#  - "cell_type"
-#  - "dataset_title"
 categories:
-  - "dataset_title"
-  - "cell_type"
-  - "tissue"
-  - "assay"
+  - null
 category_threshold: 10 # remove all categories that have less than the threshold
 
 #For Plotting
@@ -33,7 +34,4 @@ metrics_of_interest: #these numeric metrics will be plotted as a distribution
   - "total_counts"
   - "pct_counts_mt"
 categories_of_interest: #This will be used to colour a pca, and check the distribution of the metrics_of_interest
-  - "dataset_title"
-  - "cell_type"
-  - "tissue"
-  - "assay"
+  - null

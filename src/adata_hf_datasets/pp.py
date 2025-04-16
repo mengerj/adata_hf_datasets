@@ -5,7 +5,6 @@ import logging
 import scanpy as sc
 from adata_hf_datasets.utils import (
     consolidate_low_frequency_categories,
-    stable_numeric_id,
 )
 import numpy as np
 import scipy.sparse as sp
@@ -277,8 +276,11 @@ def pp_adata_geneformer(
         sc.pp.calculate_qc_metrics(adata, inplace=True, percent_top=percent_top)
         adata.obs["n_counts"] = adata.obs["total_counts"]
 
-    # Convert obs_names (which might be string-based) to stable numeric IDs:
-    adata.obs["sample_index"] = [stable_numeric_id(str(idx)) for idx in adata.obs_names]
+    # sample_index should already be present
+    if "sample_index" not in adata.obs.columns:
+        raise ValueError(
+            "sample_index not found in adata.obs. Please add it before calling this function. Add it before splitting the data."
+        )
 
     logger.info("Geneformer in-memory preprocessing complete.")
     return adata
@@ -602,10 +604,7 @@ def filter_invalid_sra_ids(
         final_mask &= mask_srs
 
     adata = adata[final_mask]
-    logger.info(
-        "After filtering, %d cells remain out of %d.",
-        adata.n_obs,
-    )
+    logger.info("After filtering, %d cells remain", adata.n_obs)
     return True
 
 
