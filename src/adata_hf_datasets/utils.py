@@ -14,7 +14,6 @@ from string import Template
 import scipy.sparse as sp
 import pandas as pd
 import hashlib
-from datasets import DatasetInfo
 
 logger = logging.getLogger(__name__)
 
@@ -255,15 +254,13 @@ def annotate_and_push_dataset(
                     embedding_generation=embedding_generation,
                     caption_generation=caption_generation,
                     dataset_type_explanation=dataset_type_explanation,
+                    share_info=metadata,
                 )
             )
 
         # Push dataset with README
         # Step 3: Define metadata with custom share_link
-        info = DatasetInfo(
-            metadata=metadata  # <--- Custom field
-        )
-        dataset.push_to_hub(repo_id, private=private, dataset_info=info)
+        dataset.push_to_hub(repo_id, private=private)
 
         # Upload README file
         api = HfApi()
@@ -281,6 +278,7 @@ def _generate_readme(
     embedding_generation,
     caption_generation=None,
     dataset_type_explanation=None,
+    share_info=None,
 ) -> str:
     """
     Fills the README template with dataset-specific details.
@@ -306,6 +304,7 @@ def _generate_readme(
         embedding_generation=embedding_generation,
         caption_generation=caption_info,
         dataset_type_explanation=dataset_type_explanation,
+        share_info=share_info,
     )
     return readme_filled
 

@@ -77,6 +77,7 @@ def main(cfg: DictConfig):
         adata_train = sc.read_h5ad(to_absolute_path(cfg.processed_path_train))
         adata_train = create_cell_sentences(
             adata=adata_train,
+            gene_name_column=cfg.gene_name_column,
             annotation_column=cfg.annotation_key,
             cs_length=cfg.cs_length,  # or whatever number of genes you want
         )
@@ -101,6 +102,7 @@ def main(cfg: DictConfig):
         adata_val = sc.read_h5ad(to_absolute_path(cfg.processed_path_val))
         adata_val = create_cell_sentences(
             adata=adata_val,
+            gene_name_column=cfg.gene_name_column,
             annotation_column=cfg.annotation_key,
             cs_length=cfg.cs_length,  # or whatever number of genes you want
         )
@@ -159,6 +161,7 @@ def main(cfg: DictConfig):
         file_path=naming_path,
         dataset_type=dataset_type,
         caption_key=caption_key,
+        data_rep_tag=data_rep_tag,
     )
     logger.info("Final repo_id would be: %s", final_repo_id)
 

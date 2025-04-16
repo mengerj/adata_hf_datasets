@@ -11,6 +11,7 @@ logger = logging.getLogger(__name__)
 def create_cell_sentences(
     adata: anndata.AnnData,
     annotation_column: str,
+    gene_name_column: str,
     cs_length: int,
     include_label_prob: float = 0.7,
 ) -> anndata.AnnData:
@@ -33,6 +34,8 @@ def create_cell_sentences(
         An AnnData object that has been preprocessed (including HVG selection).
     annotation_column : str
         Column in adata.obs that contains the cell type (or similar) annotations.
+    gene_name_column: str
+        Column in adata.var that contains the gene names.
     cs_length : int
         Number of top genes (from the HVG subset) to include in the cell sentence.
     log_transform : bool, optional
@@ -73,7 +76,14 @@ def create_cell_sentences(
 
     # For this function, we assume the gene names in HVG selection
     # are in adata.var.index (and the HVG selection has already been done).
-    genes = np.array(adata_subset.var.index)
+    if gene_name_column and gene_name_column in adata_subset.var.columns:
+        genes = np.array(adata_subset.var[gene_name_column].values)
+        logger.info("Using gene names from adata.var[%s].", gene_name_column)
+        logger.info("Example gene name: %s", genes[0])
+    else:
+        genes = np.array(adata_subset.var.index)
+        logger.info("Using default gene names from adata.var.index.")
+        logger.info("Example gene name: %s", genes[0])
 
     n_cells = adata.n_obs
     cell_sentences = []  # will hold the raw cell sentence (list of top gene names, as a string)
