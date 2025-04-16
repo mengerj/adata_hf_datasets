@@ -37,7 +37,7 @@ logger = setup_logging()
 
 
 @hydra.main(
-    version_base=None, config_path="../conf", config_name="preprocess_adata_geo"
+    version_base=None, config_path="../conf", config_name="preprocess_adata_cellxgene"
 )
 def main(cfg: DictConfig):
     """

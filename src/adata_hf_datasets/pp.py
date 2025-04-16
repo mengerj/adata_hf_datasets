@@ -564,7 +564,7 @@ def filter_invalid_sra_ids(
     # Function to check a column against a regex, update final_mask
     def _check_and_filter(col_name: str, pattern_str: str):
         if col_name not in adata.obs.columns:
-            return False
+            raise KeyError(f"Column '{col_name}' not found in adata.obs.")
         pattern = re.compile(pattern_str)
         # Cast to string and match
         mask = adata.obs[col_name].astype(str).str.match(pattern)
@@ -572,7 +572,9 @@ def filter_invalid_sra_ids(
         n_total = adata.n_obs
         n_tolerated = int(n_total * pct_tolerate)
         if n_invalid == n_total:
-            raise ValueError(f"All IDs in '{col_name}' are invalid.")
+            raise ValueError(
+                f"All IDs in column '{col_name}' are invalid. Check the data."
+            )
         if n_invalid > n_tolerated:
             logger.error(
                 "More than %.1f%% of IDs in column '%s' are invalid. Example invalid ID: %s",
@@ -595,13 +597,21 @@ def filter_invalid_sra_ids(
 
     # If srx_column is provided, check and update final_mask.
     if srx_column is not None:
-        mask_srx = _check_and_filter(srx_column, r"^SRX\d+$")
-        final_mask &= mask_srx
+        try:
+            mask_srx = _check_and_filter(srx_column, r"^SRX\d+$")
+            final_mask &= mask_srx
+        except ValueError or KeyError as e:
+            logger.error("Error checking SRX IDs: %s", e)
+            return False
 
     # If srs_column is provided, check and update final_mask.
     if srs_column is not None:
-        mask_srs = _check_and_filter(srs_column, r"^SRS\d+$")
-        final_mask &= mask_srs
+        try:
+            mask_srs = _check_and_filter(srs_column, r"^SRS\d+$")
+            final_mask &= mask_srs
+        except ValueError or KeyError as e:
+            logger.error("Error checking SRS IDs: %s", e)
+            return False
 
     adata = adata[final_mask]
     logger.info("After filtering, %d cells remain", adata.n_obs)
