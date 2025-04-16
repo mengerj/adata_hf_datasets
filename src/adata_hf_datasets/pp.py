@@ -23,6 +23,8 @@ def pp_adata(
     adata: anndata.AnnData,
     min_cells: int = 10,
     min_genes: int = 200,
+    batch_key: str = "batch",
+    n_top_genes: int = 1000,
     categories: list[str] = None,
     category_threshold: int = 1,
     remove: bool = True,
@@ -50,6 +52,8 @@ def pp_adata(
         Minimum number of cells for gene filtering.
     min_genes : int, optional
         Minimum number of genes for cell filtering.
+    batch_key : str, optional
+        Key in `adata.obs` for batch information. Is used to make sure each batch has enough variable genes for HVG.
     categories : List[str] | None, optional
         Categories in `adata.obs` to consolidate low-frequency categories.
     category_threshold : int, optional
@@ -118,11 +122,12 @@ def pp_adata(
             adata=adata,
             min_cells=min_cells,
             min_genes=min_genes,
+            batch_key=batch_key,
+            n_top_genes=n_top_genes,
             categories=categories,
             category_threshold=category_threshold,
             remove=remove,
         )
-
         # 4) Optionally call Geneformer preprocessing
         if call_geneformer:
             logger.info("Running Geneformer in-memory step.")
@@ -144,6 +149,8 @@ def pp_adata_general(
     adata: anndata.AnnData,
     min_cells: int = 10,
     min_genes: int = 200,
+    batch_key: str = "batch",
+    n_top_genes: int = 1000,
     categories: list[str] | None = None,
     category_threshold: int = 1,
     remove: bool = True,
@@ -168,6 +175,10 @@ def pp_adata_general(
         Minimum number of cells in which a gene must be expressed to keep that gene.
     min_genes : int, optional
         Minimum number of genes a cell must express to keep that cell.
+    batch_key : str, optional
+        Key in `adata.obs` for batch information. Used to ensure each batch has enough variable genes for highly variable gene selection.
+    n_top_genes : int, optional
+        Number of top variable genes to select. Will only be marked and not filtered.
     categories : List[str] | None, optional
         categories in `adata.obs` to consolidate low-frequency categories.
         If None, no consolidation is performed.
@@ -225,6 +236,12 @@ def pp_adata_general(
 
     # 4) Normalize and log-transform (in place)
     ensure_log_norm(adata)
+    # check if each batch has at least 1000 variable genes
+    adata = check_enough_genes_per_batch(
+        adata, batch_key=batch_key, min_genes=n_top_genes
+    )
+    # perform highly variable gene selection
+    sc.pp.highly_variable_genes(adata, n_top_genes=n_top_genes, batch_key=batch_key)
 
     logger.info("In-memory preprocessing complete.")
     return adata
@@ -1571,3 +1588,73 @@ def split_if_bimodal(
         return split_adata_by_label(adata, label_col=label_col, backed_path=backed_path)
     else:
         return {"all": adata}
+
+
+def check_enough_genes_per_batch(
+    adata: anndata.AnnData,
+    batch_key: str,
+    min_genes: int,
+    var_threshold: float = 1e-6,
+) -> None:
+    """
+    Check whether each batch has at least `min_genes` genes with variance > var_threshold.
+    If any batch doesn't meet this, raise a ValueError suggesting ways to fix the issue.
+
+    Parameters
+    ----------
+    adata : anndata.AnnData
+        The AnnData object. Must have `adata.obs[batch_key]`.
+    batch_key : str
+        Column in `adata.obs` used to identify batches.
+    min_genes : int
+        The requested number of HVGs (n_top_genes).
+        Each batch must have at least this many candidate genes.
+    var_threshold : float, optional
+        Minimal variance to consider a gene "non-negligible". Defaults to 1e-8.
+
+    Raises
+    ------
+    ValueError
+        If any batch has fewer than `min_genes` genes above the variance threshold.
+    """
+    if batch_key not in adata.obs.columns:
+        logger.warning(
+            f"batch_key='{batch_key}' not found in adata.obs. Skipping batch check."
+        )
+        return
+
+    cell_counts = adata.obs[batch_key].value_counts()
+    logger.info(
+        "Checking that each batch has at least %d genes with variance > %g ...",
+        min_genes,
+        var_threshold,
+    )
+
+    # For each batch, compute how many genes pass the variance threshold
+    for bval in cell_counts.index:
+        sub = adata[adata.obs[batch_key] == bval]
+        if sub.n_obs == 0:
+            continue  # no cells here; skip
+
+        X = sub.X.toarray() if sp.issparse(sub.X) else sub.X
+        variances = X.var(axis=0)
+        var_nonzero = (variances > var_threshold).sum()
+
+        if var_nonzero < min_genes:
+            msg = (
+                f"Batch '{bval}' has only {var_nonzero} genes with variance > {var_threshold}, "
+                f"which is fewer than the requested {min_genes}. "
+                "Scanpy will fail to select HVGs in this batch.\n"
+                "Removing this batch from the dataset."
+            )
+            logger.warning(msg)
+            # remove this batch from the dataset
+            adata = adata[adata.obs[batch_key] != bval]
+            adata.uns[f"batch_removal_warning_{bval}"] = msg
+        else:
+            logger.info(
+                "All batches have at least %d genes above variance threshold %g.",
+                min_genes,
+                var_threshold,
+            )
+        return adata
