@@ -1,36 +1,32 @@
 # conf/preprocess_adata.yaml
+defaults:
+  - preprocess_adata_default.yaml
 # Input file path
-input_file: null
+input_file: "data/RNA/raw/test/tabula_sapiens_bone_marrow.h5ad"
 
 # Output directory for processed files
-output_dir: null
+output_dir: "data/RNA/processed/test"
 overwrite: true
 # Train/validation split configuration
-split_dataset: true
+split_dataset: false
 train_split: 0.9
 # If false, the script will NOT split into train/val but instead
 # output a single 'all.h5ad' file. This can be used for test data.
-
 #If X does not have raw counts provide a key:
-count_layer_key: null #key in adata.raw.X that contains the raw counts
+count_layer_key: "decontXcounts" #key in adata.raw.X that contains the raw counts
 #For batch aware highly variable gene selection:
-batch_key: null
-n_top_genes: 1000
-# whether to split the dataset based on the bimodal distrbution of some continous covariate.
-#In the geo dataset, a strong bimodal distribution was observed that couldnt be explained by any technical or biological covariate.
-split_bimodal: false
-bimodal_col: null #will be log-transformed internally
-
-#additional columns to add to the adata object from sra database
-extra_sra_cols:
-  - null
-sra_chunk_size: null #number of samples to fetch from sra at once. This is to avoid overloading the server.
+batch_key: "sample_id"
+n_top_genes: 512
 #to append the instrument to the description. Set any of them to null if you want to skip.
 instrument_key: null #key in adata.obs that contains the instrument information
 description_key: null
 # Filter certain low frequency categories
+#categories:
+#  - "cell_type"
+#  - "dataset_title"
 categories:
-  - null
+  - "cell_type"
+  - "sample_id"
 category_threshold: 10 # remove all categories that have less than the threshold
 
 #For Plotting
@@ -39,4 +35,7 @@ metrics_of_interest: #these numeric metrics will be plotted as a distribution
   - "total_counts"
   - "pct_counts_mt"
 categories_of_interest: #This will be used to colour a pca, and check the distribution of the metrics_of_interest
-  - null
+  - "sample_id"
+  - "cell_type"
+  - "tissue"
+  - "assay"

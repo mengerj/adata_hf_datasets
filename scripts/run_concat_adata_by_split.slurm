@@ -9,5 +9,5 @@
 source .venv/bin/activate
 
 python scripts/concat_adata_by_split.py \
-    --data-dir data/RNA/processed_with_emb/train/cellxgene_pseudo_bulk_350k \
-    --output-dir data/RNA/processed_with_emb/train/cellxgene_pseudo_bulk_350k/joined
+    --data-dir data/RNA/processed_with_emb/train/cellxgene_pseudo_bulk_35k \
+    --output-dir data/RNA/processed_with_emb/train/cellxgene_pseudo_bulk_35k/joined

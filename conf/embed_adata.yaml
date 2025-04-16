@@ -1,7 +1,9 @@
 # Input file path (preprocessed data)
+#input_files:
+#  - "data/RNA/processed/train/cellxgene_pseudo_bulk_3_5k/all_train.h5ad"
+#  - "data/RNA/processed/train/cellxgene_pseudo_bulk_3_5k/all_val.h5ad"
 input_files:
-  - "data/RNA/processed/train/cellxgene_pseudo_bulk_3_5k/all_train.h5ad"
-  - "data/RNA/processed/train/cellxgene_pseudo_bulk_3_5k/all_val.h5ad"
+  - "data/RNA/processed/test/tabula_sapiens_bone_marrow/all_all.h5ad"
 # per default, the output dir is build based on the input file name
 output_dir: null
 # Embedding method to use
