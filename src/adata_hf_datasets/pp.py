@@ -24,6 +24,7 @@ def pp_adata(
     min_cells: int = 10,
     min_genes: int = 200,
     batch_key: str = "batch",
+    count_layer_key: str = "counts",
     n_top_genes: int = 1000,
     categories: list[str] = None,
     category_threshold: int = 1,
@@ -54,6 +55,8 @@ def pp_adata(
         Minimum number of genes for cell filtering.
     batch_key : str, optional
         Key in `adata.obs` for batch information. Is used to make sure each batch has enough variable genes for HVG.
+    count_layer_key : str, optional
+        Key for the raw counts layer in `adata.layers`. Defaults to "counts".
     categories : List[str] | None, optional
         Categories in `adata.obs` to consolidate low-frequency categories.
     category_threshold : int, optional
@@ -90,15 +93,18 @@ def pp_adata(
         adata.n_obs,
         adata.n_vars,
     )
-    if "counts" in adata.layers:
-        logger.info("Using pre-existing `adata.layers['counts']` as raw counts.")
-        adata.X = adata.layers["counts"]
+    if count_layer_key in adata.layers:
+        logger.info(
+            f"Using pre-existing `adata.layers[{count_layer_key}]` as raw counts."
+        )
+        adata.X = adata.layers[count_layer_key]
     elif is_raw_counts(adata.X):
-        logger.info("Storing adata.X as raw counts in `adata.layers['counts']`.")
+        logger.info("Storing adata.X as raw counts in `adata.layers[]`.")
         adata.layers["counts"] = adata.X.copy()
     else:
-        logger.error("X does not contain raw counts. Cannot create 'counts' layer.")
-        raise ValueError("X does not contain raw counts. Cannot create 'counts' layer.")
+        logger.error(
+            f"X does not contain raw counts. Preprocessing expects raw counts. Check count_layer_key. Current passed: {count_layer_key}"
+        )
 
     # 1) Optionally add a 'tag' into adata.uns
     if tag:
@@ -150,6 +156,7 @@ def pp_adata_general(
     min_cells: int = 10,
     min_genes: int = 200,
     batch_key: str = "batch",
+    count_layer_key: str = "counts",
     n_top_genes: int = 1000,
     categories: list[str] | None = None,
     category_threshold: int = 1,
@@ -201,7 +208,7 @@ def pp_adata_general(
     logger.info("Starting in-memory preprocessing for initial embeddings.")
 
     # 0) Make ids unique
-    adata.var_names_make_unique()
+    # adata.var_names_make_unique() #had issues when var names are ensembl ids
     adata.obs_names_make_unique()
 
     # 1) Remove genes and cells below thresholds
@@ -229,8 +236,7 @@ def pp_adata_general(
             logger.info("Storing raw counts in adata.layers['counts']")
             adata.layers["counts"] = adata.X.copy()
         else:
-            logger.error("X does not contain raw counts. Cannot create 'counts' layer.")
-            raise ValueError(
+            logger.warning(
                 "X does not contain raw counts. Cannot create 'counts' layer."
             )
 
@@ -280,6 +286,13 @@ def pp_adata_geneformer(
     if "ensembl_id" not in adata.var.columns:
         logger.info("Adding 'ensembl_id' to adata.var.")
         add_ensembl_ids(adata)  # user-provided function
+    else:
+        # check that the ensembl ids are valid. If they contain a . ; get everything before the dot
+        if adata.var["ensembl_id"].str.contains(r"\.").any():
+            logger.info(
+                "Ensembl IDs contain a dot. Extracting everything before the dot."
+            )
+            adata.var["ensembl_id"] = adata.var["ensembl_id"].str.split(".").str[0]
 
     # 2. Add n_counts if not present
     if "n_counts" not in adata.obs.columns:
@@ -1621,7 +1634,7 @@ def check_enough_genes_per_batch(
         logger.warning(
             f"batch_key='{batch_key}' not found in adata.obs. Skipping batch check."
         )
-        return
+        return adata
 
     cell_counts = adata.obs[batch_key].value_counts()
     logger.info(
