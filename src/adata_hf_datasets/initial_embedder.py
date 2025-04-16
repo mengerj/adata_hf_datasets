@@ -604,7 +604,7 @@ class GeneformerEmbedder(BaseEmbedder):
         # Filter and sort embs_df to align with og_ids
         # drop the "Unamed: 0" column
         embs_sorted = self._deduplicate_and_reindex_embeddings(embs_df, og_ids)
-        embs_matrix = embs_sorted.drop(columns=["sample_index"]).values
+        embs_matrix = embs_sorted.values
         adata.obsm[obsm_key] = embs_matrix
         logger.info(
             "Stored Geneformer embeddings of shape %s in adata.obsm[%r].",
