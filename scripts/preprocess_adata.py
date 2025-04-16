@@ -37,7 +37,7 @@ logger = setup_logging()
 
 
 @hydra.main(
-    version_base=None, config_path="../conf", config_name="preprocess_adata_cellxgene"
+    version_base=None, config_path="../conf", config_name="preprocess_adata_test"
 )
 def main(cfg: DictConfig):
     """
@@ -119,6 +119,7 @@ def main(cfg: DictConfig):
                         adata=adata_split,
                         batch_key=cfg.batch_key,
                         n_top_genes=cfg.n_top_genes,
+                        count_layer_key=cfg.count_layer_key,
                         category_threshold=cfg.category_threshold,
                         categories=list(cfg.categories),
                         tag=str(hydra_run_dir),
@@ -145,8 +146,8 @@ def main(cfg: DictConfig):
 
             else:
                 # Single dataset scenario
-                all_out_path = output_subdir / split1 + "_all.h5ad"
-                if all_out_path.is_file():
+                all_out_path = output_subdir / f"{split1}_all.h5ad"
+                if all_out_path.is_file() and not cfg.overwrite:
                     logger.info(
                         "Processed single .h5ad already found for '%s'; skipping reprocessing.",
                         file_stem,
@@ -154,9 +155,15 @@ def main(cfg: DictConfig):
                     return
 
                 logger.info("Processing single dataset without splitting...")
-                adata = pp_adata(adata=adata, tag=str(hydra_run_dir))
-                logger.info("Saved processed dataset: %s", all_out_path)
-                # Create some plots to check the data
+                adata = pp_adata(
+                    adata=adata,
+                    batch_key=cfg.batch_key,
+                    n_top_genes=cfg.n_top_genes,
+                    count_layer_key=cfg.count_layer_key,
+                    category_threshold=cfg.category_threshold,
+                    categories=list(cfg.categories),
+                    tag=str(hydra_run_dir),
+                )
                 qc_evaluation_plots(
                     adata,
                     save_plots=True,
@@ -164,6 +171,10 @@ def main(cfg: DictConfig):
                     metrics_of_interest=list(cfg.metrics_of_interest),
                     categories_of_interest=list(cfg.categories_of_interest),
                 )
+                # Save the processed AnnData object
+                adata.write_h5ad(str(all_out_path))
+                logger.info("Saved processed dataset to: %s", all_out_path)
+                # Create some plots to check the data
                 del adata
     finally:
         monitor.stop()
