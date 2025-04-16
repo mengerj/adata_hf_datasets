@@ -1,16 +1,17 @@
 #!/bin/bash
 #SBATCH --job-name=cpu_initial_emb
-#SBATCH --output=cpu_initial_emb.out
-#SBATCH --error=cpu_initial_emb.err
-#SBATCH --mem=60G
-#SBATCH --time=12:00:00   # Adjust if needed
+#SBATCH --output=logs/embed/cpu_emb_%j.out
+#SBATCH --error=logs/embed/cpu_emb_%j.err
+#SBATCH --mem=400G
+#SBATCH --time=24:00:00   # Adjust if needed
 
 batch_key="dataset_title"
 batch_size=32
 
-INPUT_FILES='["data/RNA/processed/train/cellxgene_pseudo_bulk_35k/all_train.h5ad","data/RNA/processed/train/cellxgene_pseudo_bulk_35k/all_val.h5ad"]'
+INPUT_FILES='["data/RNA/processed/train/cellxgene_pseudo_bulk_350k/all_train.h5ad"]'
+#data/RNA/processed/train/cellxgene_pseudo_bulk_350k/all_val.h5ad
 
-METHODS=("hvg" "pca" "scvi_fm")
+METHODS=("geneformer")
 
 source .venv/bin/activate
 echo "Environment activated."

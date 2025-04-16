@@ -603,8 +603,7 @@ class GeneformerEmbedder(BaseEmbedder):
         og_ids = adata.obs["sample_index"].values
         # Filter and sort embs_df to align with og_ids
         # drop the "Unamed: 0" column
-        embs_df = embs_df.drop(columns=["Unnamed: 0"], errors="ignore")
-        embs_sorted = embs_df.set_index("sample_index").loc[og_ids].reset_index()
+        embs_sorted = self._deduplicate_and_reindex_embeddings(embs_df, og_ids)
         embs_matrix = embs_sorted.drop(columns=["sample_index"]).values
         adata.obsm[obsm_key] = embs_matrix
         logger.info(
@@ -613,6 +612,59 @@ class GeneformerEmbedder(BaseEmbedder):
             obsm_key,
         )
         return adata
+
+    def _deduplicate_and_reindex_embeddings(self, embs_df, og_ids):
+        """
+        Ensure one row per 'sample_index' in embs_df, in the exact order of og_ids.
+
+        If 'sample_index' occurs multiple times in embs_df, we replace
+        that embedding with a row of zeros. If 'sample_index' is missing,
+        we also fill with zeros.
+
+        Parameters
+        ----------
+        embs_df : pd.DataFrame
+            DataFrame containing columns ['sample_index', ...embedding cols...].
+            May have duplicate sample_index values.
+        og_ids : array-like
+            The array of sample_index values from AnnData (og_ids).
+
+        Returns
+        -------
+        pd.DataFrame
+            A DataFrame indexed by 'sample_index', with each index unique and in the
+            exact order of og_ids.
+        """
+
+        # Drop the "Unnamed: 0" column if it exists
+        embs_df = embs_df.drop(columns=["Unnamed: 0"], errors="ignore")
+
+        # Group by sample_index. For any group of size > 1, we'll produce a single row of zeros.
+        def handle_duplicates(group):
+            if group.shape[0] == 1:
+                # Exactly one row for this sample_index, keep it as is
+                return group
+            else:
+                # Duplicate index => create a single row of zeros (except for the sample_index).
+                row = group.iloc[[0]].copy()
+                for c in row.columns:
+                    if c != "sample_index":
+                        row[c] = 0
+                return row
+
+        deduped_df = embs_df.groupby(
+            "sample_index", group_keys=False, as_index=False
+        ).apply(handle_duplicates)
+        # Now deduped_df has at most one row per sample_index.
+
+        # Set index to sample_index (verify_integrity=False is safe now since we just deduplicated).
+        deduped_df = deduped_df.set_index("sample_index", verify_integrity=False)
+
+        # Reindex to the exact order of og_ids.
+        # Missing IDs become NaN, we fill with zeros.
+        deduped_df = deduped_df.reindex(og_ids).fillna(0)
+
+        return deduped_df
 
     def _kill_process(self):
         """
