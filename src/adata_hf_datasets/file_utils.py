@@ -120,15 +120,12 @@ def download_from_link(url, save_path):
         return False
 
 
-def save_and_upload_adata(
-    adata, local_path, nextcloud_config=None, create_share_link=True
-):
+def save_and_upload_adata(local_path, nextcloud_config=None, create_share_link=True):
     """
     Saves an AnnData object to a file and optionally uploads it to a Nextcloud server based on provided configuration.
 
     Parameters:
-        adata (AnnData): The AnnData object to save.
-        local_path (str): Local path to save the .h5ad file.
+        local_path (str): Local path where AnnData object is saved.
         nextcloud_config (dict, optional): Configuration dictionary for Nextcloud which contains:
                                            'url' (str): URL to the Nextcloud server.
                                            'username' (str): Username for Nextcloud.
@@ -143,9 +140,6 @@ def save_and_upload_adata(
                               'password': 'your_password',
                               'remote_path': '/path/on/nextcloud/file.h5ad.gz'})
     """
-    # Save the AnnData object to a local .h5ad file
-    adata.write(local_path, compression="gzip")
-    logging.info(f"File saved locally at {local_path}")
 
     # Upload the file to Nextcloud if configuration is provided
     if nextcloud_config:

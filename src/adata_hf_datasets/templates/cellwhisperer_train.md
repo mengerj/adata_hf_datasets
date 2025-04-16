@@ -14,7 +14,7 @@ task_categories:
 
 ## Description
 
-This dataset contains **RNA sequencing data** (or actually references to anndata files stored on a cloud) and text descriptions.
+This dataset contains a representation of **RNA sequencing data** and text descriptions.
 $dataset_type_explanation
 
 The **RNA sequencing data** used for training was originally gathered and annotated in the **CellWhisperer** project. It is derived from
