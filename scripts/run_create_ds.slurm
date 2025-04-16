@@ -1,7 +1,7 @@
 #!/bin/bash
 #SBATCH --job-name=create_ds
-#SBATCH --output=create_ds.out
-#SBATCH --error=create_ds.err
+#SBATCH --output=logs/create_ds/create_ds_%j.out
+#SBATCH --error=logs/create_ds/create_ds_%j.err
 #SBATCH --time=12:00:00
 
 ###
@@ -10,11 +10,11 @@
 ###
 SPLIT_DATASET=true
 
-PROCESSED_PATHS_TRAIN='["data/RNA/processed/train/cellxgene_pseudo_bulk_35k/train.h5ad"]'
-PROCESSED_PATHS_VAL='["data/RNA/processed/train/cellxgene_pseudo_bulk_35k/val.h5ad"]'
+PROCESSED_PATHS_TRAIN='["data/RNA/processed_with_emb/train/cellxgene_pseudo_bulk_35k/joined/all_train.h5ad"]'
+PROCESSED_PATHS_VAL='["data/RNA/processed_with_emb/train/cellxgene_pseudo_bulk_35k/joined/all_val.h5ad"]'
 PROCESSED_PATHS_ALL='["data/RNA/processed/test/tabula_sapiens_bone_marrow/all.h5ad"]' #only used if SPLIT_DATASET=false
 
-CAPTION_KEY="cell_type"
+CAPTION_KEY="natural_language_annotation"
 DATASET_TYPE="multiplets"
 
 ###

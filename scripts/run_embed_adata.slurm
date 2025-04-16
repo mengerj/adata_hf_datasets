@@ -1,23 +1,22 @@
 #!/bin/bash
 #SBATCH --job-name=initial_emb
-#SBATCH --output=initial_emb_%a.out
-#SBATCH --error=initial_emb_%a.err
+#SBATCH --output=logs/embed/gpu__emb_%j.out
+#SBATCH --error=logs/embed/gpu_emb_%j.err
 #SBATCH --partition=gpu
 #SBATCH --gres=gpu:1           # Request 1 GPU
-#SBATCH --mem=64G
-#SBATCH --time=4:00:00
-#SBATCH --array=0-1
+#SBATCH --mem=90G
+#SBATCH --time=12:00:00
 
 METHOD="geneformer"
 batch_key="dataset_title"
 batch_size=32
-
+# _%a is the array index
 INPUT_FILES=(
-    "data/RNA/processed/train/cellxgene_pseudo_bulk_35k/all_train.h5ad"
-    "data/RNA/processed/train/cellxgene_pseudo_bulk_35k/all_val.h5ad"
+    "data/RNA/processed/train/cellxgene_pseudo_bulk_350k/all_train.h5ad"
+#    "data/RNA/processed/train/cellxgene_pseudo_bulk_350k/all_val.h5ad"
 )
-
-input_file=${INPUT_FILES[$SLURM_ARRAY_TASK_ID]}
+input_files='["data/RNA/processed/train/cellxgene_pseudo_bulk_350k/all_train.h5ad"]'
+#input_file=${INPUT_FILES[$SLURM_ARRAY_TASK_ID]}
 # Create temporary directory for this job
 #tmp_dir=$(mktemp -d /tmp/emb_job_${SLURM_ARRAY_TASK_ID}_XXXX)
 
@@ -32,14 +31,11 @@ input_file=${INPUT_FILES[$SLURM_ARRAY_TASK_ID]}
 # Activate environment
 source .venv/bin/activate
 
-echo "Processing $input_file, outputting to $output_dir"
+#echo "Processing $input_file, outputting to $output_dir"
 
 python3 scripts/embed_adata.py \
     ++method=$METHOD \
     ++batch_key=$batch_key \
     ++batch_size=$batch_size \
-    ++input_files='["'"$input_file"'"]'
+    ++input_files=$input_files
 #    ++output_dir="$output_dir"
-
-# Cleanup temporary input file
-rm "$tmp_input_file"
