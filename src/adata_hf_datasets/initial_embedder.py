@@ -3,7 +3,11 @@ import logging
 from adata_hf_datasets.utils import (
     fix_non_numeric_nans,
 )
-from adata_hf_datasets.pp import ensure_log_norm, is_data_scaled
+from adata_hf_datasets.pp import (
+    ensure_log_norm,
+    is_data_scaled,
+    check_enough_genes_per_batch,
+)
 from scvi.hub import HubModel
 from scvi.model import SCVI
 from pathlib import Path
@@ -126,7 +130,7 @@ class HighlyVariableGenesEmbedder(BaseEmbedder):
 
         # Check if enough valid genes are present in each batch
         if batch_key is not None:
-            self._check_enough_genes_per_batch(adata, batch_key, self.embedding_dim)
+            check_enough_genes_per_batch(adata, batch_key, self.embedding_dim)
         # remove cells with infinity values
         sc.pp.highly_variable_genes(
             adata, n_top_genes=self.embedding_dim, batch_key=batch_key
@@ -184,74 +188,6 @@ class HighlyVariableGenesEmbedder(BaseEmbedder):
         top_genes = adata.var["dispersions_norm"].nlargest(n_top).index
         adata.var["highly_variable"] = False
         adata.var.loc[top_genes, "highly_variable"] = True
-
-    def _check_enough_genes_per_batch(
-        self,
-        adata: anndata.AnnData,
-        batch_key: str,
-        embedding_dim: int,
-        var_threshold: float = 1e-8,
-    ) -> None:
-        """
-        Check whether each batch has at least `embedding_dim` genes with variance > var_threshold.
-        If any batch doesn't meet this, raise a ValueError suggesting ways to fix the issue.
-
-        Parameters
-        ----------
-        adata : anndata.AnnData
-            The AnnData object. Must have `adata.obs[batch_key]`.
-        batch_key : str
-            Column in `adata.obs` used to identify batches.
-        embedding_dim : int
-            The requested number of HVGs (n_top_genes).
-            Each batch must have at least this many candidate genes.
-        var_threshold : float, optional
-            Minimal variance to consider a gene "non-negligible". Defaults to 1e-8.
-
-        Raises
-        ------
-        ValueError
-            If any batch has fewer than `embedding_dim` genes above the variance threshold.
-        """
-        if batch_key not in adata.obs.columns:
-            logger.warning(
-                f"batch_key='{batch_key}' not found in adata.obs. Skipping batch check."
-            )
-            return
-
-        cell_counts = adata.obs[batch_key].value_counts()
-        logger.info(
-            "Checking that each batch has at least %d genes with variance > %g ...",
-            embedding_dim,
-            var_threshold,
-        )
-
-        # For each batch, compute how many genes pass the variance threshold
-        for bval in cell_counts.index:
-            sub = adata[adata.obs[batch_key] == bval]
-            if sub.n_obs == 0:
-                continue  # no cells here; skip
-
-            X = sub.X.toarray() if sp.issparse(sub.X) else sub.X
-            variances = X.var(axis=0)
-            var_nonzero = (variances > var_threshold).sum()
-
-            if var_nonzero < embedding_dim:
-                msg = (
-                    f"Batch '{bval}' has only {var_nonzero} genes with variance > {var_threshold}, "
-                    f"which is fewer than the requested {embedding_dim}. "
-                    "Scanpy will fail to select HVGs in this batch.\n"
-                    "Consider increasing chunk_size, lowering `embedding_dim`, merging small categories, "
-                    "or adjusting your QC thresholds."
-                )
-                logger.error(msg)
-                raise ValueError(msg)
-
-        logger.info(
-            "All batches have at least %d genes above variance threshold %g.",
-            embedding_dim,
-            var_threshold,
-        )
 
 
 class PCAEmbedder(BaseEmbedder):
