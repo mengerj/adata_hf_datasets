@@ -117,6 +117,8 @@ def main(cfg: DictConfig):
                     logger.info("Processing %s split...", split)
                     adata_split = pp_adata(
                         adata=adata_split,
+                        batch_key=cfg.batch_key,
+                        n_top_genes=cfg.n_top_genes,
                         category_threshold=cfg.category_threshold,
                         categories=list(cfg.categories),
                         tag=str(hydra_run_dir),
