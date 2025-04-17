@@ -59,6 +59,7 @@ def main(cfg: DictConfig):
     monitor.start()
     try:
         input_file = cfg.input_file
+        logger.info("Prepocessing input file: %s", input_file)
         output_dir = cfg.output_dir
         train_split = cfg.train_split
         split_dataset = cfg.split_dataset

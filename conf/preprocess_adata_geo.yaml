@@ -1,5 +1,6 @@
 # conf/preprocess_adata.yaml
-
+defaults:
+  - preprocess_adata_default.yaml
 # Input file path
 input_file: "data/RNA/raw/train/geo_7k.h5ad"
 
