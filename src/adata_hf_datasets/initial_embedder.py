@@ -8,6 +8,7 @@ from adata_hf_datasets.pp import (
     is_data_scaled,
     check_enough_genes_per_batch,
 )
+from adata_hf_datasets.pybiomart_utils import add_ensembl_ids, ensure_ensembl_index
 from scvi.hub import HubModel
 from scvi.model import SCVI
 from pathlib import Path
@@ -803,13 +804,17 @@ class SCVIEmbedder(BaseEmbedder):
             Single-cell dataset to be used as 'query'.
         """
         logger.info("Preparing query AnnData and loading into SCVI model.")
-
         # Check if counts layer exists
         if "counts" not in query_adata.layers:
             raise ValueError(
                 "No 'counts' layer found in adata. Run preprocessing first."
             )
 
+        ensure_ensembl_index(
+            query_adata,
+            ensembl_col=self.init_kwargs.get("ensembl_col", "ensembl_id"),
+            add_fn=add_ensembl_ids,
+        )
         # X will be modified to match the genes in the reference data and the training size of the scvi Model. But we
         # need to keep the original object for later.
         self.adata_backup = query_adata.copy()
