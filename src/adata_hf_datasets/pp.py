@@ -242,12 +242,18 @@ def pp_adata_general(
 
     # 4) Normalize and log-transform (in place)
     ensure_log_norm(adata)
-    # check if each batch has at least 1000 variable genes
-    adata = check_enough_genes_per_batch(
-        adata, batch_key=batch_key, min_genes=n_top_genes
-    )
-    # perform highly variable gene selection
-    sc.pp.highly_variable_genes(adata, n_top_genes=n_top_genes, batch_key=batch_key)
+    if batch_key in adata.obs.columns:
+        # check if each batch has at least 1000 variable genes
+        adata = check_enough_genes_per_batch(
+            adata, batch_key=batch_key, min_genes=n_top_genes
+        )
+        # perform highly variable gene selection
+        sc.pp.highly_variable_genes(adata, n_top_genes=n_top_genes, batch_key=batch_key)
+    else:
+        logging.warning(
+            "Batch key not found in adata.obs. Selecting highly variable genes without batch correction."
+        )
+        sc.pp.highly_variable_genes(adata, n_top_genes=n_top_genes)
 
     logger.info("In-memory preprocessing complete.")
     return adata

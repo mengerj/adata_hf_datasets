@@ -25,8 +25,7 @@ description_key: null
 #  - "cell_type"
 #  - "dataset_title"
 categories:
-  - "cell_type"
-  - "sample_id"
+  - ${batch_key}
 category_threshold: 10 # remove all categories that have less than the threshold
 
 #For Plotting
@@ -35,7 +34,6 @@ metrics_of_interest: #these numeric metrics will be plotted as a distribution
   - "total_counts"
   - "pct_counts_mt"
 categories_of_interest: #This will be used to colour a pca, and check the distribution of the metrics_of_interest
-  - "sample_id"
-  - "cell_type"
+  - ${batch_key}
   - "tissue"
   - "assay"

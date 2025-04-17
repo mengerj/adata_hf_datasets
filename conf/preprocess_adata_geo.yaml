@@ -36,8 +36,8 @@ categories:
   - "molecule_ch1"
   - "library_layout"
   - "instrument"
-  - "study"
-category_threshold: 10 # remove all categories that have less than the threshold
+  - ${batch_key}
+category_threshold: 5 # remove all categories that have less than the threshold
 
 #For Plotting
 metrics_of_interest: #these numeric metrics will be plotted as a distribution
@@ -49,4 +49,4 @@ categories_of_interest: #This will be used to colour a pca, and check the distri
   - "molecule_ch1"
   - "sample_type"
   - "instrument"
-  - "study"
+  - ${batch_key}
