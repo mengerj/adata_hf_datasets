@@ -8,7 +8,7 @@ from adata_hf_datasets.pp import (
     is_data_scaled,
     check_enough_genes_per_batch,
 )
-from adata_hf_datasets.pybiomart_utils import add_ensembl_ids, ensure_ensembl_index
+from adata_hf_datasets.pp.pybiomart_utils import add_ensembl_ids, ensure_ensembl_index
 from scvi.hub import HubModel
 from scvi.model import SCVI
 from pathlib import Path
