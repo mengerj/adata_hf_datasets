@@ -1,0 +1,164 @@
+# src/my_pipeline/preprocessing.py
+import logging
+from pathlib import Path
+from .qc import pp_quality_control
+from .general import pp_adata_general
+from .geneformer import pp_adata_geneformer
+from .utils import ensure_raw_counts_layer, prepend_instrument_to_description
+from .bimodal import split_if_bimodal
+from .sra import maybe_add_sra_metadata
+from .loader import BatchChunkLoader
+from anndata.experimental import concat_on_disk
+import numpy as np
+from anndata import concat
+
+logger = logging.getLogger(__name__)
+
+
+def preprocess_h5ad(
+    infile: Path,
+    outfile: Path,
+    *,
+    chunk_size: int = 1_000,
+    min_cells: int = 10,
+    min_genes: int = 200,
+    batch_key: str = "batch",
+    count_layer_key: str = "counts",
+    n_top_genes: int = 1_000,
+    consolidation_categories: list[str] | str | None = None,
+    category_threshold: int = 1,
+    remove_low_frequency: bool = True,
+    geneformer_pp: bool = True,
+    sra_chunk_size: int | None = None,
+    extra_sra_cols: list[str] | None = None,
+    instrument_key: str | None = None,
+    description_key: str | None = None,
+    bimodal_col: str | None = None,
+    split_bimodal: bool = False,
+) -> None:
+    """
+    Preprocess a large .h5ad file in chunks and write a concatenated output.
+
+    This function:
+      1. Iterates over smaller AnnData chunks.
+      2. Applies QC, general filtering, optional geneformer step.
+      3. Optionally adds SRA metadata and instrument descriptions.
+      4. Writes each chunk to disk, then concatenates them into `outfile`.
+
+    Parameters
+    ----------
+    infile : Path
+        Path to the raw .h5ad file.
+    outfile : Path
+        Path where the final preprocessed file is written.
+    chunk_size : int, optional
+        Number of cells per chunk (default 1000).
+    min_cells : int, optional
+        Minimum cells per gene for filtering (default 10).
+    min_genes : int, optional
+        Minimum genes per cell for filtering (default 200).
+    batch_key : str, optional
+        Column in `.obs` for batch labels (default "batch").
+    count_layer_key : str, optional
+        Key for the raw counts layer in `.layers` (default "counts").
+    n_top_genes : int, optional
+        Number of HVGs to select (default 1000).
+    consolidation_categories : list[str] | str | None, optional
+        List of categories in adata.obs to consolidate low frequency categories.
+        If None, no consolidation is performed.
+    category_threshold : int, optional
+        Frequency threshold for consolidating categories (default 1).
+    remove_low_frequency : bool, optional
+        If True, remove rows (cells) with low-frequency categories. Otherwise, merges them into "unknown".
+    call_geneformer : bool, optional
+        Whether to run the Geneformer step (default True).
+    sra_chunk_size : int, optional
+        If provided, chunk size for SRA metadata queries.
+    extra_sra_cols : list[str], optional
+        Additional columns to fetch from SRA.
+    instrument_key : str, optional
+        Key in `.obs` holding instrument names.
+    description_key : str, optional
+        Key in `.obs` holding sample descriptions.
+
+    References
+    ----------
+    - Data source: single-cell RNA‑seq count matrix stored in H5AD format.
+    """
+    chunk_dir = outfile.with_suffix("").parent / f"{outfile.stem}_chunks"
+    chunk_dir.mkdir(parents=True, exist_ok=True)
+    chunks = []
+    loader = BatchChunkLoader(infile, chunk_size, batch_key=batch_key)
+
+    try:
+        for i, adata in enumerate(loader):
+            logger.info("Preprocessing chunk %d", i)
+            # Make sure X contains raw counts, and "counts" layer is set
+            ensure_raw_counts_layer(adata, raw_layer_key=count_layer_key)
+
+        processed_splits = []
+        if split_bimodal and bimodal_col in adata.obs:
+            # log‐transform the covariate (use pandas or numpy, not sc.pp.log1p on a Series)
+            log_col = f"{bimodal_col}_log"
+            adata.obs[log_col] = np.log1p(adata.obs[bimodal_col].values)
+            adata_splits = split_if_bimodal(
+                adata, column_name=log_col, backed_path=None
+            )
+        else:
+            adata_splits = {"all": adata}
+
+            # Process each split (not training/val but based on bimodality)
+            for _split_label, ad_sub in adata_splits.items():
+                # Process each chunk
+                ad_sub = pp_quality_control(ad_sub)
+                ad_sub = pp_adata_general(
+                    ad_sub,
+                    min_cells=min_cells,
+                    min_genes=min_genes,
+                    batch_key=batch_key,
+                    n_top_genes=n_top_genes,
+                    categories=consolidation_categories,
+                    category_threshold=category_threshold,
+                    remove=remove_low_frequency,
+                )
+                if geneformer_pp:
+                    ad_sub = pp_adata_geneformer(ad_sub)
+                if sra_chunk_size and extra_sra_cols:
+                    maybe_add_sra_metadata(
+                        ad_sub, chunk_size=sra_chunk_size, new_cols=extra_sra_cols
+                    )
+                if instrument_key and description_key:
+                    prepend_instrument_to_description(
+                        ad_sub,
+                        instrument_key=instrument_key,
+                        description_key=description_key,
+                    )
+                processed_splits.append(ad_sub)
+
+            # 3) Re‐concatenate splits back into a single AnnData
+            #    This merges obs and var, stacking the cells back together.
+            adata_merged = concat(
+                processed_splits,
+                join="outer",
+                label="bimodal_split",  # adds an .obs['bimodal_split'] column if you like
+                fill_value=0,  # or np.nan, depending on your semantics
+            )
+            chunk_path = chunk_dir / f"chunk_{i}.h5ad"
+            adata_merged.write_h5ad(chunk_path)
+            chunks.append(chunk_path)
+
+        # Concatenate on disk
+        concat_on_disk(in_files=chunks, out_file=str(outfile))
+        logger.info("Wrote final file to %s", outfile)
+
+    finally:
+        # clean up
+        for f in chunks:
+            try:
+                f.unlink()
+            except OSError:
+                logger.warning("Could not delete chunk %s", f)
+        try:
+            chunk_dir.rmdir()
+        except OSError:
+            pass
