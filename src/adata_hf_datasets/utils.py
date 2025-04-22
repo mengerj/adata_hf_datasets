@@ -13,8 +13,103 @@ from string import Template
 import scipy.sparse as sp
 import pandas as pd
 import hashlib
+from typing import Iterator, List
+import scanpy as sc
+from anndata import AnnData
 
 logger = logging.getLogger(__name__)
+
+
+class BatchChunkLoader:
+    """
+    Lazy loader for .h5ad files that yields AnnData chunks
+    composed of whole batches up to a target size.
+
+    Each chunk will contain one or more entire batches,
+    accumulating batches until at least `chunk_size` cells
+    are reached (but never splitting a batch).
+
+    Parameters
+    ----------
+    path : Path
+        Path to the H5AD file.
+    chunk_size : int
+        Minimum number of cells per chunk.
+    batch_key : str
+        Column in `.obs` to group by (batches will stay intact).
+    """
+
+    def __init__(self, path: Path, chunk_size: int, batch_key: str):
+        self.path = path
+        self.chunk_size = chunk_size
+        self.batch_key = batch_key
+
+    def __iter__(self) -> Iterator[AnnData]:
+        """
+        Yields
+        ------
+        AnnData
+            Next chunk loaded into memory, containing whole batches.
+        """
+        logger.info("Opening H5AD in backed mode: %s", self.path)
+        adata_backed = sc.read(self.path, backed="r")
+
+        # preserve the order of batches as they appear
+        obs = adata_backed.obs
+        if self.batch_key not in obs.columns:
+            raise KeyError(f"batch_key '{self.batch_key}' not in adata.obs")
+
+        batch_labels: List = obs[self.batch_key].tolist()
+        # unique in original order
+        seen = set()
+        unique_batches = [b for b in batch_labels if not (b in seen or seen.add(b))]
+
+        current_batches: List = []
+        current_count = 0
+
+        for batch in unique_batches:
+            # count cells in this batch
+            n_cells = (obs[self.batch_key] == batch).sum()
+            # if adding this batch would overshoot—and we already have some batches—flush
+            if current_batches and (current_count + n_cells > self.chunk_size):
+                yield self._load_chunk(adata_backed, current_batches)
+                current_batches = []
+                current_count = 0
+
+            current_batches.append(batch)
+            current_count += n_cells
+
+        # any remaining batches
+        if current_batches:
+            yield self._load_chunk(adata_backed, current_batches)
+
+        # close backed file
+        adata_backed.file.close()
+
+    def _load_chunk(self, adata_backed: AnnData, batches: List) -> AnnData:
+        """
+        Load selected batches from the backed AnnData into memory.
+
+        Parameters
+        ----------
+        adata_backed : AnnData
+            AnnData in backed mode.
+        batches : list
+            Batch labels to include.
+
+        Returns
+        -------
+        AnnData
+            In‑memory AnnData containing only those batches.
+        """
+        logger.info(
+            "Loading chunk with %d batches (%s)",
+            len(batches),
+            ", ".join(map(str, batches)),
+        )
+        # boolean mask selection preserves obs/var slicing on backed AnnData
+        mask = adata_backed.obs[self.batch_key].isin(batches)
+        return adata_backed[mask].to_adata()
 
 
 def stable_numeric_id(s: str) -> int:
