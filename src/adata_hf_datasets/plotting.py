@@ -81,15 +81,30 @@ def qc_evaluation_plots(
         sc.settings.autosave = True  # Will save automatically
         sc.settings.autoshow = False  # Don't display inline
 
-    # 1) Subset to up to 5k cells
-    n_obs = adata.n_obs
-    if n_obs > subset_cells:
-        logger.info("Subsetting data from %d cells to %d cells.", n_obs, subset_cells)
-        idx = np.random.choice(n_obs, subset_cells, replace=False)
-        adata_sub = adata[idx, :].copy()
-    else:
-        logger.info("Data has <= %d cells, no subsetting needed.", subset_cells)
-        adata_sub = adata.copy()
+        # 1) Decide whether to subset
+        n_obs = adata.n_obs
+        if n_obs > subset_cells:
+            logger.info(
+                "Subsetting data from %d cells to %d cells.", n_obs, subset_cells
+            )
+            idx = np.random.choice(n_obs, subset_cells, replace=False)
+
+            # 2) If backed, slice first (lazy) then load selection into memory
+            if getattr(adata, "isbacked", False):
+                # this view still references the on‐disk file
+                view = adata[idx, :]
+                # now pull just these cells into memory
+                adata_sub = view.to_memory()
+                view.file.close()
+            else:
+                adata_sub = adata[idx, :].copy()
+        else:
+            logger.info("Data has <= %d cells, no subsetting needed.", subset_cells)
+            if getattr(adata, "isbacked", False):
+                adata_sub = adata.to_memory()
+                adata.file.close()
+            else:
+                adata_sub = adata.copy()
 
     # 2) Label QC genes if needed
     if qc_vars is None:
