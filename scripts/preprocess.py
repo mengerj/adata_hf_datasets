@@ -55,6 +55,7 @@ def main(cfg: DictConfig):
     """
     # 1) Prepare paths & logger
     infile = Path(cfg.input_file)
+    logger.info("Input file: %s", infile)
     out_dir = Path(cfg.output_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     run_dir = HydraConfig.get().run.dir
@@ -159,6 +160,9 @@ def main(cfg: DictConfig):
 
         logger.info("Done. Outputs in %s", out_dir)
         # Save system monitor metrics
+    except Exception:
+        logger.exception("Unhandled exception during preprocessing")
+        raise  # optional: re-raise if you want Hydra/SLURM to register job as failed
     finally:
         monitor.stop()
         monitor.print_summary()
@@ -170,5 +174,4 @@ if __name__ == "__main__":
     try:
         main()
     except Exception:
-        logger.exception("An error occurred during preprocessing.")
         sys.exit(1)
