@@ -22,7 +22,7 @@ split_bimodal: true
 bimodal_col: "readsaligned" #will be log-transformed internally
 
 #additional columns to add to the adata object from sra database
-extra_sra_cols:
+sra_extra_cols:
   - "library_source"
   - "library_layout"
   - "instrument"

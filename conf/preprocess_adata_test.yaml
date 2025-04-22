@@ -2,7 +2,7 @@
 defaults:
   - preprocess_adata_default.yaml
 # Input file path
-input_file: "data/RNA/raw/test/tabula_sapiens_bone_marrow.h5ad"
+input_file: "data/RNA/raw/test/human_pancreas_norm_complexBatch.h5ad"
 
 # Output directory for processed files
 output_dir: "data/RNA/processed/test"
@@ -13,9 +13,9 @@ train_split: 0.9
 # If false, the script will NOT split into train/val but instead
 # output a single 'all.h5ad' file. This can be used for test data.
 #If X does not have raw counts provide a key:
-count_layer_key: "decontXcounts" #key in adata.raw.X that contains the raw counts
+count_layer_key: "counts" #key in adata.raw.X that contains the raw counts
 #For batch aware highly variable gene selection:
-batch_key: "sample_id"
+batch_key: "tech"
 n_top_genes: 512
 #to append the instrument to the description. Set any of them to null if you want to skip.
 instrument_key: null #key in adata.obs that contains the instrument information

@@ -5,24 +5,32 @@ input_file: null
 # Output directory for processed files
 output_dir: null
 overwrite: true
+
+#pp is done in chunks to avoid memory issues. This is the chunk size.
+chunk_size: 10000
 # Train/validation split configuration
-split_dataset: true
-train_split: 0.9
 # If false, the script will NOT split into train/val but instead
 # output a single 'all.h5ad' file. This can be used for test data.
+split_dataset: true
+train_split: 0.9
+random_seed: 42
 
 #If X does not have raw counts provide a key:
 count_layer_key: null #key in adata.raw.X that contains the raw counts
 #For batch aware highly variable gene selection:
 batch_key: null
 n_top_genes: 1000
+# Some general preprocessing configs
+min_cells: 20 # minimum number of cells a gene should be expressed in
+min_genes: 200 # minimum number of genes a cell should express
+geneformer_pp: true # whether to run geneformer preprocessing
 # whether to split the dataset based on the bimodal distrbution of some continous covariate.
 #In the geo dataset, a strong bimodal distribution was observed that couldnt be explained by any technical or biological covariate.
 split_bimodal: false
 bimodal_col: null #will be log-transformed internally
 
 #additional columns to add to the adata object from sra database
-extra_sra_cols:
+sra_extra_cols:
   - null
 sra_chunk_size: null #number of samples to fetch from sra at once. This is to avoid overloading the server.
 #to append the instrument to the description. Set any of them to null if you want to skip.

@@ -2,16 +2,19 @@
 defaults:
   - preprocess_adata_default.yaml
 # Input file path
-input_file: "data/RNA/raw/train/cellxgene_pseudo_bulk_3_5k.h5ad"
+input_file: "data/RNA/raw/train/cellxgene_pseudo_bulk_35k.h5ad"
 
 # Output directory for processed files
 output_dir: "data/RNA/processed/train"
 overwrite: true
+#pp is done in chunks to avoid memory issues. This is the chunk size.
+chunk_size: 10000
 # Train/validation split configuration
-split_dataset: true
-train_split: 0.9
 # If false, the script will NOT split into train/val but instead
 # output a single 'all.h5ad' file. This can be used for test data.
+split_dataset: true
+train_split: 0.9
+random_seed: 42
 
 #For batch aware highly variable gene selection:
 batch_key: "dataset_title"
@@ -20,13 +23,11 @@ n_top_genes: 512
 instrument_key: "assay" #key in adata.obs that contains the instrument information
 description_key: "natural_language_annotation"
 # Filter certain low frequency categories
-#categories:
-#  - "cell_type"
-#  - "dataset_title"
-categories:
+consolidation_categories:
   - "cell_type"
   - "dataset_title"
-category_threshold: 10 # remove all categories that have less than the threshold
+category_threshold: 3 # remove all categories that have less than the threshold
+remove_low_frequency: true
 
 #For Plotting
 metrics_of_interest: #these numeric metrics will be plotted as a distribution
