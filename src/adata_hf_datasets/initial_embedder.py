@@ -3,7 +3,7 @@ import logging
 from adata_hf_datasets.utils import (
     fix_non_numeric_nans,
 )
-from adata_hf_datasets.pp import (
+from adata_hf_datasets.pp.utils import (
     ensure_log_norm,
     is_data_scaled,
     check_enough_genes_per_batch,
