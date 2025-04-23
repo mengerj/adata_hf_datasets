@@ -39,7 +39,7 @@ def import_callable(ref: str):
 
 
 @hydra.main(
-    version_base=None, config_path="../conf", config_name="preprocess_adata_geo"
+    version_base=None, config_path="../conf", config_name="preprocess_adata_test"
 )
 def main(cfg: DictConfig):
     """
@@ -66,18 +66,30 @@ def main(cfg: DictConfig):
     monitor = SystemMonitor(logger=logger)
     monitor.daemon = True  # to terminate the thread when the main thread exits
     monitor.start()
+
+    # Create a temporary file path for the modified input
+    temp_infile = out_dir / f"{input_stem}_temp_input.h5ad"
+
     try:
-        # 2) Read in backed + mode to add sample_index and/or evaluate splitting
-        ad_bk = sc.read_h5ad(infile, backed="r+")
-        # This is needed because Geneformer relies on numeric sample indices that are unique across train and val files (since they are in the same directory when applying geneformer)
+        # 2) Read in backed mode
+        ad_bk = sc.read_h5ad(infile, backed="r")
+
+        # Create a copy with sample_index added if needed
         if "sample_index" not in ad_bk.obs:
             logger.info("Adding sample_index to obs (0…%d)", ad_bk.n_obs - 1)
+            # Add sample_index to the copy
             ad_bk.obs["sample_index"] = np.arange(ad_bk.n_obs)
-        ad_bk.write_h5ad(str(infile))  # overwrites the file in place
-        ad_bk.file.close()
-        # read in normal backed mode
-        ad_bk = sc.read_h5ad(infile, backed="r")
-        # Plot some quality control plots prior to processing. Potentially add sra columns first
+
+            # Write the modified version to a temporary file
+            logger.info(f"Writing temporary file with sample_index to {temp_infile}")
+            ad_bk.write_h5ad(temp_infile)
+
+            # Use the temporary file for further processing
+            infile = temp_infile
+            ad_bk.file.close()
+            ad_bk = sc.read_h5ad(infile, backed="r")
+
+        # Plot some quality control plots prior to processing.
         subset_sra_and_plot(adata_bk=ad_bk, cfg=cfg, run_dir=run_dir + "/before")
 
         # 3) Decide split function
@@ -161,6 +173,11 @@ def main(cfg: DictConfig):
         for path_in in subset_files.values():
             logger.info("Removing temporary file: %s", path_in)
             path_in.unlink()
+
+        # Clean up the temporary input file if it was created
+        if temp_infile.exists():
+            logger.info(f"Removing temporary input file: {temp_infile}")
+            temp_infile.unlink()
 
         # Save system monitor metrics
     except Exception:
