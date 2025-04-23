@@ -147,7 +147,10 @@ def filter_invalid_sra_ids(
         except ValueError or KeyError as e:
             logger.error("Error checking SRS IDs: %s", e)
             return False
-
+    # if all are true, dont subset.
+    if final_mask.all():
+        logger.info("All IDs are valid.")
+        return True
     adata = adata[final_mask]
     logger.info("After filtering, %d cells remain", adata.n_obs)
     return True

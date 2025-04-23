@@ -24,7 +24,7 @@ description_key: null
 #categories:
 #  - "cell_type"
 #  - "dataset_title"
-categories:
+consolidation_categories:
   - ${batch_key}
 category_threshold: 10 # remove all categories that have less than the threshold
 

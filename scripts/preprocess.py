@@ -38,7 +38,7 @@ def import_callable(ref: str):
 
 
 @hydra.main(
-    version_base=None, config_path="../conf", config_name="preprocess_adata_cellxgene"
+    version_base=None, config_path="../conf", config_name="preprocess_adata_geo"
 )
 def main(cfg: DictConfig):
     """
@@ -56,7 +56,9 @@ def main(cfg: DictConfig):
     # 1) Prepare paths & logger
     infile = Path(cfg.input_file)
     logger.info("Input file: %s", infile)
-    out_dir = Path(cfg.output_dir)
+    # Get the stem of the input file (filename without extension)
+    input_stem = infile.stem
+    out_dir = Path(cfg.output_dir) / input_stem
     out_dir.mkdir(parents=True, exist_ok=True)
     run_dir = HydraConfig.get().run.dir
     logger.info("Run dir: %s", run_dir)
@@ -70,18 +72,12 @@ def main(cfg: DictConfig):
         if "sample_index" not in ad_bk.obs:
             logger.info("Adding sample_index to obs (0…%d)", ad_bk.n_obs - 1)
             ad_bk.obs["sample_index"] = np.arange(ad_bk.n_obs)
-            ad_bk.write_h5ad(str(infile))  # overwrites the file in place
-            ad_bk.file.close()
+        ad_bk.write_h5ad(str(infile))  # overwrites the file in place
+        ad_bk.file.close()
         # read in normal backed mode
         ad_bk = sc.read_h5ad(infile, backed="r")
-        # Plot some quality control plots prior to processing
-        qc_evaluation_plots(
-            ad_bk,
-            save_plots=True,
-            save_dir=run_dir + "/before",
-            metrics_of_interest=list(cfg.metrics_of_interest),
-            categories_of_interest=list(cfg.categories_of_interest),
-        )
+        # Plot some quality control plots prior to processing. Potentially add sra columns first
+        # subset_sra_and_plot(adata_bk = ad_bk, cfg = cfg, run_dir = run_dir + "/before")
 
         # 3) Decide split function
         split_fn = (
@@ -123,7 +119,7 @@ def main(cfg: DictConfig):
 
         # 5) Now preprocess each subset on disk via your chunked pipeline
         for name, path_in in subset_files.items():
-            path_out = out_dir / f"{name}_preprocessed.h5ad"
+            path_out = out_dir / f"{name}.h5ad"
             logger.info("Preprocessing %s → %s", path_in, path_out)
             pp.preprocess_h5ad(
                 path_in,
@@ -134,14 +130,14 @@ def main(cfg: DictConfig):
                 batch_key=cfg.batch_key,
                 count_layer_key=cfg.count_layer_key,
                 n_top_genes=int(cfg.n_top_genes),
-                consolidation_categories=list(
-                    cfg.get("consolidation_categories", None)
-                ),
+                consolidation_categories=list(cfg.consolidation_categories)
+                if cfg.consolidation_categories
+                else None,
                 category_threshold=cfg.get("category_threshold", 1),
                 remove_low_frequency=cfg.get("remove_low_frequency", False),
                 geneformer_pp=bool(cfg.geneformer_pp),
                 sra_chunk_size=cfg.get("sra_chunk_size", None),
-                extra_sra_cols=cfg.get("extra_sra_cols", None),
+                sra_extra_cols=cfg.get("sra_extra_cols", None),
                 instrument_key=cfg.get("instrument_key", None),
                 description_key=cfg.get("description_key", None),
                 bimodal_col=cfg.get("bimodal_col", None),
@@ -159,6 +155,12 @@ def main(cfg: DictConfig):
             ad_bk.file.close()
 
         logger.info("Done. Outputs in %s", out_dir)
+
+        # Clean up temporary input split files
+        for path_in in subset_files.values():
+            logger.info("Removing temporary file: %s", path_in)
+            path_in.unlink()
+
         # Save system monitor metrics
     except Exception:
         logger.exception("Unhandled exception during preprocessing")

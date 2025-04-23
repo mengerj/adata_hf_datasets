@@ -37,7 +37,7 @@ sra_chunk_size: null #number of samples to fetch from sra at once. This is to av
 instrument_key: null #key in adata.obs that contains the instrument information
 description_key: null
 # Filter certain low frequency categories
-categories:
+consolidation_categories:
   - null
 category_threshold: 10 # remove all categories that have less than the threshold
 

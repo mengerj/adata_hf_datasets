@@ -4,8 +4,8 @@ from anndata import AnnData
 from adata_hf_datasets.pp.utils import (
     ensure_log_norm,
     consolidate_low_frequency_categories,
+    check_enough_genes_per_batch,
 )
-import scipy.sparse as sp
 
 logger = logging.getLogger(__name__)
 
@@ -106,73 +106,3 @@ def pp_adata_general(
 
     logger.info("In-memory preprocessing complete.")
     return adata
-
-
-def check_enough_genes_per_batch(
-    adata: AnnData,
-    batch_key: str,
-    min_genes: int,
-    var_threshold: float = 1e-6,
-) -> None:
-    """
-    Check whether each batch has at least `min_genes` genes with variance > var_threshold.
-    If any batch doesn't meet this, raise a ValueError suggesting ways to fix the issue.
-
-    Parameters
-    ----------
-    adata : anndata.AnnData
-        The AnnData object. Must have `adata.obs[batch_key]`.
-    batch_key : str
-        Column in `adata.obs` used to identify batches.
-    min_genes : int
-        The requested number of HVGs (n_top_genes).
-        Each batch must have at least this many candidate genes.
-    var_threshold : float, optional
-        Minimal variance to consider a gene "non-negligible". Defaults to 1e-8.
-
-    Raises
-    ------
-    ValueError
-        If any batch has fewer than `min_genes` genes above the variance threshold.
-    """
-    if batch_key not in adata.obs.columns:
-        logger.warning(
-            f"batch_key='{batch_key}' not found in adata.obs. Skipping batch check."
-        )
-        return adata
-
-    cell_counts = adata.obs[batch_key].value_counts()
-    logger.info(
-        "Checking that each batch has at least %d genes with variance > %g ...",
-        min_genes,
-        var_threshold,
-    )
-
-    # For each batch, compute how many genes pass the variance threshold
-    for bval in cell_counts.index:
-        sub = adata[adata.obs[batch_key] == bval]
-        if sub.n_obs == 0:
-            continue  # no cells here; skip
-
-        X = sub.X.toarray() if sp.issparse(sub.X) else sub.X
-        variances = X.var(axis=0)
-        var_nonzero = (variances > var_threshold).sum()
-
-        if var_nonzero < min_genes:
-            msg = (
-                f"Batch '{bval}' has only {var_nonzero} genes with variance > {var_threshold}, "
-                f"which is fewer than the requested {min_genes}. "
-                "Scanpy will fail to select HVGs in this batch.\n"
-                "Removing this batch from the dataset."
-            )
-            logger.warning(msg)
-            # remove this batch from the dataset
-            adata = adata[adata.obs[batch_key] != bval]
-            adata.uns[f"batch_removal_warning_{bval}"] = msg
-        else:
-            logger.info(
-                "All batches have at least %d genes above variance threshold %g.",
-                min_genes,
-                var_threshold,
-            )
-        return adata

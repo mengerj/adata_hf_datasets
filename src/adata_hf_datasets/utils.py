@@ -3,6 +3,10 @@ import logging
 import anndata
 import numpy as np
 
+from anndata import AnnData
+
+from adata_hf_datasets.pp import maybe_add_sra_metadata
+from adata_hf_datasets.plotting import qc_evaluation_plots  # adjust import as needed
 from datetime import datetime
 import os
 from pathlib import Path
@@ -258,3 +262,64 @@ def _load_readme_template(readme_template_name) -> str:
         raise ValueError(
             f"Template {readme_template_name} not found in package resources"
         )
+
+
+def subset_sra_and_plot(
+    adata_bk: AnnData,
+    cfg,
+    run_dir: str,
+    subset_cells: int = 5000,
+) -> None:
+    """
+    1) Randomly sub‑sample up to `subset_cells` cells from a backed AnnData.
+    2) Materialize that slice in memory.
+    3) If SRA settings are provided, fetch & attach SRA metadata to the subset.
+    4) Run QC evaluation plots on the subset, saving into `run_dir/before`.
+
+    Parameters
+    ----------
+    adata_bk : AnnData
+        A backed AnnData (e.g. sc.read_h5ad(..., backed='r')).
+    cfg : any
+        Configuration with attributes:
+          - sra_chunk_size
+          - sra_extra_cols  (list of str)
+          - metrics_of_interest
+          - categories_of_interest
+    run_dir : str
+        Path to Hydra run directory where plots will be saved.
+    subset_cells : int
+        Maximum number of cells to sample.
+    """
+    # 1) Decide on a view
+    n_obs = adata_bk.n_obs
+    if n_obs > subset_cells:
+        idx = np.random.choice(n_obs, subset_cells, replace=False)
+        view = adata_bk[idx, :]  # this is still backed
+    else:
+        view = adata_bk  # small enough already
+
+    # 2) Materialize only that slice into memory
+    if getattr(view, "isbacked", False):
+        adata_sub = view.to_memory()
+        view.file.close()
+    else:
+        adata_sub = view.copy()
+
+    # 3) Optionally fetch SRA metadata on this small in‑memory object
+    if getattr(cfg, "sra_chunk_size", None) and getattr(cfg, "sra_extra_cols", None):
+        maybe_add_sra_metadata(
+            adata_sub,
+            chunk_size=cfg.sra_chunk_size,
+            new_cols=list(cfg.sra_extra_cols),
+        )
+
+    # 4) Run your QC plots on the small AnnData
+    out_dir = os.path.join(run_dir, "before")
+    qc_evaluation_plots(
+        adata_sub,
+        save_plots=True,
+        save_dir=out_dir,
+        metrics_of_interest=list(cfg.metrics_of_interest),
+        categories_of_interest=list(cfg.categories_of_interest),
+    )

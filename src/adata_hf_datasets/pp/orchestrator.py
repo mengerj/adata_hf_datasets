@@ -30,7 +30,7 @@ def preprocess_h5ad(
     remove_low_frequency: bool = True,
     geneformer_pp: bool = True,
     sra_chunk_size: int | None = None,
-    extra_sra_cols: list[str] | None = None,
+    sra_extra_cols: list[str] | None = None,
     instrument_key: str | None = None,
     description_key: str | None = None,
     bimodal_col: str | None = None,
@@ -74,7 +74,7 @@ def preprocess_h5ad(
         Whether to run the Geneformer step (default True).
     sra_chunk_size : int, optional
         If provided, chunk size for SRA metadata queries.
-    extra_sra_cols : list[str], optional
+    sra_extra_cols : list[str], optional
         Additional columns to fetch from SRA.
     instrument_key : str, optional
         Key in `.obs` holding instrument names.
@@ -96,20 +96,24 @@ def preprocess_h5ad(
             # Make sure X contains raw counts, and "counts" layer is set
             ensure_raw_counts_layer(adata, raw_layer_key=count_layer_key)
 
-        processed_splits = []
-        if split_bimodal and bimodal_col in adata.obs:
-            # log‐transform the covariate (use pandas or numpy, not sc.pp.log1p on a Series)
-            log_col = f"{bimodal_col}_log"
-            adata.obs[log_col] = np.log1p(adata.obs[bimodal_col].values)
-            adata_splits = split_if_bimodal(
-                adata, column_name=log_col, backed_path=None
-            )
-        else:
-            adata_splits = {"all": adata}
+            processed_splits = []
+            if split_bimodal and bimodal_col in adata.obs:
+                # log‐transform the covariate (use pandas or numpy, not sc.pp.log1p on a Series)
+                log_col = f"{bimodal_col}_log"
+                adata.obs[log_col] = np.log1p(adata.obs[bimodal_col].values)
+                adata_splits = split_if_bimodal(
+                    adata, column_name=log_col, backed_path=None
+                )
+            else:
+                adata_splits = {"all": adata}
 
             # Process each split (not training/val but based on bimodality)
             for _split_label, ad_sub in adata_splits.items():
                 # Process each chunk
+                if sra_chunk_size and sra_extra_cols:
+                    maybe_add_sra_metadata(
+                        ad_sub, chunk_size=sra_chunk_size, new_cols=sra_extra_cols
+                    )
                 ad_sub = pp_quality_control(ad_sub)
                 ad_sub = pp_adata_general(
                     ad_sub,
@@ -123,10 +127,6 @@ def preprocess_h5ad(
                 )
                 if geneformer_pp:
                     ad_sub = pp_adata_geneformer(ad_sub)
-                if sra_chunk_size and extra_sra_cols:
-                    maybe_add_sra_metadata(
-                        ad_sub, chunk_size=sra_chunk_size, new_cols=extra_sra_cols
-                    )
                 if instrument_key and description_key:
                     prepend_instrument_to_description(
                         ad_sub,
