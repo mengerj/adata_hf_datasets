@@ -36,6 +36,7 @@ def preprocess_h5ad(
     description_key: str | None = None,
     bimodal_col: str | None = None,
     split_bimodal: bool = False,
+    extra_log_col: str | None = None,
 ) -> None:
     """
     Preprocess a large .h5ad file in chunks and write a concatenated output.
@@ -81,6 +82,10 @@ def preprocess_h5ad(
         Key in `.obs` holding instrument names.
     description_key : str, optional
         Key in `.obs` holding sample descriptions.
+    bimodal_col : str, optional
+        Column in `.obs` for bimodal splitting.
+    split_bimodal : bool, optional
+        If True, splits the data into two bimodal distributions.
 
     References
     ----------
@@ -112,7 +117,7 @@ def preprocess_h5ad(
             for _split_label, ad_sub in adata_splits.items():
                 # Process each chunk
                 if sra_chunk_size and sra_extra_cols:
-                    maybe_add_sra_metadata(
+                    ad_sub = maybe_add_sra_metadata(
                         ad_sub, chunk_size=sra_chunk_size, new_cols=sra_extra_cols
                     )
                 ad_sub = pp_quality_control(ad_sub)

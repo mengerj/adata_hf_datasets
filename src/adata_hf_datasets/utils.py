@@ -312,7 +312,7 @@ def subset_sra_and_plot(
         )
     # 3) Optionally fetch SRA metadata on this small in‑memory object
     if getattr(cfg, "sra_chunk_size", None) and getattr(cfg, "sra_extra_cols", None):
-        maybe_add_sra_metadata(
+        adata_sub = maybe_add_sra_metadata(
             adata_sub,
             chunk_size=cfg.sra_chunk_size,
             new_cols=list(cfg.sra_extra_cols),

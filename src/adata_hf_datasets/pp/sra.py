@@ -53,6 +53,7 @@ def maybe_add_sra_metadata(
         )
     else:
         logger.info("Data does not appear to be from SRA. Skipping metadata fetching.")
+    return adata
 
 
 def filter_invalid_sra_ids(
