@@ -11,6 +11,7 @@ from .loader import BatchChunkLoader
 from anndata.experimental import concat_on_disk
 import numpy as np
 from anndata import concat
+import pandas as pd
 
 logger = logging.getLogger(__name__)
 
@@ -137,12 +138,38 @@ def preprocess_h5ad(
 
             # 3) Re‐concatenate splits back into a single AnnData
             #    This merges obs and var, stacking the cells back together.
-            adata_merged = concat(
-                processed_splits,
-                join="outer",
-                label="bimodal_split",  # adds an .obs['bimodal_split'] column if you like
-                fill_value=0,  # or np.nan, depending on your semantics
-            )
+            if len(processed_splits) > 1:
+                # First collect all var attributes from all splits
+                var_attrs = {}
+                for split in processed_splits:
+                    for attr_name in split.var.keys():
+                        if attr_name not in var_attrs:
+                            var_attrs[attr_name] = {}
+                        for gene in split.var_names:
+                            if gene in split.var[attr_name]:
+                                var_attrs[attr_name][gene] = split.var[attr_name][gene]
+
+                # Now concatenate as usual but with minimal merge
+                adata_merged = concat(
+                    processed_splits,
+                    join="outer",  # outer join on vars to keep all genes
+                    label="bimodal_split",  # adds an .obs['bimodal_split'] column if you like
+                    fill_value=0,  # fill missing values with 0
+                    merge=None,  # don't try to merge var attributes automatically
+                )
+
+                # Manually add back the var attributes
+                for attr_name, attr_dict in var_attrs.items():
+                    # Create a Series with the right index
+                    adata_merged.var[attr_name] = pd.Series(
+                        {
+                            gene: attr_dict.get(gene, None)
+                            for gene in adata_merged.var_names
+                        }
+                    )
+            else:
+                adata_merged = processed_splits[0]
+
             chunk_path = chunk_dir / f"chunk_{i}.h5ad"
             adata_merged.write_h5ad(chunk_path)
             chunks.append(chunk_path)
