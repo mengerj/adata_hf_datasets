@@ -305,7 +305,11 @@ def subset_sra_and_plot(
         view.file.close()
     else:
         adata_sub = view.copy()
-
+    if cfg.split_bimodal and cfg.bimodal_col:
+        # still log transform the bimodal column so it can be used for plotting
+        adata_sub.obs[f"{cfg.bimodal_col}_log"] = np.log1p(
+            adata_sub.obs[cfg.bimodal_col]
+        )
     # 3) Optionally fetch SRA metadata on this small in‑memory object
     if getattr(cfg, "sra_chunk_size", None) and getattr(cfg, "sra_extra_cols", None):
         maybe_add_sra_metadata(

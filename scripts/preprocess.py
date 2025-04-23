@@ -13,6 +13,7 @@ from hydra.core.hydra_config import HydraConfig
 import adata_hf_datasets.pp as pp
 from adata_hf_datasets.plotting import qc_evaluation_plots
 from adata_hf_datasets.sys_monitor import SystemMonitor
+from adata_hf_datasets.utils import subset_sra_and_plot
 
 logger = logging.getLogger(__name__)
 
@@ -77,7 +78,7 @@ def main(cfg: DictConfig):
         # read in normal backed mode
         ad_bk = sc.read_h5ad(infile, backed="r")
         # Plot some quality control plots prior to processing. Potentially add sra columns first
-        # subset_sra_and_plot(adata_bk = ad_bk, cfg = cfg, run_dir = run_dir + "/before")
+        subset_sra_and_plot(adata_bk=ad_bk, cfg=cfg, run_dir=run_dir + "/before")
 
         # 3) Decide split function
         split_fn = (
