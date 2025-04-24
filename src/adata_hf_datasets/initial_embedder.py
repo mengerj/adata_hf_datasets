@@ -16,7 +16,7 @@ import os
 import tempfile
 import psutil
 import scanpy as sc
-from anndata.experimental import AnnLoader
+from adata_hf_datasets.pp.loader import BatchChunkLoader
 import scipy.sparse as sp
 import numpy as np
 from appdirs import user_cache_dir
@@ -1078,6 +1078,7 @@ class InitialEmbedder:
         self,
         adata_path: str,
         obsm_key: str | None = None,
+        batch_key: str = "batch",
         output_path: str | None = None,
         chunk_size: int = 50000,
         **embed_kwargs,
@@ -1108,7 +1109,10 @@ class InitialEmbedder:
         if not self.requires_mem_adata:
             try:
                 adata_emb = self.embedder.embed(
-                    adata_path=adata_path, obsm_key=obsm_key, **embed_kwargs
+                    adata_path=adata_path,
+                    obsm_key=obsm_key,
+                    batch_key=batch_key,
+                    **embed_kwargs,
                 )
                 # After embedding, we can safely write:
                 adata_emb.write_h5ad(output_path)
@@ -1124,8 +1128,9 @@ class InitialEmbedder:
 
         # Otherwise, chunk-based approach for large memory or SCVI-like methods:
         logger.info("Using chunk-based approach for method '%s'.", self.method)
-        adata = sc.read(adata_path, backed="r")
-        loader = AnnLoader(adatas=adata, batch_size=chunk_size)
+        loader = BatchChunkLoader(
+            path=adata_path, chunk_size=chunk_size, batch_key=batch_key
+        )
         output_path = Path(output_path)
         chunk_dir = output_path.parent / f"{output_path.stem}_chunks"
         chunk_dir.mkdir(parents=True, exist_ok=True)
@@ -1139,12 +1144,13 @@ class InitialEmbedder:
                     chunk.n_obs,
                     chunk.n_vars,
                 )
-                chunk_in_memory = chunk.to_adata()
+                chunk_in_memory = chunk.to_memory()
                 # Embed the chunk
                 chunk_adata = self.embedder.embed(
                     adata_path=None,
                     adata=chunk_in_memory,
                     obsm_key=obsm_key,
+                    batch_key=batch_key,
                     **embed_kwargs,
                 )
 
