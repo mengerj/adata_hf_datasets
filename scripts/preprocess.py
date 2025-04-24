@@ -72,22 +72,24 @@ def main(cfg: DictConfig):
 
     try:
         # 2) Read in backed mode
-        ad_bk = sc.read_h5ad(infile, backed="r")
+        ad_bk_og = sc.read_h5ad(infile, backed="r")
 
         # Create a copy with sample_index added if needed
-        if "sample_index" not in ad_bk.obs:
-            logger.info("Adding sample_index to obs (0…%d)", ad_bk.n_obs - 1)
+        if "sample_index" not in ad_bk_og.obs:
+            logger.info("Adding sample_index to obs (0…%d)", ad_bk_og.n_obs - 1)
             # Add sample_index to the copy
-            ad_bk.obs["sample_index"] = np.arange(ad_bk.n_obs)
+            ad_bk_og.obs["sample_index"] = np.arange(ad_bk_og.n_obs)
 
             # Write the modified version to a temporary file
             logger.info(f"Writing temporary file with sample_index to {temp_infile}")
-            ad_bk.write_h5ad(temp_infile)
+            ad_bk_og.write_h5ad(temp_infile)
 
             # Use the temporary file for further processing
             infile = temp_infile
-            ad_bk.file.close()
+            ad_bk_og.file.close()
             ad_bk = sc.read_h5ad(infile, backed="r")
+        else:
+            ad_bk = ad_bk_og
 
         # Plot some quality control plots prior to processing.
         subset_sra_and_plot(adata_bk=ad_bk, cfg=cfg, run_dir=run_dir + "/before")
@@ -125,6 +127,7 @@ def main(cfg: DictConfig):
             # view.obs still has sample_index from earlier
             ad_view.write_h5ad(out_path)
             ad_view.file.close()
+            del ad_view
             return out_path
 
         # 4) Write each subset to its own input file
