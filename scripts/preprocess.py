@@ -71,8 +71,8 @@ def main(cfg: DictConfig):
     temp_infile = out_dir / f"{input_stem}_temp_input.h5ad"
 
     try:
-        # 2) Read in backed mode
-        ad_bk_og = sc.read_h5ad(infile, backed="r")
+        # 2) Read in backed mode + for mode to add sample_index
+        ad_bk_og = sc.read_h5ad(infile, backed="r+")
 
         # Create a copy with sample_index added if needed
         if "sample_index" not in ad_bk_og.obs:
@@ -86,10 +86,8 @@ def main(cfg: DictConfig):
 
             # Use the temporary file for further processing
             infile = temp_infile
-            ad_bk_og.file.close()
-            ad_bk = sc.read_h5ad(infile, backed="r")
-        else:
-            ad_bk = ad_bk_og
+        ad_bk_og.file.close()
+        ad_bk = sc.read_h5ad(infile, backed="r")
 
         # Plot some quality control plots prior to processing.
         subset_sra_and_plot(adata_bk=ad_bk, cfg=cfg, run_dir=run_dir + "/before")
