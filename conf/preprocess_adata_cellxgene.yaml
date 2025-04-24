@@ -1,6 +1,7 @@
 # conf/preprocess_adata.yaml
 defaults:
   - preprocess_adata_default.yaml
+  - _self_
 # Input file path
 input_file: "data/RNA/raw/train/cellxgene_pseudo_bulk_35k.h5ad"
 
@@ -8,7 +9,7 @@ input_file: "data/RNA/raw/train/cellxgene_pseudo_bulk_35k.h5ad"
 output_dir: "data/RNA/processed/train"
 overwrite: true
 #pp is done in chunks to avoid memory issues. This is the chunk size.
-chunk_size: 10000
+chunk_size: 5000
 # Train/validation split configuration
 # If false, the script will NOT split into train/val but instead
 # output a single 'all.h5ad' file. This can be used for test data.

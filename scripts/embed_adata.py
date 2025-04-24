@@ -51,6 +51,7 @@ def main(cfg: DictConfig):
     try:
         for input_file in cfg.input_files:
             input_file = Path(input_file)
+            logger.info(f"Processing input file: {input_file}")
             if not input_file.is_file():
                 raise FileNotFoundError(f"Input file not found: {input_file}")
 

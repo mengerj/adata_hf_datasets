@@ -185,6 +185,8 @@ def main(cfg: DictConfig):
         logger.exception("Unhandled exception during preprocessing")
         raise  # optional: re-raise if you want Hydra/SLURM to register job as failed
     finally:
+        ad_bk_og.file.close()
+        ad_bk.file.close()
         monitor.stop()
         monitor.print_summary()
         monitor.save(run_dir)
