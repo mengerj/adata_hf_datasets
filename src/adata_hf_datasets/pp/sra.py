@@ -4,6 +4,8 @@ import re
 from pysradb import SRAweb
 from anndata import AnnData
 from tqdm import tqdm
+import time
+import random
 from adata_hf_datasets.pp.utils import deduplicate_samples_by_id
 
 logger = logging.getLogger(__name__)
@@ -16,6 +18,9 @@ def maybe_add_sra_metadata(
     sra_key: str = "sample_accession",
     exp_id_key: str = "experiment_accession",
     chunk_size: int = 10000,
+    skip_sra_fetch: bool = False,
+    max_retries: int = 3,
+    continue_on_fail: bool = False,
 ):
     """
     Check if the data is from SRA and fetch metadata if so.
@@ -39,18 +44,45 @@ def maybe_add_sra_metadata(
         Has to be present in adata.obs and contain SRX IDs. Will be used to merge with the SRA metadata.
     chunk_size : int, optional
         Number of unique IDs to process per chunk. Defaults to 10000.
+    skip_sra_fetch : bool, optional
+        If True, skip fetching SRA metadata altogether. Useful for debugging or when SRA is down.
+    max_retries : int, optional
+        Maximum number of retries when connecting to SRA database. Defaults to 3.
+    continue_on_fail : bool, optional
+        If True, continue processing even if SRA fetching fails. Will add placeholder values instead.
     """
+    if skip_sra_fetch:
+        logger.info("Skipping SRA metadata fetching as requested.")
+        return adata
+
     adata.obs[exp_id_key] = adata.obs.index
     # will be false if no srx ids are found
     if filter_invalid_sra_ids(adata, srx_column=exp_id_key, srs_column=sample_id_key):
-        adata = fetch_sra_metadata(
-            adata,
-            sample_id_key=sample_id_key,
-            sra_key=sra_key,
-            exp_id_key=exp_id_key,
-            new_cols=new_cols,
-            chunk_size=chunk_size,
-        )
+        try:
+            adata = fetch_sra_metadata(
+                adata,
+                sample_id_key=sample_id_key,
+                sra_key=sra_key,
+                exp_id_key=exp_id_key,
+                new_cols=new_cols,
+                chunk_size=chunk_size,
+                max_retries=max_retries,
+            )
+        except Exception as e:
+            logger.error("Error fetching SRA metadata: %s", e)
+            if continue_on_fail:
+                logger.warning(
+                    "Continuing without SRA metadata as continue_on_fail=True"
+                )
+                # Add placeholder values for the requested columns
+                fallback = "unknown_sra_unavailable"
+                if isinstance(new_cols, str):
+                    adata.obs[new_cols] = fallback
+                else:
+                    for col in new_cols:
+                        adata.obs[col] = fallback
+            else:
+                raise
     else:
         logger.info("Data does not appear to be from SRA. Skipping metadata fetching.")
     return adata
@@ -136,7 +168,7 @@ def filter_invalid_sra_ids(
         try:
             mask_srx = _check_and_filter(srx_column, r"^SRX\d+$")
             final_mask &= mask_srx
-        except ValueError or KeyError as e:
+        except (ValueError, KeyError) as e:
             logger.error("Error checking SRX IDs: %s", e)
             return False
 
@@ -145,7 +177,7 @@ def filter_invalid_sra_ids(
         try:
             mask_srs = _check_and_filter(srs_column, r"^SRS\d+$")
             final_mask &= mask_srs
-        except ValueError or KeyError as e:
+        except (ValueError, KeyError) as e:
             logger.error("Error checking SRS IDs: %s", e)
             return False
     # if all are true, dont subset.
@@ -169,6 +201,7 @@ def fetch_sra_metadata(
     ],
     fallback: str = "unknown",
     chunk_size: int = 10000,
+    max_retries: int = 3,
 ) -> None:
     """
     Fetch various metadata fields (e.g., 'library_layout', 'library_source', 'instrument_model')
@@ -200,6 +233,8 @@ def fetch_sra_metadata(
         Value to use if a column is missing or if some IDs are not found. Defaults to "unknown".
     chunk_size : int, optional
         Number of unique IDs to process per chunk. Defaults to 10000.
+    max_retries : int, optional
+        Maximum number of retries when connecting to SRA database. Defaults to 3.
 
     Returns
     -------
@@ -249,15 +284,37 @@ def fetch_sra_metadata(
     )
 
     df_list = []
-    for chunk in tqdm(chunks, desc="Processing Chunks"):
-        try:
-            df_chunk = db.sra_metadata(chunk)
-            if df_chunk is not None and not df_chunk.empty:
-                df_list.append(df_chunk)
-        except Exception as e:
-            logger.error("Failed to fetch metadata for chunk: %s", e)
-            # Optionally, you can raise here or continue to process the others.
-            raise ValueError(f"Failed to fetch metadata for a chunk: {e}")
+    for chunk_idx, chunk in enumerate(tqdm(chunks, desc="Processing Chunks")):
+        retry_count = 0
+        while retry_count < max_retries:
+            try:
+                logger.info(
+                    f"Processing chunk {chunk_idx + 1}/{len(chunks)}, attempt {retry_count + 1}/{max_retries}"
+                )
+                df_chunk = db.sra_metadata(chunk)
+                if df_chunk is not None and not df_chunk.empty:
+                    df_list.append(df_chunk)
+                    break  # Success, exit retry loop
+                else:
+                    logger.warning(
+                        f"Empty results for chunk {chunk_idx + 1}, retrying..."
+                    )
+            except Exception as e:
+                retry_count += 1
+                if retry_count >= max_retries:
+                    logger.error(
+                        f"Failed to fetch metadata for chunk {chunk_idx + 1} after {max_retries} attempts: {e}"
+                    )
+                    raise ValueError(
+                        f"Failed to fetch metadata for chunk {chunk_idx + 1}: {e}"
+                    )
+                else:
+                    # Exponential backoff with jitter for retries
+                    wait_time = (2**retry_count) + random.uniform(0, 1)
+                    logger.warning(
+                        f"Attempt {retry_count}/{max_retries} failed. Retrying in {wait_time:.2f} seconds..."
+                    )
+                    time.sleep(wait_time)
 
     if df_list:
         df_all = pd.concat(df_list, ignore_index=True)
