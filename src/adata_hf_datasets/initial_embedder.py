@@ -7,6 +7,7 @@ from adata_hf_datasets.pp.utils import (
     ensure_log_norm,
     is_data_scaled,
     check_enough_genes_per_batch,
+    consolidate_low_frequency_categories
 )
 from adata_hf_datasets.pp.pybiomart_utils import add_ensembl_ids, ensure_ensembl_index
 from scvi.hub import HubModel
@@ -129,8 +130,22 @@ class HighlyVariableGenesEmbedder(BaseEmbedder):
         """
         logger.info("Selecting top %d highly variable genes.", self.embedding_dim)
 
+        # Convert to dense for checking
+        if sp.issparse(adata.X):
+            X_arr = adata.X.toarray()
+        else:
+            X_arr = adata.X
+        # Find genes (columns) with any infinite values
+        finite_mask = np.isfinite(X_arr).all(axis=0)
+        n_bad = np.count_nonzero(~finite_mask)
+        if n_bad > 0:
+            logger.warning(
+                "Dropping %d genes that contain infinite values before HVG.", n_bad
+            )
+            adata = adata[:, finite_mask].copy()
         # Check if enough valid genes are present in each batch
         if batch_key is not None:
+            consolidate_low_frequency_categories(adata, columns = [batch_key], threshold = 3, remove = False)
             check_enough_genes_per_batch(adata, batch_key, self.embedding_dim)
         # remove cells with infinity values
         sc.pp.highly_variable_genes(
