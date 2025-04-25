@@ -24,51 +24,65 @@ def add_sample_index_to_h5ad(
     temp_out: Union[str, Path],
 ) -> Path:
     """
-    Copy an .h5ad on disk and inject a 'sample_index' obs column
+    Copy an .h5ad on disk and inject a `sample_index` obs column
     without ever loading the full AnnData into memory.
 
     Parameters
     ----------
-    infile
-        Path to the original .h5ad file (e.g. a Scanpy pbmc3k demo file;
-        see https://scanpy.readthedocs.io/ for data sources).
-    temp_out
-        Path to write the modified copy (will be created/clobbered).
+    infile : Union[str, Path]
+        Path to the original .h5ad (e.g. the pbmc3k demo from
+        https://scanpy.readthedocs.io/).
+    temp_out : Union[str, Path]
+        Path where the modified copy will be written.
 
     Returns
     -------
     Path
-        The path to the file (temp_out) that now contains a
-        /obs/sample_index dataset.
+        The path to `temp_out`, now containing `/obs/sample_index`.
 
     Notes
     -----
-    - Uses a fast file‐level copy (shutil.copyfile), so your giant X never
-      gets pulled into Python RAM.
-    - Disables HDF5’s POSIX locking via HDF5_USE_FILE_LOCKING=FALSE to avoid
-      “Errno 11” on NFS/lustre.
-    - The new dataset is chunked and gzip‐compressed so Scanpy’s backed mode
-      can still page it efficiently.
+    - Uses `shutil.copyfile`, so your big `X` matrix never touches RAM.
+    - Sets `HDF5_USE_FILE_LOCKING=FALSE` to sidestep locking errors on
+      NFS/Lustre mounts.
+    - Handles both sparse (group + attrs) and dense (dataset) `X` layouts.
+    - Writes `sample_index` as a chunked, gzip‐compressed int64 dataset
+      so you can continue to use Scanpy’s backed mode.
     """
 
-    logger = logging.getLogger(__name__)
+    # avoid POSIX locking
     os.environ["HDF5_USE_FILE_LOCKING"] = "FALSE"
 
     infile = Path(infile)
     temp_out = Path(temp_out)
-    logger.info(f"Copying {infile} → {temp_out} (no data in RAM)...")
+
+    logger.info(f"Copying {infile} → {temp_out} (no RAM usage for X)")
     shutil.copyfile(str(infile), str(temp_out))
 
-    logger.info("Opening copy with h5py to add sample_index")
+    logger.info("Opening copy with h5py to detect n_obs")
     with h5py.File(str(temp_out), "r+") as f:
-        # Determine number of cells—and never load X into RAM!
-        n_obs = f["X"].shape[0]
-        logger.info(f"Detected {n_obs} observations")
+        x_obj = f["X"]
+        # sparse case: Group
+        if isinstance(x_obj, h5py.Group):
+            if "shape" in x_obj:
+                raw_shape = x_obj["shape"][...]
+            else:
+                raw_shape = x_obj.attrs.get("shape")
+                if raw_shape is None:
+                    raise RuntimeError(
+                        "Cannot determine X shape: neither 'shape' dataset nor attr found"
+                    )
+            n_obs = int(raw_shape[0])
+        # dense case: Dataset
+        else:
+            n_obs = x_obj.shape[0]
+        logger.info(f"Detected n_obs = {n_obs}")
 
         obs_grp = f["obs"]
         if "sample_index" in obs_grp:
-            logger.info("sample_index already present; skipping creation")
+            logger.info("`sample_index` already exists, skipping")
         else:
+            logger.info("Creating `obs/sample_index` dataset")
             obs_grp.create_dataset(
                 "sample_index",
                 data=np.arange(n_obs, dtype=np.int64),
@@ -76,7 +90,7 @@ def add_sample_index_to_h5ad(
                 compression="gzip",
                 dtype=np.int64,
             )
-            logger.info("Created /obs/sample_index dataset")
+            logger.info("Done injecting sample_index")
 
     return temp_out
 

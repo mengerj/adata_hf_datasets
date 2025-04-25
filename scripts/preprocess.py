@@ -40,7 +40,7 @@ def import_callable(ref: str):
 
 
 @hydra.main(
-    version_base=None, config_path="../conf", config_name="preprocess_adata_test"
+    version_base=None, config_path="../conf", config_name="preprocess_adata_geo"
 )
 def main(cfg: DictConfig):
     """
@@ -101,7 +101,6 @@ def main(cfg: DictConfig):
 
         # Close the backed file; we'll re-open for each slice
         ad_bk.file.close()
-        del ad_bk
 
         # Helper: write a slice of the backed file to disk without to_adata()
         def write_subset(indices: list[int], name: str) -> Path:
