@@ -32,6 +32,9 @@ def preprocess_h5ad(
     geneformer_pp: bool = True,
     sra_chunk_size: int | None = None,
     sra_extra_cols: list[str] | None = None,
+    skip_sra_fetch: bool = False,
+    sra_max_retries: int = 3,
+    sra_continue_on_fail: bool = False,
     instrument_key: str | None = None,
     description_key: str | None = None,
     bimodal_col: str | None = None,
@@ -78,6 +81,12 @@ def preprocess_h5ad(
         If provided, chunk size for SRA metadata queries.
     sra_extra_cols : list[str], optional
         Additional columns to fetch from SRA.
+    skip_sra_fetch : bool, optional
+        If True, skip fetching SRA metadata altogether.
+    sra_max_retries : int, optional
+        Maximum number of retries for SRA connections.
+    sra_continue_on_fail : bool, optional
+        If True, continue processing even if SRA fetching fails.
     instrument_key : str, optional
         Key in `.obs` holding instrument names.
     description_key : str, optional
@@ -118,7 +127,12 @@ def preprocess_h5ad(
                 # Process each chunk
                 if sra_chunk_size and sra_extra_cols:
                     ad_sub = maybe_add_sra_metadata(
-                        ad_sub, chunk_size=sra_chunk_size, new_cols=sra_extra_cols
+                        ad_sub,
+                        chunk_size=sra_chunk_size,
+                        new_cols=sra_extra_cols,
+                        skip_sra_fetch=skip_sra_fetch,
+                        max_retries=sra_max_retries,
+                        continue_on_fail=sra_continue_on_fail,
                     )
                 ad_sub = pp_quality_control(ad_sub)
                 ad_sub = pp_adata_general(
