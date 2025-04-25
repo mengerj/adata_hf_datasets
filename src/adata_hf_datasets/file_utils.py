@@ -9,13 +9,76 @@ import json
 import anndata as ad
 import pandas as pd
 import numpy as np
-from typing import Optional
+from typing import Optional, Union
 import tempfile
 from pathlib import Path
 import random
 import anndata
+import shutil
 
 logger = logging.getLogger(__name__)
+
+
+def add_sample_index_to_h5ad(
+    infile: Union[str, Path],
+    temp_out: Union[str, Path],
+) -> Path:
+    """
+    Copy an .h5ad on disk and inject a 'sample_index' obs column
+    without ever loading the full AnnData into memory.
+
+    Parameters
+    ----------
+    infile
+        Path to the original .h5ad file (e.g. a Scanpy pbmc3k demo file;
+        see https://scanpy.readthedocs.io/ for data sources).
+    temp_out
+        Path to write the modified copy (will be created/clobbered).
+
+    Returns
+    -------
+    Path
+        The path to the file (temp_out) that now contains a
+        /obs/sample_index dataset.
+
+    Notes
+    -----
+    - Uses a fast file‐level copy (shutil.copyfile), so your giant X never
+      gets pulled into Python RAM.
+    - Disables HDF5’s POSIX locking via HDF5_USE_FILE_LOCKING=FALSE to avoid
+      “Errno 11” on NFS/lustre.
+    - The new dataset is chunked and gzip‐compressed so Scanpy’s backed mode
+      can still page it efficiently.
+    """
+
+    logger = logging.getLogger(__name__)
+    os.environ["HDF5_USE_FILE_LOCKING"] = "FALSE"
+
+    infile = Path(infile)
+    temp_out = Path(temp_out)
+    logger.info(f"Copying {infile} → {temp_out} (no data in RAM)...")
+    shutil.copyfile(str(infile), str(temp_out))
+
+    logger.info("Opening copy with h5py to add sample_index")
+    with h5py.File(str(temp_out), "r+") as f:
+        # Determine number of cells—and never load X into RAM!
+        n_obs = f["X"].shape[0]
+        logger.info(f"Detected {n_obs} observations")
+
+        obs_grp = f["obs"]
+        if "sample_index" in obs_grp:
+            logger.info("sample_index already present; skipping creation")
+        else:
+            obs_grp.create_dataset(
+                "sample_index",
+                data=np.arange(n_obs, dtype=np.int64),
+                chunks=True,
+                compression="gzip",
+                dtype=np.int64,
+            )
+            logger.info("Created /obs/sample_index dataset")
+
+    return temp_out
 
 
 def load_adata_from_hf_dataset(

@@ -14,6 +14,7 @@ import adata_hf_datasets.pp as pp
 from adata_hf_datasets.plotting import qc_evaluation_plots
 from adata_hf_datasets.sys_monitor import SystemMonitor
 from adata_hf_datasets.utils import subset_sra_and_plot
+from adata_hf_datasets.file_utils import add_sample_index_to_h5ad
 
 logger = logging.getLogger(__name__)
 
@@ -67,26 +68,12 @@ def main(cfg: DictConfig):
     monitor.daemon = True  # to terminate the thread when the main thread exits
     monitor.start()
 
-    # Create a temporary file path for the modified input
-    temp_infile = out_dir / f"{input_stem}_temp_input.h5ad"
-
     try:
-        # 2) Read in backed mode + for mode to add sample_index
-        ad_bk_og = sc.read_h5ad(infile, backed="r+")
+        # Add a sample index without loading the whole object into memory
+        temp_infile = add_sample_index_to_h5ad(
+            infile=infile, temp_out=out_dir / f"{input_stem}_temp_input.h5ad"
+        )
 
-        # Create a copy with sample_index added if needed
-        if "sample_index" not in ad_bk_og.obs:
-            logger.info("Adding sample_index to obs (0…%d)", ad_bk_og.n_obs - 1)
-            # Add sample_index to the copy
-            ad_bk_og.obs["sample_index"] = np.arange(ad_bk_og.n_obs)
-
-            # Write the modified version to a temporary file
-            logger.info(f"Writing temporary file with sample_index to {temp_infile}")
-            ad_bk_og.write_h5ad(temp_infile)
-
-            # Use the temporary file for further processing
-            infile = temp_infile
-        ad_bk_og.file.close()
         ad_bk = sc.read_h5ad(infile, backed="r")
 
         # Plot some quality control plots prior to processing.
@@ -114,6 +101,7 @@ def main(cfg: DictConfig):
 
         # Close the backed file; we'll re-open for each slice
         ad_bk.file.close()
+        del ad_bk
 
         # Helper: write a slice of the backed file to disk without to_adata()
         def write_subset(indices: list[int], name: str) -> Path:
@@ -152,6 +140,9 @@ def main(cfg: DictConfig):
                 geneformer_pp=bool(cfg.geneformer_pp),
                 sra_chunk_size=cfg.get("sra_chunk_size", None),
                 sra_extra_cols=cfg.get("sra_extra_cols", None),
+                skip_sra_fetch=cfg.get("skip_sra_fetch", False),
+                sra_max_retries=cfg.get("sra_max_retries", 3),
+                sra_continue_on_fail=cfg.get("sra_continue_on_fail", False),
                 instrument_key=cfg.get("instrument_key", None),
                 description_key=cfg.get("description_key", None),
                 bimodal_col=cfg.get("bimodal_col", None),
@@ -185,7 +176,6 @@ def main(cfg: DictConfig):
         logger.exception("Unhandled exception during preprocessing")
         raise  # optional: re-raise if you want Hydra/SLURM to register job as failed
     finally:
-        ad_bk_og.file.close()
         ad_bk.file.close()
         monitor.stop()
         monitor.print_summary()

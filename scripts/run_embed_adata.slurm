@@ -15,8 +15,8 @@ batch_size=32
 #    "data/RNA/processed/train/cellxgene_pseudo_bulk_350k/all_train.h5ad"
 #    "data/RNA/processed/train/cellxgene_pseudo_bulk_350k/all_val.h5ad"
 #)
-input_files='["data/RNA/processed/train/cellxgene_pseudo_bulk_35k/train.h5ad","data/RNA/processed/train/cellxgene_pseudo_bulk_35k/val.h5ad"]'
-#input_files='["data/RNA/processed/test/immgen/all_all.h5ad"]'
+#input_files='["data/RNA/processed/train/cellxgene_pseudo_bulk_35k/train.h5ad","data/RNA/processed/train/cellxgene_pseudo_bulk_35k/val.h5ad"]'
+input_files='["data/RNA/processed/test/tabula_sapiens_bone_marrow/all.h5ad"]'
 
 # Create a custom output directory name with date and SLURM job ID
 CUSTOM_DIR="outputs/$(date +%Y-%m-%d)/${SLURM_JOB_ID}"
