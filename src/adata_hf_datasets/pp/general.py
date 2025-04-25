@@ -1,6 +1,8 @@
 import logging
 import scanpy as sc
 from anndata import AnnData
+import numpy as np
+import scipy.sparse as sp
 from adata_hf_datasets.pp.utils import (
     ensure_log_norm,
     consolidate_low_frequency_categories,
@@ -91,6 +93,19 @@ def pp_adata_general(
 
     # 4) Normalize and log-transform (in place)
     ensure_log_norm(adata)
+    # Convert to dense for checking
+    if sp.issparse(adata.X):
+        X_arr = adata.X.toarray()
+    else:
+        X_arr = adata.X
+    # Find genes (columns) with any infinite values
+    finite_mask = np.isfinite(X_arr).all(axis=0)
+    n_bad = np.count_nonzero(~finite_mask)
+    if n_bad > 0:
+        logger.warning(
+            "Dropping %d genes that contain infinite values before HVG.", n_bad
+        )
+        adata = adata[:, finite_mask].copy()
     if batch_key in adata.obs.columns:
         # check if each batch has at least 1000 variable genes
         adata = check_enough_genes_per_batch(
