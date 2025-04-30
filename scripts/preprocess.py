@@ -5,6 +5,7 @@ import importlib
 import numpy as np
 import scanpy as sc
 from anndata import AnnData
+import anndata
 import sys
 import hydra
 from omegaconf import DictConfig
@@ -40,7 +41,7 @@ def import_callable(ref: str):
 
 
 @hydra.main(
-    version_base=None, config_path="../conf", config_name="preprocess_adata_geo"
+    version_base=None, config_path="../conf", config_name="preprocess_adata_cellxgene"
 )
 def main(cfg: DictConfig):
     """
@@ -108,7 +109,7 @@ def main(cfg: DictConfig):
             logger.info(
                 "Writing subset '%s' with %d cells to %s", name, len(indices), out_path
             )
-            ad_view = sc.read_h5ad(str(infile), backed="r")[indices]
+            ad_view = anndata.read_h5ad(str(infile), backed="r")[indices]
             # view.obs still has sample_index from earlier
             ad_view.write_h5ad(out_path)
             ad_view.file.close()
