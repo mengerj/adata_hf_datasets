@@ -121,11 +121,10 @@ def main(cfg: DictConfig):
 
         # 5) Now preprocess each subset on disk via your chunked pipeline
         for name, path_in in subset_files.items():
-            path_out = out_dir / f"{name}.h5ad"
-            logger.info("Preprocessing %s → %s", path_in, path_out)
+            logger.info("Preprocessing %s → %s", path_in, out_dir)
             pp.preprocess_h5ad(
                 path_in,
-                path_out,
+                out_dir,
                 chunk_size=int(cfg.chunk_size),
                 min_cells=int(cfg.min_cells),
                 min_genes=int(cfg.min_genes),
@@ -148,7 +147,7 @@ def main(cfg: DictConfig):
                 bimodal_col=cfg.get("bimodal_col", None),
                 split_bimodal=bool(cfg.get("split_bimodal", False)),
             )
-            ad_bk = sc.read_h5ad(str(path_out), backed="r")
+            ad_bk = sc.read_h5ad(out_dir / "chunk_0", backed="r")
             # Plot some quality control plots after processing
             qc_evaluation_plots(
                 ad_bk,

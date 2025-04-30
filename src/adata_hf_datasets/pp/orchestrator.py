@@ -8,7 +8,6 @@ from .utils import ensure_raw_counts_layer, prepend_instrument_to_description
 from .bimodal import split_if_bimodal
 from .sra import maybe_add_sra_metadata
 from .loader import BatchChunkLoader
-from anndata.experimental import concat_on_disk
 import numpy as np
 from anndata import concat
 import pandas as pd
@@ -18,7 +17,7 @@ logger = logging.getLogger(__name__)
 
 def preprocess_h5ad(
     infile: Path,
-    outfile: Path,
+    outdir: Path,
     *,
     chunk_size: int = 1_000,
     min_cells: int = 10,
@@ -39,7 +38,6 @@ def preprocess_h5ad(
     description_key: str | None = None,
     bimodal_col: str | None = None,
     split_bimodal: bool = False,
-    extra_log_col: str | None = None,
 ) -> None:
     """
     Preprocess a large .h5ad file in chunks and write a concatenated output.
@@ -54,8 +52,8 @@ def preprocess_h5ad(
     ----------
     infile : Path
         Path to the raw .h5ad file.
-    outfile : Path
-        Path where the final preprocessed file is written.
+    outdir : Path
+        Path to the directory where the chunked output files will be saved.
     chunk_size : int, optional
         Number of cells per chunk (default 1000).
     min_cells : int, optional
@@ -100,13 +98,13 @@ def preprocess_h5ad(
     ----------
     - Data source: single-cell RNA‑seq count matrix stored in H5AD format.
     """
-    chunk_dir = outfile.with_suffix("").parent / f"{outfile.stem}_chunks"
+    # chunk_dir = outfile.with_suffix("").parent / f"{outfile.stem}_chunks"
+    chunk_dir = outdir
     chunk_dir.mkdir(parents=True, exist_ok=True)
-    chunks = []
     loader = BatchChunkLoader(infile, chunk_size, batch_key=batch_key)
 
-    try:
-        for i, adata in enumerate(loader):
+    for i, adata in enumerate(loader):
+        try:
             logger.info("Preprocessing chunk %d", i)
             # Make sure X contains raw counts, and "counts" layer is set
             ensure_raw_counts_layer(adata, raw_layer_key=count_layer_key)
@@ -191,20 +189,25 @@ def preprocess_h5ad(
 
             chunk_path = chunk_dir / f"chunk_{i}.h5ad"
             adata_merged.write_h5ad(chunk_path)
-            chunks.append(chunk_path)
+            # chunks.append(chunk_path)
+        except Exception as e:
+            logger.error(f"Error processing chunk {i}: {e}")
+            continue
 
-        # Concatenate on disk
-        concat_on_disk(in_files=chunks, out_file=str(outfile))
-        logger.info("Wrote final file to %s", outfile)
+    # Concatenate on disk
+    # concat_on_disk(in_files=chunks, out_file=str(outfile))
+    # concat_on_disk(
+    # in_files=chunks,             # list of paths to your input .h5ad files
+    # out_file=str(outfile),       # path for the merged .h5ad
+    # axis=0,                      # concatenate observations; var is the “other” axis
+    # join='inner',                # intersect variables (use 'outer' to union)
+    # merge='same',                # keep .var columns common to all inputs
+    # uns_merge='same',            # keep .uns entries common to all inputs
+    # label='batch',               # store source labels in adata.obs['batch']
+    # keys=[f"chunk{i}" for i in range(len(chunks))],
+    #
+    # explicit labels for each input dataset
 
-    finally:
-        # clean up
-        for f in chunks:
-            try:
-                f.unlink()
-            except OSError:
-                logger.warning("Could not delete chunk %s", f)
-        try:
-            chunk_dir.rmdir()
-        except OSError:
-            pass
+
+# )
+#    logger.info("Wrote final file to %s", outfile)

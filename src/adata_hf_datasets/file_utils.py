@@ -15,84 +15,152 @@ from pathlib import Path
 import random
 import anndata
 import shutil
+import gc
 
 logger = logging.getLogger(__name__)
 
 
-def add_sample_index_to_h5ad(
+def add_obs_column_to_h5ad(
     infile: Union[str, Path],
     temp_out: Union[str, Path],
+    column_name: str = "sample_index",
+    column_data: Optional[np.ndarray] = None,
+    dtype: np.dtype = np.int64,
+    is_categorical: bool = False,
 ) -> Path:
     """
-    Copy an .h5ad on disk and inject a `sample_index` obs column
-    without ever loading the full AnnData into memory.
+    Copy an .h5ad on disk and inject a column into the obs dataframe
+    with minimal memory usage by using backed mode.
 
     Parameters
     ----------
     infile : Union[str, Path]
-        Path to the original .h5ad (e.g. the pbmc3k demo from
-        https://scanpy.readthedocs.io/).
+        Path to the original .h5ad file.
     temp_out : Union[str, Path]
         Path where the modified copy will be written.
+    column_name : str, optional
+        Name of the column to add to obs, by default "sample_index".
+    column_data : Optional[np.ndarray], optional
+        Data for the column. If None and column_name is "sample_index",
+        will use np.arange(n_obs). Must be provided for other column names.
+    dtype : np.dtype, optional
+        Data type for the column, by default np.int64.
+    is_categorical : bool, optional
+        Whether to mark the column as categorical, by default False.
+        Useful for string data that represents categories.
 
     Returns
     -------
     Path
-        The path to `temp_out`, now containing `/obs/sample_index`.
+        The path to `temp_out`, now containing the new column in obs.
 
     Notes
     -----
-    - Uses `shutil.copyfile`, so your big `X` matrix never touches RAM.
-    - Sets `HDF5_USE_FILE_LOCKING=FALSE` to sidestep locking errors on
-      NFS/Lustre mounts.
-    - Handles both sparse (group + attrs) and dense (dataset) `X` layouts.
-    - Writes `sample_index` as a chunked, gzip‐compressed int64 dataset
-      so you can continue to use Scanpy’s backed mode.
+    - Uses AnnData's backed mode to minimize memory usage.
+    - Only loads the metadata into memory, not the full X matrix.
+    - If you need to handle files too large for even this approach, consider
+      a more specialized solution with pure h5py.
     """
-
     # avoid POSIX locking
     os.environ["HDF5_USE_FILE_LOCKING"] = "FALSE"
 
     infile = Path(infile)
     temp_out = Path(temp_out)
 
-    logger.info(f"Copying {infile} → {temp_out} (no RAM usage for X)")
-    shutil.copyfile(str(infile), str(temp_out))
+    # Check if we're modifying in-place
+    in_place = infile == temp_out
 
-    logger.info("Opening copy with h5py to detect n_obs")
-    with h5py.File(str(temp_out), "r+") as f:
-        x_obj = f["X"]
-        # sparse case: Group
-        if isinstance(x_obj, h5py.Group):
-            if "shape" in x_obj:
-                raw_shape = x_obj["shape"][...]
+    if not in_place:
+        logger.info(f"Copying {infile} → {temp_out}")
+        shutil.copyfile(str(infile), str(temp_out))
+    else:
+        logger.info(f"Modifying {infile} in-place")
+
+    # Open in backed mode - only loads metadata, not the full matrix
+    logger.info("Opening in backed mode to add column")
+
+    adata = None
+    try:
+        adata = anndata.read_h5ad(temp_out, backed="r+")
+
+        # Get number of observations
+        n_obs = adata.n_obs
+        logger.info(f"File has {n_obs} observations")
+
+        if column_name in adata.obs.columns:
+            logger.info(f"Column '{column_name}' already exists, skipping")
+            return temp_out
+
+        # Generate data if needed
+        if column_data is None:
+            if column_name == "sample_index":
+                logger.info("Generating sample_index data")
+                column_data = np.arange(n_obs, dtype=dtype)
             else:
-                raw_shape = x_obj.attrs.get("shape")
-                if raw_shape is None:
-                    raise RuntimeError(
-                        "Cannot determine X shape: neither 'shape' dataset nor attr found"
-                    )
-            n_obs = int(raw_shape[0])
-        # dense case: Dataset
-        else:
-            n_obs = x_obj.shape[0]
-        logger.info(f"Detected n_obs = {n_obs}")
+                raise ValueError(
+                    f"column_data must be provided for column '{column_name}'"
+                )
 
-        obs_grp = f["obs"]
-        if "sample_index" in obs_grp:
-            logger.info("`sample_index` already exists, skipping")
-        else:
-            logger.info("Creating `obs/sample_index` dataset")
-            obs_grp.create_dataset(
-                "sample_index",
-                data=np.arange(n_obs, dtype=np.int64),
-                chunks=True,
-                compression="gzip",
-                dtype=np.int64,
+        # Ensure data has the right length
+        if len(column_data) != n_obs:
+            raise ValueError(
+                f"column_data length ({len(column_data)}) doesn't match n_obs ({n_obs})"
             )
-            logger.info("Done injecting sample_index")
+
+        # Add the column
+        logger.info(f"Adding column '{column_name}' to obs")
+        if is_categorical:
+            # Convert to categorical if requested
+            from pandas import Categorical
+
+            adata.obs[column_name] = Categorical(column_data)
+        else:
+            adata.obs[column_name] = column_data
+
+        # Write changes to disk
+        logger.info("Writing changes to disk")
+        adata.write_h5ad(temp_out, compression="gzip")
+
+        logger.info(f"Done adding column '{column_name}'")
+    except Exception as e:
+        logger.error(f"Error while adding column: {e}")
+        raise
+    finally:
+        # Explicitly close the AnnData object to release file handles
+        if adata is not None:
+            if hasattr(adata, "file") and adata.file is not None:
+                adata.file.close()
+            del adata
+            # Force garbage collection to ensure file handles are released
+            gc.collect()
+
+    # Verify the file can be opened after modification
+    try:
+        with h5py.File(temp_out, "r") as f:
+            if "obs" in f and column_name in f["obs"]:
+                logger.info(
+                    f"Verified column '{column_name}' exists in the output file"
+                )
+            else:
+                logger.warning(
+                    f"Column '{column_name}' was not found in the output file"
+                )
+    except Exception as e:
+        logger.error(f"Error verifying output file: {e}")
 
     return temp_out
+
+
+# Legacy function for backward compatibility
+def add_sample_index_to_h5ad(
+    infile: Union[str, Path],
+    temp_out: Union[str, Path],
+) -> Path:
+    """
+    Legacy function that calls add_obs_column_to_h5ad with sample_index as column_name.
+    Kept for backward compatibility.
+    """
+    return add_obs_column_to_h5ad(infile, temp_out, column_name="sample_index")
 
 
 def load_adata_from_hf_dataset(
@@ -147,7 +215,7 @@ def load_adata_from_hf_dataset(
     with tempfile.TemporaryDirectory() as tmpdir:
         save_path = Path(tmpdir) / "test.h5ad"
         download_file_from_share_link(first_path, str(save_path))
-        adata = anndata.read_h5ad(save_path)
+        adata = ad.read_h5ad(save_path)
 
     return adata
 
