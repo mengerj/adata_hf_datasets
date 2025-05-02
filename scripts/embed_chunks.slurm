@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #SBATCH --job-name=embed               # overridden by sbatch --job-name
 #SBATCH --output=logs/embed/%x_%A_%a.out
-#SBATCH --error =logs/embed/%x_%A_%a.err
+#SBATCH --error=logs/embed/%x_%A_%a.err
 #SBATCH --mem=80G
 #SBATCH --time=24:00:00
 
@@ -10,9 +10,9 @@
 #   METHODS     e.g. "hvg pca scvi_fm"
 #   BATCH_KEY   e.g. dataset_title
 #   BATCH_SIZE  e.g. 32 #used for geneformer only
-
+echo "Starting job"
 source .venv/bin/activate
-
+echo "venv activated"
 # Gather the Nth file for this task
 files=( "${INPUT_DIR}"/*.h5ad )
 this_file="${files[$SLURM_ARRAY_TASK_ID]}"

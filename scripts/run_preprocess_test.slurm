@@ -5,18 +5,18 @@
 #SBATCH --mem=350G               # Request memory
 #SBATCH --time=24:00:00         # Max job time
 
-INPUT_FILE="data/RNA/raw/train/geo_700k.h5ad"
-OUTPUT_DIR="data/RNA/processed/train"
-SPLIT_DATASET=true
+INPUT_FILE="data/RNA/raw/test/tabula_sapiens.h5ad"
+OUTPUT_DIR="data/RNA/processed/test"
+SPLIT_DATASET=false
 CHUNK_SIZE=50000
-BATCH_KEY=study #_scvi_batch
+BATCH_KEY=_scvi_batch
 CATEGORY_THRESHOLD=5
 # If false, the script will NOT split into train/val but instead
 # output a single 'all.h5ad' file. This can be used for test data or
 # "single" data scenario.
 
 # SRA options - set to true to avoid connection issues
-SKIP_SRA_FETCH=false
+SKIP_SRA_FETCH=true
 SRA_CONTINUE_ON_FAIL=false
 SRA_MAX_RETRIES=5
 
@@ -29,7 +29,7 @@ source .venv/bin/activate
 echo "venv activated"
 # Now run your Python script with the custom output directory
 python3 scripts/preprocess.py \
-    --config-name preprocess_adata_geo \
+    --config-name preprocess_adata_test \
     ++input_file=$INPUT_FILE \
     ++chunk_size=$CHUNK_SIZE \
     ++batch_key=$BATCH_KEY \
