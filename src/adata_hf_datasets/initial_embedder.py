@@ -7,7 +7,7 @@ from adata_hf_datasets.pp.utils import (
     ensure_log_norm,
     is_data_scaled,
     check_enough_genes_per_batch,
-    consolidate_low_frequency_categories
+    consolidate_low_frequency_categories,
 )
 from adata_hf_datasets.pp.pybiomart_utils import add_ensembl_ids, ensure_ensembl_index
 from scvi.hub import HubModel
@@ -17,7 +17,6 @@ import os
 import tempfile
 import psutil
 import scanpy as sc
-from adata_hf_datasets.pp.loader import BatchChunkLoader
 import scipy.sparse as sp
 import numpy as np
 from appdirs import user_cache_dir
@@ -145,7 +144,9 @@ class HighlyVariableGenesEmbedder(BaseEmbedder):
             adata = adata[:, finite_mask].copy()
         # Check if enough valid genes are present in each batch
         if batch_key is not None:
-            consolidate_low_frequency_categories(adata, columns = [batch_key], threshold = 3, remove = False)
+            consolidate_low_frequency_categories(
+                adata, columns=[batch_key], threshold=3, remove=False
+            )
             check_enough_genes_per_batch(adata, batch_key, self.embedding_dim)
         # remove cells with infinity values
         sc.pp.highly_variable_genes(
@@ -1001,16 +1002,23 @@ class SCVIEmbedderFM(SCVIEmbedder):
 
 class InitialEmbedder:
     """
-    A manager class for creating embeddings of single-cell data from file paths.
+    Manager for creating embeddings of single-cell data.
+
+    Some embedding methods require loading the entire AnnData into memory,
+    while others can operate directly on file paths.
 
     Parameters
     ----------
     method : str
-        The embedding method to use. For example: ["scvi_fm", "geneformer", ...].
-    embedding_dim : int
-        Dimensionality of the output embedding space.
-    init_kwargs : dict, optional
-        Additional keyword arguments to pass to the chosen embedder.
+        Embedding method. One of:
+        - "scvi_fm"
+        - "geneformer"
+        - "pca"
+        - "hvg"
+    embedding_dim : int, default=64
+        Dimensionality of the output embedding.
+    **init_kwargs
+        Additional keyword arguments passed to the chosen embedder.
     """
 
     def __init__(
@@ -1019,74 +1027,50 @@ class InitialEmbedder:
         embedding_dim: int = 64,
         **init_kwargs,
     ):
-        """
-        Initialize the manager and select the embedding method.
-
-        Parameters
-        ----------
-        method : str
-            The embedding method to use. For example: ["scvi_fm", "geneformer", ...].
-        embedding_dim : int
-            Dimensionality of the output embedding space.
-        init_kwargs : dict, optional
-            Additional keyword arguments to pass to the chosen embedder.
-        """
-        self.method = method
-        self.embedding_dim = embedding_dim
-        self.init_kwargs = init_kwargs or {}
-
-        # You already have these classes defined (SCVIEmbedder, SCVIEmbedderFM, GeneformerEmbedder, etc.)
+        # Map supported methods to their embedder classes
         embedder_classes = {
-            "scvi_fm": SCVIEmbedderFM,  # for scVI
+            "scvi_fm": SCVIEmbedderFM,
             "geneformer": GeneformerEmbedder,
             "pca": PCAEmbedder,
             "hvg": HighlyVariableGenesEmbedder,
         }
-
         if method not in embedder_classes:
             raise ValueError(f"Unknown embedding method: {method}")
 
+        self.method = method
+        self.embedding_dim = embedding_dim
+        self.init_kwargs = init_kwargs or {}
         self.embedder = embedder_classes[method](
             embedding_dim=embedding_dim, **self.init_kwargs
         )
 
-        # For convenience, you might store a flag if the method requires AnnData in memory:
-        # (Here we check if it's an SCVIEmbedder or you can define a property in each embedder.)
-        self.requires_mem_adata = isinstance(
-            self.embedder, (SCVIEmbedder, HighlyVariableGenesEmbedder, PCAEmbedder)
-        )
+        # Determine if full in-memory AnnData is required
+        # Embedders should expose a `requires_mem_adata` attribute; default True
+        self.requires_mem_adata = getattr(self.embedder, "requires_mem_adata", True)
+
         logger.info(
-            "Initialized InitialEmbedder with method=%s, embedding_dim=%d. requires_mem_adata=%s",
+            "Initialized InitialEmbedder(method=%s, embedding_dim=%d, requires_mem_adata=%s)",
             self.method,
             self.embedding_dim,
             self.requires_mem_adata,
         )
 
-    def prepare(self, adata_path: str, **prepare_kwargs):
+    def prepare(
+        self,
+        adata_path: str,
+        **prepare_kwargs,
+    ) -> None:
         """
-        Prepare the embedder. For methods like SCVI, this might load from S3/Hub;
-        for Geneformer, it might tokenize, etc.
-
-        This now accepts a file path instead of an in-memory AnnData.
+        Prepare the embedder from a file path.
 
         Parameters
         ----------
         adata_path : str
-            Path to the single-cell data file (e.g., .h5ad) to prepare.
-        **prepare_kwargs : dict
-            Additional keyword arguments passed to the embedder's `prepare()` method.
-
-        Notes
-        -----
-        The data source is a user-provided .h5ad file.
+            Path to the AnnData file (.h5ad) for setup.
+        **prepare_kwargs
+            Keyword arguments passed to the embedder's prepare().
         """
-        logger.info(
-            "Preparing method '%s' with embedding_dim=%d",
-            self.method,
-            self.embedding_dim,
-        )
-        # Most embedders do not strictly require the entire data in memory just for "prepare".
-        # So we can simply pass the file path.
+        logger.info("Preparing embedder '%s' with file %s", self.method, adata_path)
         self.embedder.prepare(adata_path=adata_path, **prepare_kwargs)
 
     def embed(
@@ -1095,100 +1079,63 @@ class InitialEmbedder:
         obsm_key: str | None = None,
         batch_key: str = "batch",
         output_path: str | None = None,
-        chunk_size: int = 50000,
         **embed_kwargs,
     ):
         """
-        Transform the data into the learned embedding space.
+        Embed data and write the result to disk.
+
+        Parameters
+        ----------
+        adata_path : str
+            Path to the input AnnData file (.h5ad).
+        obsm_key : str, optional
+            Key under which embeddings are stored in .obsm.
+            Defaults to "X_{method}".
+        batch_key : str, default="batch"
+            Observation column for batch labels (used by some embedders).
+        output_path : str, optional
+            Path for the output .h5ad. If None, replaces
+            ".h5ad" with f"_{method}_emb.h5ad".
+        **embed_kwargs
+            Additional keyword arguments for the embedders embed().
+
+        Returns
+        -------
+        AnnData
+            The AnnData object with embeddings in .obsm[obsm_key].
         """
+        # Derive defaults
         if output_path is None:
             output_path = adata_path.replace(".h5ad", f"_{self.method}_emb.h5ad")
         if obsm_key is None:
             obsm_key = f"X_{self.method}"
 
-        # if the output file already exists, remove it
+        # Clean existing output
         if os.path.exists(output_path):
-            logger.warning(
-                "Output file %s already exists and will be overwritten.", output_path
-            )
+            logger.warning("Overwriting existing file %s", output_path)
             os.remove(output_path)
 
-        logger.info(
-            "Embedding data using method '%s'. Output to '%s'. obsm_key=%s",
-            self.method,
-            output_path,
-            obsm_key,
-        )
+        logger.info("Embedding method '%s' -> %s", self.method, output_path)
 
-        # If the method doesn't require in-memory AnnData, we pass it directly:
-        if not self.requires_mem_adata:
-            try:
-                adata_emb = self.embedder.embed(
-                    adata_path=adata_path,
-                    obsm_key=obsm_key,
-                    batch_key=batch_key,
-                    **embed_kwargs,
-                )
-                # After embedding, we can safely write:
-                adata_emb.write_h5ad(output_path)
-                return adata_emb
-            finally:
-                # Ensure if adata_emb was backed, we close it
-                if (
-                    adata_emb is not None
-                    and hasattr(adata_emb, "file")
-                    and adata_emb.file is not None
-                ):
-                    adata_emb.file.close()
-
-        # Otherwise, chunk-based approach for large memory or SCVI-like methods:
-        logger.info("Using chunk-based approach for method '%s'.", self.method)
-        loader = BatchChunkLoader(
-            path=adata_path, chunk_size=chunk_size, batch_key=batch_key
-        )
-        output_path = Path(output_path)
-        chunk_dir = output_path.parent / f"{output_path.stem}_chunks"
-        chunk_dir.mkdir(parents=True, exist_ok=True)
-        chunk_list = []
-
-        try:
-            for i, chunk in enumerate(loader):
-                logger.info(
-                    "Processing chunk %d with shape obs x var = %s x %s",
-                    i,
-                    chunk.n_obs,
-                    chunk.n_vars,
-                )
-                chunk_in_memory = chunk.to_memory()
-                # Embed the chunk
-                chunk_adata = self.embedder.embed(
-                    adata_path=None,
-                    adata=chunk_in_memory,
-                    obsm_key=obsm_key,
-                    batch_key=batch_key,
-                    **embed_kwargs,
-                )
-
-                # Write chunk directly into the chunk directory
-                chunk_path = chunk_dir / f"chunk_{i}.h5ad"
-                chunk_adata.write_h5ad(chunk_path)
-                chunk_list.append(chunk_path)
-
-                del chunk_adata, chunk_in_memory
-
-            # Concatenate all embedded chunks directly into final output
-            anndata.experimental.concat_on_disk(
-                in_files=chunk_list, out_file=str(output_path)
+        # Choose in-memory vs path-based embedding
+        if self.requires_mem_adata:
+            logger.info("Loading full AnnData into memory from %s", adata_path)
+            adata = anndata.read_h5ad(adata_path)
+            adata = self.embedder.embed(
+                adata=adata,
+                obsm_key=obsm_key,
+                batch_key=batch_key,
+                **embed_kwargs,
             )
-            logger.info("Wrote final embedded AnnData to %s", output_path)
+        else:
+            logger.info("Using file-path embedding for %s", adata_path)
+            adata = self.embedder.embed(
+                adata_path=adata_path,
+                obsm_key=obsm_key,
+                batch_key=batch_key,
+                **embed_kwargs,
+            )
 
-        finally:
-            # Cleanup: Remove chunk files after concatenation
-            for file in chunk_list:
-                file.unlink()
-            chunk_dir.rmdir()
-            # Guarantee that if something goes wrong or we succeed, we close adata_backed
-            # Just a final garbage-collection
-            import gc
-
-            gc.collect()
+        logger.info("Writing embedded AnnData to %s", output_path)
+        adata.write_h5ad(output_path)
+        del adata
