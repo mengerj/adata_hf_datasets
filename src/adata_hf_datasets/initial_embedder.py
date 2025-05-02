@@ -482,7 +482,7 @@ class GeneformerEmbedder(BaseEmbedder):
             raise ValueError(
                 "sample_index not found in adata.obs. Run preprocessing script or pp_geneformer first."
             )
-
+        adata.file.close()
         # 3. Write to a temporary h5ad
         # h5ad_path = self.tmp_adata_dir / "adata.h5ad"
         # adata.write_h5ad(h5ad_path)
@@ -616,7 +616,7 @@ class GeneformerEmbedder(BaseEmbedder):
         processed_adata_path = self.adata_path
         if not processed_adata_path.exists():
             raise ValueError(f"No processed AnnData found at {processed_adata_path}.")
-        adata = sc.read(processed_adata_path, backed="r")
+        adata = sc.read(processed_adata_path)
         og_ids = adata.obs["sample_index"].values
         # Filter and sort embs_df to align with og_ids
         # drop the "Unamed: 0" column
@@ -1138,4 +1138,11 @@ class InitialEmbedder:
 
         logger.info("Writing embedded AnnData to %s", output_path)
         adata.write_h5ad(output_path)
-        del adata
+        obsm_matrix = adata.obsm[obsm_key]
+        logger.info(
+            "Embedding shape: %s, stored in adata.obsm[%r]",
+            obsm_matrix.shape,
+            obsm_key,
+        )
+        logger.info("Embedding complete. Returning the embedding matrix")
+        return obsm_matrix

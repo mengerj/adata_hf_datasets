@@ -10,7 +10,7 @@ BATCH_KEY="dataset_title"
 BATCH_SIZE=32
 METHODS="hvg pca scvi_fm"   # space‐separated list
 SCRIPT="scripts/embed_chunks_parallel.slurm"
-TRAIN_OR_TEST="${TRAIN_OR_TEST:-train}"
+TRAIN_OR_TEST="train"
 # =================================
 # build extra sbatch flags based on MODE
 SBATCH_EXTRA=()
@@ -50,16 +50,15 @@ TRAIN_OR_TEST="${TRAIN_OR_TEST}" \
         # — locally, just run the script (it will detect LOCAL MODE) —
         echo "[LOCAL] Running all $n chunks for '$label' in parallel"
         INPUT_DIR="$dir" METHODS="$METHODS" \
-          BATCH_KEY="$BATCH_KEY" BATCH_SIZE="$BATCH_SIZE" \ TRAIN_OR_TEST="$TRAIN_OR_TEST" \
-          bash "$SCRIPT"
+BATCH_KEY="$BATCH_KEY" BATCH_SIZE="$BATCH_SIZE" \
+TRAIN_OR_TEST="$TRAIN_OR_TEST" \
+bash "$SCRIPT"
     fi
 }
 
-# Submit only one job for test data
 if [[ "$TRAIN_OR_TEST" == "test" ]]; then
-    DATA_DIR = "data/RNA/processed/test/${DATANAME}"
-    submit array test "$DATA_DIR"
-# Submit jobs for train and val data
+    DATA_DIR="data/RNA/processed/test/${DATANAME}"
+    submit_array test "$DATA_DIR"
 else
     TRAIN_DIR="data/RNA/processed/train/${DATANAME}/train"
     VAL_DIR="data/RNA/processed/train/${DATANAME}/val"

@@ -3,26 +3,25 @@
 Apply initial embeddings to preprocessed AnnData files.
 
 This script:
-1. Reads a preprocessed AnnData file
-2. Applies the selected initial embedder
-3. Saves the result in a new directory structure
-
-References
-----------
-- Hydra: https://hydra.cc
-- anndata: https://anndata.readthedocs.io
+  1. Reads one or more preprocessed .h5ad files.
+  2. For each file, loads it into memory once (or loads an existing combined output).
+  3. Loops over cfg.methods, computing any missing embeddings.
+  4. Stores each embedding in adata.obsm["X_<method>"].
+  5. Writes out a single .h5ad with all embeddings attached.
 """
 
 import sys
 from pathlib import Path
+
 import hydra
 from omegaconf import DictConfig
 from dotenv import load_dotenv
+from anndata import read_h5ad
+
 from adata_hf_datasets.utils import setup_logging
 from adata_hf_datasets.initial_embedder import InitialEmbedder
 from adata_hf_datasets.sys_monitor import SystemMonitor
 from hydra.core.hydra_config import HydraConfig
-
 
 logger = setup_logging()
 
@@ -30,78 +29,98 @@ logger = setup_logging()
 @hydra.main(version_base=None, config_path="../conf", config_name="embed_adata")
 def main(cfg: DictConfig):
     """
-    Main function for applying initial embeddings using Hydra config.
+    Apply multiple embedding methods to one or more AnnData files.
 
     Parameters
     ----------
-    cfg : DictConfig
-        Configuration object with fields:
-        - input_file (str): Path to preprocessed .h5ad file
-        - method (str): Initial embedder method to use
-        - batch_key (str): Key in adata.obs for batch information
-        - chunk_size (int): Number of cells to process at once
-        - embedding_dim (int): Dimension of the embedding
+    cfg.input_files : List[str]
+        Paths to preprocessed .h5ad files.
+    cfg.methods : List[str]
+        Embedding methods to apply (e.g., ['hvg','pca','scvi_fm']).
+    cfg.batch_key : str
+        Column in adata.obs storing batch labels.
+    cfg.batch_size : int
+        Batch size for embedders that use it.
+    cfg.embedding_dim_map : Dict[str,int]
+        Mapping from method name to embedding dimension.
+    cfg.overwrite : bool
+        Whether to recompute and overwrite existing embeddings.
     """
     load_dotenv(override=True)
     hydra_run_dir = HydraConfig.get().run.dir
 
-    # Setup monitoring
     monitor = SystemMonitor(logger=logger)
     monitor.start()
+
     try:
         for input_file in cfg.input_files:
-            input_file = Path(input_file)
-            logger.info(f"Processing input file: {input_file}")
-            if not input_file.is_file():
-                raise FileNotFoundError(f"Input file not found: {input_file}")
+            infile = Path(input_file)
+            logger.info("Processing file: %s", infile)
+            if not infile.exists():
+                raise FileNotFoundError(f"Input file not found: {infile}")
 
-            # Create output directory structure
-            # Replace 'processed' with 'processed_with_emb' in the path
-            output_dir = Path(
-                str(input_file.parent).replace("processed", "processed_with_emb")
+            # Prepare output path
+            out_dir = Path(
+                str(infile.parent).replace("processed", "processed_with_emb")
             )
-            output_dir.mkdir(parents=True, exist_ok=True)
+            out_dir.mkdir(parents=True, exist_ok=True)
+            outfile = out_dir / f"{infile.stem}.h5ad"
 
-            # Create output filename with method name
-            output_file = output_dir / f"{input_file.stem}_{cfg.method}.h5ad"
+            # Load existing combined file if present (and not overwrite), else raw
+            if outfile.exists() and not cfg.overwrite:
+                logger.info("Loading existing combined file %s", outfile)
+                infile = outfile
 
-            if output_file.exists() and not cfg.overwrite:
-                logger.info(
-                    f"Output file already exists: {output_file}. Set overwrite=True to overwrite."
+            logger.info("Loading raw AnnData from %s", infile)
+            adata = read_h5ad(str(infile))
+
+            # Determine which methods still need to run
+            methods_to_run = []
+            for method in cfg.methods:
+                obsm_key = f"X_{method}"
+                if obsm_key in adata.obsm and not cfg.overwrite:
+                    logger.info("Skipping existing embedding '%s'", obsm_key)
+                else:
+                    methods_to_run.append(method)
+
+            if not methods_to_run:
+                logger.info("All embeddings present for %s; skipping write.", infile)
+                continue
+
+            # Compute missing embeddings
+            for method in methods_to_run:
+                if method not in cfg.embedding_dim_map:
+                    raise KeyError(f"No embedding_dim for method '{method}' in config")
+                emb_dim = cfg.embedding_dim_map[method]
+
+                monitor.log_event(f"Prepare {method}")
+                embedder = InitialEmbedder(method=method, embedding_dim=emb_dim)
+                embedder.prepare(adata_path=str(infile), batch_key=cfg.batch_key)
+
+                monitor.log_event(f"Embed {method}")
+                obsm_key = f"X_{method}"
+                emb_matrix = embedder.embed(
+                    adata_path=str(infile),
+                    obsm_key=obsm_key,
+                    batch_key=cfg.batch_key,
+                    batch_size=cfg.batch_size,
                 )
-                return
+                # Store into .obsm
+                adata.obsm[obsm_key] = emb_matrix
+                logger.info(
+                    "Stored embedding '%s' with shape %s", obsm_key, emb_matrix.shape
+                )
+                monitor.log_event(f"Finished {method}")
 
-            # Initialize embedder
-            embedding_dim = cfg.embedding_dim_map[cfg.method]
-            embedder = InitialEmbedder(method=cfg.method, embedding_dim=embedding_dim)
-
-            # Log event before preparation
-            monitor.log_event(f"Starting preparation for {cfg.method}")
-
-            # Prepare embedder
-            embedder.prepare(adata_path=str(input_file), batch_key=cfg.batch_key)
-
-            # Log event before embedding
-            monitor.log_event(f"Starting embedding with {cfg.method}")
-
-            # Apply embedding
-            _ = embedder.embed(
-                adata_path=str(input_file),
-                output_path=str(output_file),
-                chunk_size=cfg.chunk_size,
-                batch_key=cfg.batch_key,
-                batch_size=cfg.batch_size,
-            )
-
-            monitor.log_event(f"Finished embedding with {cfg.method}")
-            logger.info(f"Saved embedded data to {output_file}")
+            # Write combined AnnData with all embeddings
+            logger.info("Writing combined output to %s", outfile)
+            adata.write_h5ad(str(outfile))
+            logger.info("Saved combined embeddings to %s", outfile)
 
     except Exception as e:
-        logger.exception("An error occurred during embedding")
+        logger.exception("Embedding pipeline failed, with error: %s", e)
         raise e
-
     finally:
-        # Stop monitoring and save results
         monitor.stop()
         monitor.print_summary()
         monitor.save(hydra_run_dir)
@@ -112,6 +131,5 @@ if __name__ == "__main__":
     try:
         main()
     except Exception:
-        logger.exception("An error occurred during embedding.")
+        logger.exception("Fatal error in embed_adata.py")
         sys.exit(1)
-# End of script

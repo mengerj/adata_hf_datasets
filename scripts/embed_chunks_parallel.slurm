@@ -10,7 +10,8 @@ set -euo pipefail
 # ─────────────────────────────────────────────────────────────────────────────
 # 1) CONFIGURATION (override via sbatch --export or ENV)
 # ─────────────────────────────────────────────────────────────────────────────
-TRAIN_OR_TEST="${TRAIN_OR_TEST:-train}"
+#TRAIN_OR_TEST="${TRAIN_OR_TEST:-train}"
+TRAIN_OR_TEST="train"
 DATANAME="${DATANAME:-cellxgene_pseudo_bulk_35k}"
 SPLIT="${SPLIT:-train}"
 INPUT_DIR="${INPUT_DIR:-data/RNA/processed/${TRAIN_OR_TEST}/${DATANAME}/${SPLIT}}"
