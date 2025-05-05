@@ -73,6 +73,9 @@ def main(cfg: DictConfig):
 
             logger.info("Loading raw AnnData from %s", infile)
             adata = read_h5ad(str(infile))
+            logger.info(
+                "Loaded AnnData with %d cells and %d genes", adata.n_obs, adata.n_vars
+            )
 
             # Determine which methods still need to run
             methods_to_run = []
@@ -95,20 +98,17 @@ def main(cfg: DictConfig):
 
                 monitor.log_event(f"Prepare {method}")
                 embedder = InitialEmbedder(method=method, embedding_dim=emb_dim)
-                embedder.prepare(adata_path=str(infile), batch_key=cfg.batch_key)
+                embedder.prepare(
+                    adata=adata, adata_path=str(infile), batch_key=cfg.batch_key
+                )
 
                 monitor.log_event(f"Embed {method}")
                 obsm_key = f"X_{method}"
-                emb_matrix = embedder.embed(
-                    adata_path=str(infile),
+                adata = embedder.embed(
+                    adata=adata,
                     obsm_key=obsm_key,
                     batch_key=cfg.batch_key,
                     batch_size=cfg.batch_size,
-                )
-                # Store into .obsm
-                adata.obsm[obsm_key] = emb_matrix
-                logger.info(
-                    "Stored embedding '%s' with shape %s", obsm_key, emb_matrix.shape
                 )
                 monitor.log_event(f"Finished {method}")
 

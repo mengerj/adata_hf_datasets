@@ -90,7 +90,7 @@ class HighlyVariableGenesEmbedder(BaseEmbedder):
         """
         super().__init__(embedding_dim=embedding_dim)
 
-    def prepare(self, adata_path: anndata.AnnData, **kwargs) -> None:
+    def prepare(self, adata: anndata.AnnData, **kwargs) -> None:
         """
         Identifies the top `embedding_dim` highly variable genes in `adata`.
 
@@ -102,11 +102,9 @@ class HighlyVariableGenesEmbedder(BaseEmbedder):
             Additional keyword arguments for `scanpy.pp.highly_variable_genes`.
         """
         logger.info("Normalizing and log-transforming data before HVG selection.")
-        adata = sc.read(adata_path)
         # check if the data is already normalized
         ensure_log_norm(adata)
         # First save the raw counts as a layer
-        adata.write_h5ad(adata_path)
 
     def embed(
         self,
@@ -139,9 +137,10 @@ class HighlyVariableGenesEmbedder(BaseEmbedder):
         n_bad = np.count_nonzero(~finite_mask)
         if n_bad > 0:
             logger.warning(
-                "Dropping %d genes that contain infinite values before HVG.", n_bad
+                "Found %d genes with infinite values. Removing those genes.", n_bad
             )
-            adata = adata[:, finite_mask].copy()
+            # Remove genes with infinite values
+            adata = adata[:, finite_mask]
         # Check if enough valid genes are present in each batch
         if batch_key is not None:
             consolidate_low_frequency_categories(
@@ -225,21 +224,20 @@ class PCAEmbedder(BaseEmbedder):
         self.embedding_dim = embedding_dim
         self._pca_model = None
 
-    def prepare(self, adata_path: anndata.AnnData, n_cells=10000, **kwargs) -> None:
+    def prepare(self, adata: anndata.AnnData, n_cells=10000, **kwargs) -> None:
         """Fit a PCA model to the AnnData object's .X matrix."""
         logger.info(
             "Fitting PCA with %d components on %d.", self.embedding_dim, n_cells
         )
         from sklearn.decomposition import PCA
 
-        adata_sub = sc.read(adata_path, backed="r")
+        adata_sub = adata.copy()
         # get a random subset of cells with random
         logger.info("Subsampling %d cells for PCA.", n_cells)
         if n_cells < adata_sub.shape[0]:
             adata_sub = adata_sub[
                 np.random.choice(adata_sub.shape[0], n_cells, replace=False), :
             ]
-        adata_sub = adata_sub.to_memory()
 
         if not is_data_scaled(adata_sub.X):
             logger.info("Data is not scaled. Scaling data before PCA.")
@@ -415,7 +413,13 @@ class GeneformerEmbedder(BaseEmbedder):
             self.special_model,
         )
 
-    def prepare(self, adata_path: str, do_tokenization: bool = True, **kwargs) -> None:
+    def prepare(
+        self,
+        adata: anndata.AnnData,
+        adata_path=str,
+        do_tokenization: bool = True,
+        **kwargs,
+    ) -> None:
         """
         Prepare (preprocess + tokenize) the data for Geneformer embeddings.
 
@@ -430,6 +434,8 @@ class GeneformerEmbedder(BaseEmbedder):
         ----------
         adata : anndata.AnnData
             Single-cell dataset to prepare.
+        adata_path : str
+            Path to the AnnData file, to save the tokenized dataset. If not provided, save in "geneformer" folder in current directory.
         do_tokenization : bool
             Whether to run the tokenization step if no tokenized dataset is found.
         **kwargs : dict
@@ -448,18 +454,17 @@ class GeneformerEmbedder(BaseEmbedder):
                 "run 'git submodule update --init --recursive'. Then install geneformer: "
                 "`pip install external/Geneformer`."
             )
-        self.adata_path = Path(adata_path)
-        # save the tokenized dataset in the same directory as the adata
-        self.adata_dir = self.adata_path.parent
-        # check if adata_dir has other files than "train.h5ad" and "val.h5ad", and give a warning
-        if len(list(self.adata_dir.glob("*.h5ad"))) > 2:
-            logger.warning(
-                "The directory %s contains more than two .h5ad files. "
-                "Geneformer will tokenize all files in the directory, so remove any besides train and val.",
-                self.adata_dir,
+        if adata_path is None:
+            adata_path = str(
+                Path(__file__).resolve().parents[2] / "geneformer" / "adata.h5ad"
             )
-        self.out_dataset_dir = self.adata_path.parent / "geneformer"
-        adata = sc.read(self.adata_path, backed="r")
+        self.in_adata_path = Path(adata_path)
+        adata_name = self.in_adata_path.stem
+        # save the tokenized dataset in the same directory as the adata
+        self.adata_dir = self.in_adata_path.parent / "geneformer"
+        self.adata_path = self.adata_dir / adata_name
+        adata.write_h5ad(self.adata_path)
+        self.out_dataset_dir = self.adata_dir
         # 1. Make sure the data has the required fields
         if "ensembl_id" not in adata.var.columns:
             logger.error(
@@ -482,7 +487,6 @@ class GeneformerEmbedder(BaseEmbedder):
             raise ValueError(
                 "sample_index not found in adata.obs. Run preprocessing script or pp_geneformer first."
             )
-        adata.file.close()
         # 3. Write to a temporary h5ad
         # h5ad_path = self.tmp_adata_dir / "adata.h5ad"
         # adata.write_h5ad(h5ad_path)
@@ -522,10 +526,9 @@ class GeneformerEmbedder(BaseEmbedder):
 
     def embed(
         self,
-        adata_path: str,
+        adata: anndata.AnnData,
         obsm_key: str = "X_geneformer",
         batch_size: int = 16,
-        cleanup: bool = True,
         **kwargs,
     ) -> anndata.AnnData:
         """
@@ -540,14 +543,12 @@ class GeneformerEmbedder(BaseEmbedder):
 
         Parameters
         ----------
-        adata_path : str
-            Path to the AnnData file to embed. Has to already be prepared and tokenized.
+        adata : anndata.Anndata
+            The AnnData object to embed.
         obsm_key : str, optional
             Key in `adata.obsm` to store the final embeddings. Defaults to "X_geneformer".
         batch_size : int, optional
             Forward batch size used by the Geneformer model for embedding extraction.
-        cleanup : bool, optional
-            Whether to remove the temporary directory after generating embeddings.
         **kwargs : dict
             Additional arguments (unused here, but kept for interface consistency).
 
@@ -612,11 +613,7 @@ class GeneformerEmbedder(BaseEmbedder):
             )
             embs_df = pd.read_csv(embs_csv_path)
 
-        # Load the adata to attach the embeddings
-        processed_adata_path = self.adata_path
-        if not processed_adata_path.exists():
-            raise ValueError(f"No processed AnnData found at {processed_adata_path}.")
-        adata = sc.read(processed_adata_path)
+        # Attach the embeddings to the adata object
         og_ids = adata.obs["sample_index"].values
         # Filter and sort embs_df to align with og_ids
         # drop the "Unamed: 0" column
@@ -725,7 +722,7 @@ class SCVIEmbedder(BaseEmbedder):
         self.model = None
         self.init_kwargs = kwargs
 
-    def prepare(self, adata_path: str, **kwargs):
+    def prepare(self, **kwargs):
         """
         Prepare the SCVI model for embedding.
 
@@ -738,8 +735,6 @@ class SCVIEmbedder(BaseEmbedder):
 
         Parameters
         ----------
-        adata : anndata.AnnData
-            The query AnnData if it is already available at prepare-time.
         **kwargs : dict
             Additional configuration for loading from S3 or HF.
         """
@@ -792,9 +787,9 @@ class SCVIEmbedder(BaseEmbedder):
                 if not file_cache_dir.endswith("/"):
                     file_cache_dir += "/"
                 save_dir = Path(file_cache_dir)
-            adata_path = os.path.join(save_dir, "cellxgene_reference_adata.h5ad")
+            ref_adata_path = os.path.join(save_dir, "cellxgene_reference_adata.h5ad")
             logger.info("Reading reference adata from URL %s", reference_adata_url)
-            reference_adata = sc.read(adata_path, backup_url=reference_adata_url)
+            reference_adata = sc.read(ref_adata_path, backup_url=reference_adata_url)
         else:
             # Try to get reference adata from model
             try:
@@ -886,7 +881,6 @@ class SCVIEmbedder(BaseEmbedder):
 
     def embed(
         self,
-        adata_path: str | None = None,
         adata: anndata.AnnData | None = None,
         obsm_key: str = "X_scvi",
         batch_key="batch",
@@ -923,9 +917,6 @@ class SCVIEmbedder(BaseEmbedder):
         if self.scvi_model is None:
             raise ValueError("SCVI model is not prepared. Call `prepare(...)` first.")
         # If the query hasn't been loaded yet, load it now:
-        if adata is None and adata_path is not None:
-            # if only a path is given, maybe load the entire data
-            adata = sc.read(adata_path)
         if not hasattr(self.scvi_model, "adata") or self.scvi_model.adata is not adata:
             self._prepare_query_adata(adata)
 
@@ -1057,7 +1048,8 @@ class InitialEmbedder:
 
     def prepare(
         self,
-        adata_path: str,
+        adata: anndata.AnnData | None = None,
+        adata_path: str | None = None,
         **prepare_kwargs,
     ) -> None:
         """
@@ -1065,20 +1057,21 @@ class InitialEmbedder:
 
         Parameters
         ----------
+        adata : anndata.AnnData, optional
+            The AnnData object to prepare the embedder. Has to be preprocessed already, if embedding method requires it.
         adata_path : str
-            Path to the AnnData file (.h5ad) for setup.
+            Path to the AnnData file (.h5ad). Only needed for geneformer.
         **prepare_kwargs
             Keyword arguments passed to the embedder's prepare().
         """
         logger.info("Preparing embedder '%s' with file %s", self.method, adata_path)
-        self.embedder.prepare(adata_path=adata_path, **prepare_kwargs)
+        self.embedder.prepare(adata=adata, adata_path=adata_path, **prepare_kwargs)
 
     def embed(
         self,
-        adata_path: str,
+        adata: anndata.AnnData,
         obsm_key: str | None = None,
         batch_key: str = "batch",
-        output_path: str | None = None,
         **embed_kwargs,
     ):
         """
@@ -1086,16 +1079,13 @@ class InitialEmbedder:
 
         Parameters
         ----------
-        adata_path : str
-            Path to the input AnnData file (.h5ad).
+        adata : anndata.AnnData
+            The AnnData object to embed.
         obsm_key : str, optional
             Key under which embeddings are stored in .obsm.
             Defaults to "X_{method}".
         batch_key : str, default="batch"
             Observation column for batch labels (used by some embedders).
-        output_path : str, optional
-            Path for the output .h5ad. If None, replaces
-            ".h5ad" with f"_{method}_emb.h5ad".
         **embed_kwargs
             Additional keyword arguments for the embedders embed().
 
@@ -1105,44 +1095,16 @@ class InitialEmbedder:
             The AnnData object with embeddings in .obsm[obsm_key].
         """
         # Derive defaults
-        if output_path is None:
-            output_path = adata_path.replace(".h5ad", f"_{self.method}_emb.h5ad")
         if obsm_key is None:
             obsm_key = f"X_{self.method}"
 
-        # Clean existing output
-        if os.path.exists(output_path):
-            logger.warning("Overwriting existing file %s", output_path)
-            os.remove(output_path)
+        logger.info(f"Embedding method: {self.method}")
 
-        logger.info("Embedding method '%s' -> %s", self.method, output_path)
-
-        # Choose in-memory vs path-based embedding
-        if self.requires_mem_adata:
-            logger.info("Loading full AnnData into memory from %s", adata_path)
-            adata = anndata.read_h5ad(adata_path)
-            adata = self.embedder.embed(
-                adata=adata,
-                obsm_key=obsm_key,
-                batch_key=batch_key,
-                **embed_kwargs,
-            )
-        else:
-            logger.info("Using file-path embedding for %s", adata_path)
-            adata = self.embedder.embed(
-                adata_path=adata_path,
-                obsm_key=obsm_key,
-                batch_key=batch_key,
-                **embed_kwargs,
-            )
-
-        logger.info("Writing embedded AnnData to %s", output_path)
-        adata.write_h5ad(output_path)
-        obsm_matrix = adata.obsm[obsm_key]
-        logger.info(
-            "Embedding shape: %s, stored in adata.obsm[%r]",
-            obsm_matrix.shape,
-            obsm_key,
+        adata = self.embedder.embed(
+            adata=adata,
+            obsm_key=obsm_key,
+            batch_key=batch_key,
+            **embed_kwargs,
         )
         logger.info("Embedding complete. Returning the embedding matrix")
-        return obsm_matrix
+        return adata
