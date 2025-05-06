@@ -103,7 +103,8 @@ class HighlyVariableGenesEmbedder(BaseEmbedder):
         """
         logger.info("Normalizing and log-transforming data before HVG selection.")
         # check if the data is already normalized
-        ensure_log_norm(adata)
+        if "highly_variable" not in adata.var:
+            ensure_log_norm(adata, var_threshold=1)
         # First save the raw counts as a layer
 
     def embed(
@@ -126,31 +127,32 @@ class HighlyVariableGenesEmbedder(BaseEmbedder):
             Additional keyword arguments. Not used.
         """
         logger.info("Selecting top %d highly variable genes.", self.embedding_dim)
-
-        # Convert to dense for checking
-        if sp.issparse(adata.X):
-            X_arr = adata.X.toarray()
-        else:
-            X_arr = adata.X
-        # Find genes (columns) with any infinite values
-        finite_mask = np.isfinite(X_arr).all(axis=0)
-        n_bad = np.count_nonzero(~finite_mask)
-        if n_bad > 0:
-            logger.warning(
-                "Found %d genes with infinite values. Removing those genes.", n_bad
+        # only compute if not already included (from pp)
+        if "highly_variable" not in adata.var:
+            # Convert to dense for checking
+            if sp.issparse(adata.X):
+                X_arr = adata.X.toarray()
+            else:
+                X_arr = adata.X
+            # Find genes (columns) with any infinite values
+            finite_mask = np.isfinite(X_arr).all(axis=0)
+            n_bad = np.count_nonzero(~finite_mask)
+            if n_bad > 0:
+                logger.warning(
+                    "Found %d genes with infinite values. Removing those genes.", n_bad
+                )
+                # Remove genes with infinite values
+                adata = adata[:, finite_mask]
+            # Check if enough valid genes are present in each batch
+            if batch_key is not None:
+                consolidate_low_frequency_categories(
+                    adata, columns=[batch_key], threshold=3, remove=False
+                )
+                check_enough_genes_per_batch(adata, batch_key, self.embedding_dim)
+            # remove cells with infinity values
+            sc.pp.highly_variable_genes(
+                adata, n_top_genes=self.embedding_dim, batch_key=batch_key
             )
-            # Remove genes with infinite values
-            adata = adata[:, finite_mask]
-        # Check if enough valid genes are present in each batch
-        if batch_key is not None:
-            consolidate_low_frequency_categories(
-                adata, columns=[batch_key], threshold=3, remove=False
-            )
-            check_enough_genes_per_batch(adata, batch_key, self.embedding_dim)
-        # remove cells with infinity values
-        sc.pp.highly_variable_genes(
-            adata, n_top_genes=self.embedding_dim, batch_key=batch_key
-        )
 
         if "highly_variable" not in adata.var:
             raise ValueError("Failed to compute highly variable genes.")
