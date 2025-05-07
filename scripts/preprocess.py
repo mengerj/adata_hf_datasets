@@ -75,7 +75,7 @@ def main(cfg: DictConfig):
             infile=infile, temp_out=out_dir / f"{input_stem}_temp_input.h5ad"
         )
 
-        ad_bk = sc.read_h5ad(infile, backed="r")
+        ad_bk = sc.read_h5ad(temp_infile, backed="r")
 
         # Plot some quality control plots prior to processing.
         subset_sra_and_plot(adata_bk=ad_bk, cfg=cfg, run_dir=run_dir + "/before")
@@ -109,7 +109,7 @@ def main(cfg: DictConfig):
             logger.info(
                 "Writing subset '%s' with %d cells to %s", name, len(indices), out_path
             )
-            ad_view = anndata.read_h5ad(str(infile), backed="r")[indices]
+            ad_view = anndata.read_h5ad(str(temp_infile), backed="r")[indices]
             # view.obs still has sample_index from earlier
             ad_view.write_h5ad(out_path)
             ad_view.file.close()
