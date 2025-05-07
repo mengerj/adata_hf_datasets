@@ -11,11 +11,13 @@ from adata_hf_datasets.pp.utils import (
 )
 from adata_hf_datasets.pp.pybiomart_utils import add_ensembl_ids, ensure_ensembl_index
 from scvi.hub import HubModel
+import shutil
+import tempfile
+import uuid
+import psutil
 from scvi.model import SCVI
 from pathlib import Path
 import os
-import tempfile
-import psutil
 import scanpy as sc
 import scipy.sparse as sp
 import numpy as np
@@ -850,7 +852,35 @@ class SCVIEmbedder(BaseEmbedder):
         logger.info("Successfully prepared query data for SCVI")
 
     @staticmethod
-    def _setup_model_with_ref(model, reference_adata):
+    def _is_shared_path(path: Path) -> bool:
+        """
+        Heuristic – consider paths on NFS/Lustre or in $CACHE_DIR 'shared'.
+        Adapt if you have a better way to decide.
+        """
+        return not path.is_symlink() and "/tmp/" not in path.as_posix()
+
+    @staticmethod
+    def _localize_hubmodel(model: HubModel) -> HubModel:
+        """
+        Copy the weight file (model.pt) into a unique temp dir and return a *new*
+        HubModel instance that points there.  This eliminates cross-process races.
+        """
+        orig_dir = Path(model.local_dir)
+        tmp_dir = Path(tempfile.gettempdir()) / f"scvi_{uuid.uuid4().hex}"
+        tmp_dir.mkdir(parents=True, exist_ok=True)
+
+        # copy the weight file; other files are usually tiny, copy if you need them
+        shutil.copy2(orig_dir / "model.pt", tmp_dir / "model.pt")
+        if (orig_dir / "adata.h5ad").is_file():
+            shutil.copy2(orig_dir / "adata.h5ad", tmp_dir / "adata.h5ad")
+        # reuse the existing metadata / model-card objects
+        return HubModel(
+            local_dir=str(tmp_dir),
+            metadata=model.metadata,
+            model_card=model.model_card,
+        )
+
+    def _setup_model_with_ref(self, model, reference_adata):
         """
         Set up the SCVI model with the reference AnnData.
 
@@ -866,6 +896,12 @@ class SCVIEmbedder(BaseEmbedder):
         SCVI
             The SCVI model, loaded with reference AnnData.
         """
+        if self._is_shared_path(Path(model.local_dir)):
+            logger.info(
+                "Copying SCVI weight file to a worker-unique temp dir to avoid NFS races."
+            )
+            model = self._localize_hubmodel(model)
+
         logger.info("Preparing SCVI model with reference data...")
         # didn't quite understand why, but this property has to be deleted
         try:
