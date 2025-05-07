@@ -9,7 +9,7 @@ import json
 import anndata as ad
 import pandas as pd
 import numpy as np
-from typing import Optional, Union
+from typing import Optional, Union, Any
 import tempfile
 from pathlib import Path
 import random
@@ -117,6 +117,17 @@ def add_obs_column_to_h5ad(
         else:
             adata.obs[column_name] = column_data
 
+        # ---- FIX: check for missing raw.X ----
+        # This is a workaround for a bug that writing to h5ad from backed mode gives if raw is empty/corrupted
+        if adata.raw is not None:
+            try:
+                _ = adata.raw.X  # triggers the lazy check
+            except AttributeError:
+                logger.warning(
+                    "raw.X dataset is missing; dropping `.raw` to avoid write errors."
+                )
+                adata.raw = None  # safe: keeps layers / .X intact
+        # -------------------------------------------------------------------
         # Write changes to disk
         logger.info("Writing changes to disk")
         adata.write_h5ad(temp_out, compression="gzip")
@@ -265,6 +276,63 @@ def download_from_link(url, save_path):
         return False
 
 
+def upload_folder_to_nextcloud(
+    data_folder: Union[str, Path],
+    nextcloud_config: dict[str, Any],
+    create_share_link: bool = True,
+) -> Path:
+    """
+    Walks a local folder, uploads each file via `save_and_upload_adata`, and writes
+    a single `share_map.json` into the original data_folder mapping each relative
+    path to its Nextcloud share link.
+
+    Parameters
+    ----------
+    data_folder : str or Path
+        Root folder containing the files to upload.
+    nextcloud_config : dict
+        Configuration dict to pass to `save_and_upload_adata`, including at least "remote_path".
+    create_share_link : bool, optional
+        Passed through to `save_and_upload_adata`. If True, ensures a share link is created.
+
+    Returns
+    -------
+    Path
+        The path to the JSON mapping file (`data_folder/share_map.json`).
+    """
+    data_folder = Path(data_folder)
+    if not data_folder.is_dir():
+        raise ValueError(f"{data_folder!r} is not a directory")
+
+    share_map: dict[str, str] = {}
+
+    # Iterate over all files in data_folder
+    for root, _, files in os.walk(data_folder):
+        root_path = Path(root)
+        for fname in files:
+            local_path = root_path / fname
+            rel_path = local_path.relative_to(data_folder)
+            remote_path = str(local_path).split("data/")[-1]
+            nextcloud_config["remote_path"] = "data/" + remote_path
+            logger.info("Uploading %s …", local_path)
+            share_link = save_and_upload_adata(
+                str(local_path),
+                nextcloud_config,
+                create_share_link=create_share_link,
+            )
+            logger.info(" → got share link %s", share_link)
+            share_map[rel_path.as_posix()] = share_link
+
+    # write the mapping JSON directly in data_folder
+    mapping_path = data_folder / "share_map.json"
+    logger.info("Writing share‐map JSON to %s", mapping_path)
+    with mapping_path.open("w", encoding="utf-8") as fp:
+        json.dump(share_map, fp, indent=2)
+
+    logger.info("Done. share_map.json at %s", mapping_path)
+    return mapping_path
+
+
 def save_and_upload_adata(local_path, nextcloud_config=None, create_share_link=True):
     """
     Saves an AnnData object to a file and optionally uploads it to a Nextcloud server based on provided configuration.
@@ -404,37 +472,91 @@ def save_embedding_data(
     return None
 
 
-def upload_file_to_nextcloud(file_path, nextcloud_url, username, password, remote_path):
+class ReadWithProgress:
     """
-    Uploads a file to a Nextcloud server via WebDAV.
-
-    Parameters:
-        file_path (str): Path to the local file to upload.
-        nextcloud_url (str): URL to your personal nextcloud instance. Can be found in the settings of your nextcloud account. (File Seetings -> WebDAV)
-        username (str): Username for Nextcloud authentication.
-        password (str): Password for Nextcloud authentication.
-        remote_path (str): Path in Nextcloud where the file will be stored.
-
-    Returns:
-        requests.Response: The response object from the requests library.
-
-    Example:
-        response = upload_file_to_nextcloud('path/to/local/file.txt',
-                                            'https://nxc-fredato.imbi.uni-freiburg.de',
-                                            'your_username',
-                                            'your_password',
-                                            '/path/to/save/file.txt')
-        print(response.status_code)
+    Wrap a file object to iterate over fixed‐size chunks, updating a tqdm bar,
+    and providing a __len__ so that requests can send a Content-Length header.
     """
-    # Complete URL to access the WebDAV interface
-    full_url = f"{nextcloud_url}/remote.php/dav/files/{username}/{remote_path}"
 
-    # Open the file in binary mode
-    with open(file_path, "rb") as file_content:
-        # Make the PUT request to upload the file
-        response = requests.put(
-            full_url, data=file_content, auth=HTTPBasicAuth(username, password)
+    def __init__(self, f, total_size, chunk_size=1024 * 1024, desc=None):
+        self.f = f
+        self.total_size = total_size
+        self.chunk_size = chunk_size
+        self.tqdm = tqdm(
+            total=total_size,
+            unit="B",
+            unit_scale=True,
+            unit_divisor=1024,
+            desc=desc,
+            leave=True,
         )
+
+    def __iter__(self):
+        return self
+
+    def __next__(self):
+        chunk = self.f.read(self.chunk_size)
+        if not chunk:
+            self.tqdm.close()
+            raise StopIteration
+        self.tqdm.update(len(chunk))
+        return chunk
+
+    def __len__(self):
+        # This lets requests detect the total length.
+        return self.total_size
+
+
+def upload_file_to_nextcloud(
+    file_path: str,
+    nextcloud_url: str,
+    username: str,
+    password: str,
+    remote_path: str,
+    chunk_size: int = 1024 * 1024,
+    timeout: tuple = (5, 60),
+) -> requests.Response:
+    """
+    Upload a file to Nextcloud via WebDAV, showing a tqdm progress bar (with speed),
+    while ensuring a proper Content-Length header (no chunked transfer).
+
+    Parameters
+    ----------
+    file_path : str
+    nextcloud_url : str
+    username : str
+    password : str
+    remote_path : str
+    chunk_size : int, optional
+    timeout : tuple, optional
+
+    Returns
+    -------
+    requests.Response
+    """
+    full_url = f"{nextcloud_url.rstrip('/')}/remote.php/dav/files/{username}/{remote_path.lstrip('/')}"
+    total_size = os.path.getsize(file_path)
+    filename = os.path.basename(file_path)
+
+    with open(file_path, "rb") as f:
+        reader = ReadWithProgress(
+            f, total_size, chunk_size, desc=f"Uploading {filename}"
+        )
+        # Manually set Content-Length so requests does NOT chunk
+        headers = {"Content-Length": str(total_size)}
+        response = requests.put(
+            full_url,
+            data=reader,
+            auth=HTTPBasicAuth(username, password),
+            headers=headers,
+            timeout=timeout,
+        )
+
+    if response.ok:
+        tqdm.write(f"✔️  Uploaded {filename}")
+    else:
+        tqdm.write(f"❌  Upload failed ({response.status_code}) for {filename}")
+
     return response
 
 
