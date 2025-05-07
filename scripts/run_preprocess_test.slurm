@@ -10,6 +10,7 @@ OUTPUT_DIR="data/RNA/processed/test"
 SPLIT_DATASET=false
 CHUNK_SIZE=50000
 BATCH_KEY=_scvi_batch
+COUNT_LAYER_KEY=decontXcounts
 CATEGORY_THRESHOLD=5
 # If false, the script will NOT split into train/val but instead
 # output a single 'all.h5ad' file. This can be used for test data or
@@ -33,6 +34,7 @@ python3 scripts/preprocess.py \
     ++input_file=$INPUT_FILE \
     ++chunk_size=$CHUNK_SIZE \
     ++batch_key=$BATCH_KEY \
+    ++count_layer_key=$COUNT_LAYER_KEY \
     ++output_dir=$OUTPUT_DIR \
     ++split_dataset=$SPLIT_DATASET \
     ++category_threshold=$CATEGORY_THRESHOLD \

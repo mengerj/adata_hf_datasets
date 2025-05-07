@@ -5,18 +5,19 @@
 #SBATCH --mem=35G               # Request memory
 #SBATCH --time=24:00:00         # Max job time
 
-INPUT_FILE="data/RNA/raw/train/geo_70k.h5ad"
+INPUT_FILE="data/RNA/raw/train/cellxgene_pseudo_bulk_35k.h5ad"
 OUTPUT_DIR="data/RNA/processed/train"
 SPLIT_DATASET=true
-CHUNK_SIZE=50000
-BATCH_KEY=study
+CHUNK_SIZE=7000
+BATCH_KEY=dataset_title
+COUNT_LAYER_KEY=decontXcounts
 CATEGORY_THRESHOLD=5
 # If false, the script will NOT split into train/val but instead
 # output a single 'all.h5ad' file. This can be used for test data or
 # "single" data scenario.
 
 # SRA options - set to true to avoid connection issues
-SKIP_SRA_FETCH=false
+SKIP_SRA_FETCH=true
 SRA_CONTINUE_ON_FAIL=false
 SRA_MAX_RETRIES=5
 
@@ -29,10 +30,11 @@ source .venv/bin/activate
 echo "venv activated"
 # Now run your Python script with the custom output directory
 python3 scripts/preprocess.py \
-    --config-name preprocess_adata_geo \
+    --config-name preprocess_adata_cellxgene \
     ++input_file=$INPUT_FILE \
     ++chunk_size=$CHUNK_SIZE \
     ++batch_key=$BATCH_KEY \
+    ++count_layer_key=$COUNT_LAYER_KEY \
     ++output_dir=$OUTPUT_DIR \
     ++split_dataset=$SPLIT_DATASET \
     ++category_threshold=$CATEGORY_THRESHOLD \
