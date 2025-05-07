@@ -129,8 +129,18 @@ class HighlyVariableGenesEmbedder(BaseEmbedder):
             Additional keyword arguments. Not used.
         """
         logger.info("Selecting top %d highly variable genes.", self.embedding_dim)
-        # only compute if not already included (from pp)
+        redo_hvg = True
+        # Check if the highly variable genes have already been computed and if there are enough
         if "highly_variable" not in adata.var:
+            n_hvg = np.sum(adata.var["highly_variable"])
+            if n_hvg >= self.embedding_dim:
+                logger.info(
+                    "Found %d highly variable genes. No need to recompute.",
+                    n_hvg,
+                )
+                redo_hvg = False
+        # only compute if not already included (from pp)
+        if redo_hvg:
             # Convert to dense for checking
             if sp.issparse(adata.X):
                 X_arr = adata.X.toarray()
