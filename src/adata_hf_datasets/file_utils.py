@@ -16,6 +16,7 @@ import random
 import anndata
 import shutil
 import gc
+from anndata.abc import CSRDataset
 
 logger = logging.getLogger(__name__)
 
@@ -119,14 +120,24 @@ def add_obs_column_to_h5ad(
 
         # ---- FIX: check for missing raw.X ----
         # This is a workaround for a bug that writing to h5ad from backed mode gives if raw is empty/corrupted
-        if adata.raw is not None:
-            try:
-                _ = adata.raw.X  # triggers the lazy check
-            except AttributeError:
-                logger.warning(
-                    "raw.X dataset is missing; dropping `.raw` to avoid write errors."
-                )
-                adata.raw = None  # safe: keeps layers / .X intact
+        is_backed_object = getattr(adata, "isbacked", False)
+        raw_is_csr_hdf5_group = (
+            adata.raw is not None
+            and isinstance(adata.raw.X, CSRDataset)  # ← catches wrapper
+            # defensive fallback in case class name changes
+            or (
+                hasattr(adata, "file")
+                and isinstance(adata.file["raw"]["X"], h5py.Group)
+            )
+        )
+
+        if is_backed_object and raw_is_csr_hdf5_group:
+            logger.info(
+                "Backed object with sparse .raw – materialising .raw in memory."
+            )
+            adata = (
+                adata.to_memory()
+            )  # move the whole object into memory and hope it isnt to big
         # -------------------------------------------------------------------
         # Write changes to disk
         logger.info("Writing changes to disk")
