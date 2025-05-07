@@ -2,7 +2,7 @@ import numpy as np
 import anndata
 import scipy.sparse as sp
 import logging
-from adata_hf_datasets.pp import ensure_log_norm
+from adata_hf_datasets.pp.utils import ensure_log_norm
 import random
 
 logger = logging.getLogger(__name__)

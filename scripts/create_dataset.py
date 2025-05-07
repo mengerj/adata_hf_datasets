@@ -1,324 +1,182 @@
 """
-Create Hugging Face datasets from processed AnnData train/val files
-or a single processed file (test). Optionally push them to the Hugging Face Hub.
+Create Hugging Face datasets from one or more processed AnnData folders.
 
-References
-----------
-- Hydra: https://hydra.cc
-- anndata: https://anndata.readthedocs.io
-- Hugging Face datasets: https://huggingface.co/docs/datasets
+A *data directory* must contain either
+    data_dir/
+        ├── train/   *.h5ad|*.zarr
+        └── val/     *.h5ad|*.zarr
+or
+    data_dir/
+        └── all/     *.h5ad|*.zarr
+
+For each split folder we
+
+1. upload the folder to Nextcloud (1 API call per split)
+2. read every file into an AnnData, check embedding keys,
+   create cell sentences, and add it to the dataset constructor
+3. build the Hugging Face dataset split
+4. optionally push the resulting DatasetDict to the HF Hub
 """
 
-import sys
+from __future__ import annotations
+
 import logging
+import sys
 from pathlib import Path
+from typing import Dict, List
+
 import scanpy as sc
 import hydra
-from omegaconf import DictConfig
 from dotenv import load_dotenv
+from omegaconf import DictConfig
+from datasets import Dataset, DatasetDict
 
-from datasets import DatasetDict
-from adata_hf_datasets.ds_constructor import (
-    AnnDataSetConstructor,
-)
-from adata_hf_datasets.utils import (
-    setup_logging,
-    annotate_and_push_dataset,
-)
-from adata_hf_datasets.file_utils import save_and_upload_adata
+from adata_hf_datasets.ds_constructor import AnnDataSetConstructor
+from adata_hf_datasets.utils import annotate_and_push_dataset, setup_logging
 from adata_hf_datasets.cell_sentences import create_cell_sentences
+from adata_hf_datasets.file_utils import upload_folder_to_nextcloud
 from hydra.utils import to_absolute_path
 
 logger = logging.getLogger(__name__)
 
 
-@hydra.main(version_base=None, config_path="../conf", config_name="create_dataset")
-def main(cfg: DictConfig):
+# -----------------------------------------------------------------------------#
+# core helpers
+# -----------------------------------------------------------------------------#
+def _read_adata(path: Path):
+    """Read an AnnData from .h5ad or .zarr."""
+    if path.suffix == ".h5ad":
+        return sc.read_h5ad(path)
+    if path.suffix == ".zarr":
+        return sc.read_zarr(path)
+    raise ValueError(f"Unsupported file type: {path}")
+
+
+def _validate_obsm_keys(adata, required_keys: List[str], file_path: Path):
+    """Raise if *any* required embedding key is missing."""
+    missing = [k for k in required_keys if k not in adata.obsm.keys()]
+    if missing:
+        raise KeyError(f"File '{file_path}': missing required obsm keys: {missing}")
+
+
+def _add_sample_id_column(adata, column_name: str = "sample_id_og"):
+    """Create a new column in adata.obs with the values stored in obs.index."""
+    adata.obs[column_name] = adata.obs.index
+    return adata
+
+
+def build_split_dataset(
+    split_dir: Path,
+    share_links: Dict[str, str],
+    sentence_keys: List[str],
+    caption_key: str | None,
+    batch_key: str,
+    negatives_per_sample: int,
+    dataset_format: str,
+    gene_name_column: str,
+    annotation_key: str,
+    cs_length: int,
+) -> Dataset:
     """
-    Main function to build train/val (split_dataset=true) or single (split_dataset=false)
-    huggingface dataset from processed .h5ad files, then optionally push to the Hub.
+    Build a Hugging Face dataset for **one split** (train / val / all).
 
     Parameters
     ----------
-    cfg : DictConfig
-        Hydra config containing:
-        - split_dataset (bool)
-        - processed_paths_train (list[str])  [if split_dataset=true]
-        - processed_paths_val (list[str])    [if split_dataset=true]
-        - processed_paths_all (list[str])    [if split_dataset=false]
-        - caption_key (str)
-        - negatives_per_sample (int)
-        - dataset_type (str)
-        - push_to_hub (bool)
-        - repo_id (str)
-        - obsm_key (str)
-    """
-    setup_logging()
-    load_dotenv(override=True)
-
-    split_dataset = cfg.split_dataset
-    caption_key = cfg.caption_key
-    negatives_per_sample = cfg.negatives_per_sample
-    dataset_type = cfg.dataset_type
-    push_to_hub_flag = cfg.push_to_hub
-    base_repo_id = cfg.base_repo_id
-    obsm_key = cfg.obsm_key if "obsm_key" in cfg else None
-    obs_key = cfg.obs_key if "obs_key" in cfg else None
-    batch_key = cfg.batch_key
-    nextcloud_config = cfg.nextcloud_config
-    share_links = {}  # to store share links for each dataset
-    if obsm_key and obs_key:
-        raise ValueError("""Please provide either obsm_key or obs_key, not both. Giving obsm_key will use a numeric representation
-                         of the data, while obs_key will use the string representation.""")
-    data_rep_tag = obsm_key if obsm_key else obs_key
-    logger.info("Using %s as the data representation.", data_rep_tag)
-    if split_dataset:
-        # 1) Construct the train dataset
-        adata_train = sc.read_h5ad(to_absolute_path(cfg.processed_path_train))
-        adata_train = create_cell_sentences(
-            adata=adata_train,
-            gene_name_column=cfg.gene_name_column,
-            annotation_column=cfg.annotation_key,
-            cs_length=cfg.cs_length,  # or whatever number of genes you want
-        )
-        train_dataset = build_hf_dataset(
-            adata=adata_train,
-            caption_key=caption_key,
-            negatives_per_sample=negatives_per_sample,
-            dataset_type=dataset_type,
-            obsm_key=obsm_key,
-            obs_key=obs_key,
-            batch_key=batch_key,
-        )
-        # Step 1: Save and upload .h5ad file
-        nextcloud_config["remote_path"] = cfg.processed_path_train
-        share_links["train"] = save_and_upload_adata(
-            to_absolute_path(cfg.processed_path_train),
-            nextcloud_config,
-            create_share_link=True,
-        )
-
-        # 2) Construct the val dataset
-        adata_val = sc.read_h5ad(to_absolute_path(cfg.processed_path_val))
-        adata_val = create_cell_sentences(
-            adata=adata_val,
-            gene_name_column=cfg.gene_name_column,
-            annotation_column=cfg.annotation_key,
-            cs_length=cfg.cs_length,  # or whatever number of genes you want
-        )
-        val_dataset = build_hf_dataset(
-            adata=adata_val,
-            caption_key=caption_key,
-            negatives_per_sample=negatives_per_sample,
-            dataset_type=dataset_type,
-            obsm_key=obsm_key,
-            obs_key=obs_key,
-            batch_key=batch_key,
-        )
-        nextcloud_config["remote_path"] = cfg.processed_path_val
-        share_links["val"] = save_and_upload_adata(
-            to_absolute_path(cfg.processed_path_val),
-            nextcloud_config,
-            create_share_link=True,
-        )
-
-        # 3) Combine into a DatasetDict
-        hf_dataset = DatasetDict({"train": train_dataset, "val": val_dataset})
-
-        # collect the paths for the final repo_id
-        naming_path = cfg.processed_path_train
-
-    else:
-        # Single dataset scenario (e.g., for test data).
-        logger.info("Building single dataset (no train/val split).")
-        adata_all = sc.read_h5ad(cfg.processed_path_all)
-        single_dataset = build_hf_dataset(
-            adata=adata_all,
-            caption_key=caption_key,
-            negatives_per_sample=negatives_per_sample,
-            dataset_type=dataset_type,
-            obsm_key=obsm_key,
-            obs_key=obs_key,
-        )
-        nextcloud_config["remote_path"] = cfg.processed_path_all
-        share_links["all"] = save_and_upload_adata(
-            to_absolute_path(cfg.processed_path_all),
-            nextcloud_config,
-            create_share_link=True,
-        )
-
-        # Use "test" or "all" as the single split name
-        # (HuggingFace Datasets can have any split name).
-        hf_dataset = DatasetDict({"test": single_dataset})
-
-        # collect the paths for the final repo_id
-        naming_path = cfg.processed_paths_all
-
-    logger.info("Constructed a DatasetDict with keys: %s", list(hf_dataset.keys()))
-
-    final_repo_id = build_repo_id(
-        base_repo_id=base_repo_id,
-        file_path=naming_path,
-        dataset_type=dataset_type,
-        caption_key=caption_key,
-        data_rep_tag=data_rep_tag,
-    )
-    logger.info("Final repo_id would be: %s", final_repo_id)
-
-    # (Optional) push to Hub
-    if push_to_hub_flag:
-        push_dataset_to_hub(
-            hf_dataset=hf_dataset,
-            repo_id=final_repo_id,
-            caption_key=caption_key,
-            obsm_key=obsm_key,
-            dataset_type=dataset_type,
-            share_links=share_links,
-        )
-
-    logger.info("Dataset creation script completed successfully.")
-
-
-def build_hf_dataset(
-    adata,
-    caption_key,
-    negatives_per_sample,
-    dataset_type,
-    obsm_key,
-    obs_key,
-    batch_key,
-):
-    """
-    Build a Hugging Face dataset from one or more processed .h5ad files.
-
-    Parameters
-    ----------
-    caption_key : str
-        Observation key used for generating captions.
-    negatives_per_sample : int
-        Number of negative samples to generate per positive sample.
-    dataset_type : str
-        Type of dataset to construct (e.g. "pairs", "multiplets", "single").
-    obsm_key : list of str
-        Keys in adata.obsm that contain embeddings.
-    obs_key : str
-        Key in adata.obs that contains string representations of the data.
-    batch_key : str
-        Key in adata.obs that contains batch information. For sampling in batch negatives.
+    split_dir
+        Folder with *.h5ad / *.zarr files.
+    share_links
+        Mapping *filename → Nextcloud share link* returned by
+        ``upload_folder_to_nextcloud``.
+    sentence_keys, caption_key, batch_key
+        Column names to feed into `AnnDataSetConstructor`.
+    negatives_per_sample, dataset_format
+        Passed through unchanged.
+    gene_name_column
+        Column name in AnnData.obs with gene names.
+    annotation_key
+        Column name in AnnData.obs with cell type annotations.
+    cs_length
+        Length of the cell sentence to create.
 
     Returns
     -------
-    dataset : datasets.Dataset
-        The combined Hugging Face dataset from all provided .h5ad files.
+    datasets.Dataset
+        All samples from *split_dir* pooled together.
     """
-    # If nextcloud is used, set the remote path to the local path
-    cons = AnnDataSetConstructor(
-        dataset_format=dataset_type, negatives_per_sample=negatives_per_sample
+    constructor = AnnDataSetConstructor(
+        dataset_format=dataset_format, negatives_per_sample=negatives_per_sample
     )
 
-    cons.add_anndata(
-        adata,
-        obs_key=obs_key,
-        obsm_key=obsm_key,
-        caption_key=caption_key,
-        batch_key=batch_key,
-    )
+    # iterate over every file in this split
+    for f in sorted(split_dir.glob("*.h5ad")) + sorted(split_dir.glob("*.zarr")):
+        logger.info("Reading %s", f.name)
+        adata = _read_adata(f)
 
-    dataset = cons.get_dataset()
-    return dataset
-
-
-def build_repo_id(base_repo_id, file_path, dataset_type, caption_key, data_rep_tag):
-    """
-    Dynamically build the final Hugging Face repo_id by:
-    1) Extracting each file's "name" (e.g. parent directory).
-    2) Deduplicating and concatenating them with underscores.
-    3) Appending dataset_type and caption_key.
-    4) Prepending the base_repo_id (e.g. "jo-mengr/").
-
-    Parameters
-    ----------
-    base_repo_id : str
-        Base portion of the HF repo ID, e.g. "jo-mengr/".
-    file_paths : list of str
-        Paths to processed AnnData .h5ad files (train, val, or test).
-    dataset_type : str
-        e.g. "pairs", "multiplets", "single".
-    caption_key : str
-        e.g. "natural_language_annotation".
-    data_rep_tag : str
-        e.g. "obsm_key" or "obs_key" to indicate the type of data representation.
-
-    Returns
-    -------
-    str
-        e.g.: "jo-mengr/cellxgene_pseudo_bulk_3_5k_pairs_natural_language_annotation"
-        or "jo-mengr/cellxgene_pseudo_bulk_3_5k_geo_7k_pairs_natural_language_annotation"
-        if multiple datasets.
-    """
-    # Collect dataset "names" from each path.
-    # For instance, if the path is: "data/RNA/processed/train/cellxgene_pseudo_bulk_3_5k/train.h5ad"
-    # we can look at parent.name -> "cellxgene_pseudo_bulk_3_5k"
-    # Alternatively, use Path(p).stem or another approach.
-    names = []
-    p_obj = Path(file_path)
-    if p_obj.parent.name == "joined":
-        # Use the directory before "joined" for the dataset name
-        dataset_name = p_obj.parent.parent.name
-    else:
-        # If 'joined' is not in the expected place, log a warning and use the immediate parent
-        logger.warning(
-            f"Expected 'joined' directory, but found '{p_obj.parent.name}' in path: {file_path}"
+        _add_sample_id_column(
+            adata, column_name="sample_id_og"
+        )  # This is to have the sample id in obs, to use it as a cell sentence
+        # create / update cell sentences *in place*
+        adata = create_cell_sentences(
+            adata=adata,
+            gene_name_column=gene_name_column,
+            annotation_column=annotation_key,
+            cs_length=cs_length,
         )
-        dataset_name = p_obj.parent.name
-    if dataset_name not in names:
-        names.append(dataset_name)
 
-    # Join them with underscores
-    joined_names = "_".join(names)
+        constructor.add_anndata(
+            adata=adata,
+            sentence_keys=sentence_keys,
+            caption_key=caption_key,
+            batch_key=batch_key,
+            share_link=share_links.get(f.name),
+        )
 
-    # Trim trailing slash from base_repo_id if needed
-    base_stripped = base_repo_id.rstrip("/")
+    return constructor.get_dataset()
 
-    # Build final
-    final_repo_id = (
-        f"{base_stripped}/{joined_names}_{dataset_type}_{caption_key}_{data_rep_tag}"
-    )
-    return final_repo_id
+
+def build_repo_id(
+    base_repo_id: str, dataset_names: List[str], dataset_format: str, caption_key: str
+) -> str:
+    """
+    Compose the final HF repo-ID.
+
+    Example:
+        >>> build_repo_id("jo-mengr", ["bulk_5k", "geo"], "pairs", "cell_type")
+        'jo-mengr/bulk_5k_geo_pairs_cell_type'
+    """
+    joined = "_".join(sorted(set(dataset_names)))
+    return f"{base_repo_id.rstrip('/')}/{joined}_{dataset_format}_{caption_key}"
 
 
 def push_dataset_to_hub(
-    hf_dataset, repo_id, caption_key, obsm_key, dataset_type, share_links
+    hf_dataset: DatasetDict,
+    repo_id: str,
+    caption_key: str,
+    embedding_keys: List[str],
+    dataset_format: str,
+    share_links: Dict[str, Dict[str, str]],
 ):
     """
-    Push a DatasetDict to the Hugging Face Hub, with annotated metadata.
-
-    Parameters
-    ----------
-    hf_dataset : DatasetDict
-        The dataset with one or more splits (train/val or test).
-    repo_id : str
-        The Hugging Face repository ID (e.g., 'username/my_adata_dataset').
-    caption_key : str
-        Observation column used to create captions.
-    obsm_key : str
-        Which embeddings were included (.obsm) for metadata.
-    dataset_type : str
-        The type of dataset ("pairs", "multiplets", "single", etc.).
-
-    Returns
-    -------
-    None
+    Push DatasetDict *hf_dataset* to the Hub, writing a rich README.
     """
-    if dataset_type in ["pairs", "multiplets"]:
-        if caption_key in ["natural_language_annotation"]:
-            caption_generation = "Captions generated by LLMs based on available metadata. See the CellWhisperer paper for details."
+    if dataset_format in {"pairs", "multiplets"}:
+        if caption_key == "natural_language_annotation":
+            caption_generation = (
+                "Captions generated by LLMs based on available metadata. "
+                "See the CellWhisperer paper for details."
+            )
         else:
-            caption_generation = f"Captions generated via SimpleCaptionConstructor (obs key: '{caption_key}')."
+            caption_generation = f"Captions taken from obs column '{caption_key}'."
     else:
         caption_generation = None
-    embedding_generation = f"Included embeddings: {obsm_key}, used as a numeric representation of the data."
-    dataset_type_explanation = f"Dataset type: {dataset_type} (suitable for relevant training or inference tasks)."
+
+    embedding_generation = (
+        f"Each AnnData contained the following embedding keys: {embedding_keys}."
+    )
+    dataset_type_explanation = (
+        f"Dataset type: {dataset_format} (suitable for relevant "
+        "contrastive-learning or inference tasks)."
+    )
 
     annotate_and_push_dataset(
         dataset=hf_dataset,
@@ -326,16 +184,127 @@ def push_dataset_to_hub(
         embedding_generation=embedding_generation,
         dataset_type_explanation=dataset_type_explanation,
         repo_id=repo_id,
-        readme_template_name="cellwhisperer_train",  # or whichever template you have
+        readme_template_name="cellwhisperer_train",
         metadata={"adata_links": share_links},
         private=True,
     )
     logger.info("Dataset pushed to HF Hub at %s", repo_id)
 
 
+# -----------------------------------------------------------------------------#
+# main Hydra entry-point
+# -----------------------------------------------------------------------------#
+@hydra.main(version_base=None, config_path="../conf", config_name="create_dataset")
+def main(cfg: DictConfig):
+    """
+    Build a Hugging Face dataset (with optional splits) from a *data directory*.
+    """
+    setup_logging()
+    load_dotenv(override=True)
+
+    data_dir = Path(to_absolute_path(cfg.data_dir)).expanduser()
+    if not data_dir.exists():
+        raise FileNotFoundError(f"data_dir not found: {data_dir}")
+
+    sentence_keys: List[str] = cfg.sentence_keys
+    caption_key: str | None = (
+        cfg.caption_key if cfg.dataset_format != "single" else None
+    )
+    batch_key: str = cfg.batch_key
+    negatives_per_sample: int = cfg.negatives_per_sample
+    dataset_format: str = cfg.dataset_format
+    required_obsm_keys: List[str] = cfg.required_obsm_keys
+    base_repo_id: str = cfg.base_repo_id
+    push_to_hub_flag: bool = cfg.push_to_hub
+
+    nextcloud_cfg = dict(cfg.nextcloud_config)
+
+    # ------------------------------------------------------------------ #
+    # detect splits
+    # ------------------------------------------------------------------ #
+    if (data_dir / "train").is_dir() and (data_dir / "val").is_dir():
+        split_names = ["train", "val"]
+    elif (data_dir / "all").is_dir():
+        split_names = ["all"]
+    else:
+        raise ValueError(
+            "data_dir must contain 'train' & 'val' OR a single 'all' folder."
+        )
+
+    hf_splits: Dict[str, Dataset] = {}
+    share_links_per_split: Dict[str, Dict[str, str]] = {}
+    dataset_name_parts: List[str] = []
+
+    for split in split_names:
+        split_dir = data_dir / split
+        logger.info("Processing split '%s' (%s)", split, split_dir)
+
+        # ------------------------------------------------------------------ #
+        # 1) upload folder once – returns filename → link mapping
+        # ------------------------------------------------------------------ #
+        nextcloud_cfg["remote_path"] = str(split_dir)
+        share_links = upload_folder_to_nextcloud(
+            data_folder=str(split_dir),
+            nextcloud_config=nextcloud_cfg,
+        )
+        share_links_per_split[split] = share_links
+
+        # ------------------------------------------------------------------ #
+        # 2) sanity-check every file before heavy processing
+        # ------------------------------------------------------------------ #
+        for f in sorted(split_dir.glob("*.h5ad")) + sorted(split_dir.glob("*.zarr")):
+            adata_tmp = _read_adata(f)
+            _validate_obsm_keys(adata_tmp, required_obsm_keys, f)
+            del adata_tmp
+
+        # ------------------------------------------------------------------ #
+        # 3) build the HF dataset for this split
+        # ------------------------------------------------------------------ #
+        hf_splits[split] = build_split_dataset(
+            split_dir=split_dir,
+            share_links=share_links,
+            sentence_keys=sentence_keys,
+            caption_key=caption_key,
+            batch_key=batch_key,
+            negatives_per_sample=negatives_per_sample,
+            dataset_format=dataset_format,
+            gene_name_column=cfg.gene_name_column,
+            annotation_key=cfg.annotation_key,
+            cs_length=cfg.cs_length,
+        )
+
+        dataset_name_parts.append(split_dir.name)
+
+    hf_dataset = DatasetDict(hf_splits)
+    logger.info("Built DatasetDict with splits: %s", list(hf_dataset.keys()))
+
+    # ------------------------------------------------------------------ #
+    # final repo-ID and optional push
+    # ------------------------------------------------------------------ #
+    repo_id = build_repo_id(
+        base_repo_id=base_repo_id,
+        dataset_names=dataset_name_parts,
+        dataset_format=dataset_format,
+        caption_key=caption_key or "no_caption",
+    )
+    logger.info("Final repo_id would be: %s", repo_id)
+
+    if push_to_hub_flag:
+        push_dataset_to_hub(
+            hf_dataset=hf_dataset,
+            repo_id=repo_id,
+            caption_key=caption_key or "",
+            embedding_keys=required_obsm_keys,
+            dataset_format=dataset_format,
+            share_links=share_links_per_split,
+        )
+
+    logger.info("Dataset creation script finished.")
+
+
 if __name__ == "__main__":
     try:
         main()
     except Exception:
-        logger.exception("An error occurred during dataset creation.")
+        logger.exception("Dataset creation failed.")
         sys.exit(1)

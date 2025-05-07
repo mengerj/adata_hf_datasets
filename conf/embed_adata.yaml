@@ -3,13 +3,13 @@
 #  - "data/RNA/processed/train/cellxgene_pseudo_bulk_3_5k/all_train.h5ad"
 #  - "data/RNA/processed/train/cellxgene_pseudo_bulk_3_5k/all_val.h5ad"
 input_files:
-  - "data/RNA/processed/train/cellxgene_pseudo_bulk_35k/train.h5ad"
-  - "data/RNA/processed/train/cellxgene_pseudo_bulk_35k/val.h5ad"
+  - "data/RNA/processed/train/cellxgene_pseudo_bulk_35k/train/chunk_0.h5ad"
+  - "data/RNA/processed/train/cellxgene_pseudo_bulk_35k/val/chunk_0.h5ad"
 # per default, the output dir is build based on the input file name
 output_dir: null
 # Embedding method to use
 # A list with some of: ["scvi_fm", "geneformer", "pca", "hvg"]
-methods: ["scvi_fm", "pca", "hvg"]
+methods: ["geneformer"] #["scvi_fm", "pca", "hvg"]
 
 # Batch key in adata.obs (used by scvi_fm)
 batch_key: "dataset_title"

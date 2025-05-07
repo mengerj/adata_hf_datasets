@@ -287,60 +287,185 @@ def download_from_link(url, save_path):
         return False
 
 
+# -----------------------------------------------------------------------------#
+# Helper: Very fast sanity-check of a Nextcloud share link                      #
+# -----------------------------------------------------------------------------#
+HDF5_MAGIC = b"\x89HDF\r\n\x1a\n"  # First 8 bytes of every HDF5 file (.h5, .h5ad)
+NUMPY_MAGIC = b"\x93NUMPY"  # First 6 bytes of a .npy file
+ZIP_MAGIC = b"PK\x03\x04"  # First 4 bytes of a zip/npz
+_CHUNK_RANGE_HEADER = {"Range": "bytes=0-255"}  # 256-byte range
+
+
+def verify_share_link(
+    share_link: str,
+    expected_suffix: str | None = None,
+    timeout: int = 10,
+) -> bool:
+    """
+    Cheap on-the-wire verification that a Nextcloud share link is alive and
+    points to a *downloadable* file of the expected type.
+
+    The function sends _two_ minimal requests:
+
+    1. **HEAD** – confirms HTTP 2xx and collects basic metadata.
+    2. **Range GET** (first ≤256 bytes) – checks the file signature (“magic”).
+
+    Parameters
+    ----------
+    share_link
+        Public Nextcloud share URL.
+    expected_suffix
+        File‐extension (e.g. ``".h5ad"``).  When *None*, the suffix is inferred
+        from the URL.
+    timeout
+        Network timeout in seconds for each request.
+
+    Returns
+    -------
+    bool
+        ``True`` if the link is reachable *and* the leading bytes match the
+        signature of ``expected_suffix`` (if supplied); ``False`` otherwise.
+
+    Notes
+    -----
+    *No full download is performed.*  The largest transfer is 256 bytes.
+    """
+    suffix = (expected_suffix or Path(share_link).suffix).lower()
+
+    # --- 1) HEAD -------------------------------------------------------------#
+    try:
+        head = requests.head(share_link, allow_redirects=True, timeout=timeout)
+        head.raise_for_status()
+    except requests.RequestException as exc:
+        logger.warning("HEAD request failed for %s → %s", share_link, exc)
+        return False
+
+    # --- 2) tiny Range-GET ---------------------------------------------------#
+    try:
+        rng = requests.get(
+            share_link,
+            headers=_CHUNK_RANGE_HEADER,
+            allow_redirects=True,
+            timeout=timeout,
+        )
+        rng.raise_for_status()
+        magic = rng.content[:8]
+    except requests.RequestException as exc:
+        logger.warning("Range request failed for %s → %s", share_link, exc)
+        return False
+
+    # --- 3) Signature check --------------------------------------------------#
+    if suffix == ".h5ad":
+        return magic.startswith(HDF5_MAGIC)
+    if suffix == ".npy":
+        return magic.startswith(NUMPY_MAGIC)
+    if suffix == ".npz":
+        return magic.startswith(ZIP_MAGIC)
+    # Unknown type → we can at least confirm it is downloadable
+    return True
+
+
 def upload_folder_to_nextcloud(
     data_folder: Union[str, Path],
     nextcloud_config: dict[str, Any],
     create_share_link: bool = True,
 ) -> Path:
     """
-    Walks a local folder, uploads each file via `save_and_upload_adata`, and writes
-    a single `share_map.json` into the original data_folder mapping each relative
-    path to its Nextcloud share link.
+    Upload every file under *data_folder* to Nextcloud **unless** a valid link
+    already exists in ``share_map.json``.
+
+    For each (new or re-uploaded) file a fresh share link is obtained via
+    :pyfunc:`save_and_upload_adata`.  All final links – verified existing ones
+    *and* newly created ones – are (over)written to one
+    ``data_folder/share_map.json``.
 
     Parameters
     ----------
-    data_folder : str or Path
-        Root folder containing the files to upload.
-    nextcloud_config : dict
-        Configuration dict to pass to `save_and_upload_adata`, including at least "remote_path".
-    create_share_link : bool, optional
-        Passed through to `save_and_upload_adata`. If True, ensures a share link is created.
+    data_folder
+        Folder that contains the files to be uploaded.
+    nextcloud_config
+        Dict forwarded to :pyfunc:`save_and_upload_adata`.
+        At minimum it must contain *remote_path*; this field is overwritten
+        internally for each file.
+    create_share_link
+        Forwarded to :pyfunc:`save_and_upload_adata`.
 
     Returns
     -------
     Path
-        The path to the JSON mapping file (`data_folder/share_map.json`).
+        Absolute path of the written ``share_map.json``.
+
+    Raises
+    ------
+    ValueError
+        If *data_folder* is not an existing directory.
+
+    References
+    ----------
+    All data originate from files under *data_folder* and are stored to the
+    Nextcloud instance configured in *nextcloud_config*.
     """
+
     data_folder = Path(data_folder)
     if not data_folder.is_dir():
         raise ValueError(f"{data_folder!r} is not a directory")
 
-    share_map: dict[str, str] = {}
+    # ---------------------------------------------------------------------#
+    # 1) Load existing mapping (if any)                                     #
+    # ---------------------------------------------------------------------#
+    mapping_path = data_folder / "share_map.json"
+    if mapping_path.exists():
+        logger.info("Found existing share_map.json → loading")
+        share_map: dict[str, str] = json.loads(mapping_path.read_text("utf-8"))
+    else:
+        logger.info("No share_map.json present → starting fresh")
+        share_map = {}
 
-    # Iterate over all files in data_folder
+    # ---------------------------------------------------------------------#
+    # 2) Walk over every file                                               #
+    # ---------------------------------------------------------------------#
     for root, _, files in os.walk(data_folder):
         root_path = Path(root)
         for fname in files:
             local_path = root_path / fname
-            rel_path = local_path.relative_to(data_folder)
-            remote_path = str(local_path).split("data/")[-1]
-            nextcloud_config["remote_path"] = "data/" + remote_path
-            logger.info("Uploading %s …", local_path)
+            if local_path.name == "share_map.json":
+                continue  # skip the mapping file itself
+
+            rel_path = local_path.relative_to(data_folder).as_posix()
+            remote_path = f"data/{rel_path}"
+
+            link_is_valid = False
+            if rel_path in share_map:
+                candidate_link = share_map[rel_path]
+                logger.info("Verifying stored share link for %s …", rel_path)
+                link_is_valid = verify_share_link(candidate_link, local_path.suffix)
+                if link_is_valid:
+                    logger.info("✓ link OK – skipping upload")
+                else:
+                    logger.info("✗ link broken – will re-upload")
+
+            if link_is_valid:
+                continue
+
+            # ----------------------------------------------------------------#
+            # 2a) Upload / re-upload                                          #
+            # ----------------------------------------------------------------#
+            nc_cfg = {**nextcloud_config, "remote_path": remote_path}
+            logger.info("Uploading %s → %s …", local_path, remote_path)
             share_link = save_and_upload_adata(
                 str(local_path),
-                nextcloud_config,
+                nc_cfg,
                 create_share_link=create_share_link,
             )
-            logger.info(" → got share link %s", share_link)
-            share_map[rel_path.as_posix()] = share_link
+            logger.info(" → got new share link %s", share_link)
+            share_map[rel_path] = share_link
 
-    # write the mapping JSON directly in data_folder
-    mapping_path = data_folder / "share_map.json"
-    logger.info("Writing share‐map JSON to %s", mapping_path)
-    with mapping_path.open("w", encoding="utf-8") as fp:
-        json.dump(share_map, fp, indent=2)
-
-    logger.info("Done. share_map.json at %s", mapping_path)
+    # ---------------------------------------------------------------------#
+    # 3) Persist (possibly updated) share_map                               #
+    # ---------------------------------------------------------------------#
+    logger.info("Writing share_map.json to %s", mapping_path)
+    mapping_path.write_text(json.dumps(share_map, indent=2), encoding="utf-8")
+    logger.info("Done.")
     return mapping_path
 
 
