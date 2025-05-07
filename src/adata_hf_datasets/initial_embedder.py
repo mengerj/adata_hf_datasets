@@ -11,11 +11,13 @@ from adata_hf_datasets.pp.utils import (
 )
 from adata_hf_datasets.pp.pybiomart_utils import add_ensembl_ids, ensure_ensembl_index
 from scvi.hub import HubModel
+import shutil
+import tempfile
+import uuid
+import psutil
 from scvi.model import SCVI
 from pathlib import Path
 import os
-import tempfile
-import psutil
 import scanpy as sc
 import scipy.sparse as sp
 import numpy as np
@@ -103,7 +105,8 @@ class HighlyVariableGenesEmbedder(BaseEmbedder):
         """
         logger.info("Normalizing and log-transforming data before HVG selection.")
         # check if the data is already normalized
-        ensure_log_norm(adata)
+        if "highly_variable" not in adata.var:
+            ensure_log_norm(adata, var_threshold=1)
         # First save the raw counts as a layer
 
     def embed(
@@ -126,31 +129,42 @@ class HighlyVariableGenesEmbedder(BaseEmbedder):
             Additional keyword arguments. Not used.
         """
         logger.info("Selecting top %d highly variable genes.", self.embedding_dim)
-
-        # Convert to dense for checking
-        if sp.issparse(adata.X):
-            X_arr = adata.X.toarray()
-        else:
-            X_arr = adata.X
-        # Find genes (columns) with any infinite values
-        finite_mask = np.isfinite(X_arr).all(axis=0)
-        n_bad = np.count_nonzero(~finite_mask)
-        if n_bad > 0:
-            logger.warning(
-                "Found %d genes with infinite values. Removing those genes.", n_bad
+        redo_hvg = True
+        # Check if the highly variable genes have already been computed and if there are enough
+        if "highly_variable" not in adata.var:
+            n_hvg = np.sum(adata.var["highly_variable"])
+            if n_hvg >= self.embedding_dim:
+                logger.info(
+                    "Found %d highly variable genes. No need to recompute.",
+                    n_hvg,
+                )
+                redo_hvg = False
+        # only compute if not already included (from pp)
+        if redo_hvg:
+            # Convert to dense for checking
+            if sp.issparse(adata.X):
+                X_arr = adata.X.toarray()
+            else:
+                X_arr = adata.X
+            # Find genes (columns) with any infinite values
+            finite_mask = np.isfinite(X_arr).all(axis=0)
+            n_bad = np.count_nonzero(~finite_mask)
+            if n_bad > 0:
+                logger.warning(
+                    "Found %d genes with infinite values. Removing those genes.", n_bad
+                )
+                # Remove genes with infinite values
+                adata = adata[:, finite_mask]
+            # Check if enough valid genes are present in each batch
+            if batch_key is not None:
+                consolidate_low_frequency_categories(
+                    adata, columns=[batch_key], threshold=3, remove=False
+                )
+                check_enough_genes_per_batch(adata, batch_key, self.embedding_dim)
+            # remove cells with infinity values
+            sc.pp.highly_variable_genes(
+                adata, n_top_genes=self.embedding_dim, batch_key=batch_key
             )
-            # Remove genes with infinite values
-            adata = adata[:, finite_mask]
-        # Check if enough valid genes are present in each batch
-        if batch_key is not None:
-            consolidate_low_frequency_categories(
-                adata, columns=[batch_key], threshold=3, remove=False
-            )
-            check_enough_genes_per_batch(adata, batch_key, self.embedding_dim)
-        # remove cells with infinity values
-        sc.pp.highly_variable_genes(
-            adata, n_top_genes=self.embedding_dim, batch_key=batch_key
-        )
 
         if "highly_variable" not in adata.var:
             raise ValueError("Failed to compute highly variable genes.")
@@ -848,7 +862,35 @@ class SCVIEmbedder(BaseEmbedder):
         logger.info("Successfully prepared query data for SCVI")
 
     @staticmethod
-    def _setup_model_with_ref(model, reference_adata):
+    def _is_shared_path(path: Path) -> bool:
+        """
+        Heuristic – consider paths on NFS/Lustre or in $CACHE_DIR 'shared'.
+        Adapt if you have a better way to decide.
+        """
+        return not path.is_symlink() and "/tmp/" not in path.as_posix()
+
+    @staticmethod
+    def _localize_hubmodel(model: HubModel) -> HubModel:
+        """
+        Copy the weight file (model.pt) into a unique temp dir and return a *new*
+        HubModel instance that points there.  This eliminates cross-process races.
+        """
+        orig_dir = Path(model.local_dir)
+        tmp_dir = Path(tempfile.gettempdir()) / f"scvi_{uuid.uuid4().hex}"
+        tmp_dir.mkdir(parents=True, exist_ok=True)
+
+        # copy the weight file; other files are usually tiny, copy if you need them
+        shutil.copy2(orig_dir / "model.pt", tmp_dir / "model.pt")
+        if (orig_dir / "adata.h5ad").is_file():
+            shutil.copy2(orig_dir / "adata.h5ad", tmp_dir / "adata.h5ad")
+        # reuse the existing metadata / model-card objects
+        return HubModel(
+            local_dir=str(tmp_dir),
+            metadata=model.metadata,
+            model_card=model.model_card,
+        )
+
+    def _setup_model_with_ref(self, model, reference_adata):
         """
         Set up the SCVI model with the reference AnnData.
 
@@ -864,6 +906,12 @@ class SCVIEmbedder(BaseEmbedder):
         SCVI
             The SCVI model, loaded with reference AnnData.
         """
+        if self._is_shared_path(Path(model.local_dir)):
+            logger.info(
+                "Copying SCVI weight file to a worker-unique temp dir to avoid NFS races."
+            )
+            model = self._localize_hubmodel(model)
+
         logger.info("Preparing SCVI model with reference data...")
         # didn't quite understand why, but this property has to be deleted
         try:
