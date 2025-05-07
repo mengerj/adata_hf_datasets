@@ -473,12 +473,12 @@ class GeneformerEmbedder(BaseEmbedder):
                 Path(__file__).resolve().parents[2] / "geneformer" / "adata.h5ad"
             )
         self.in_adata_path = Path(adata_path)
-        adata_name = self.in_adata_path.stem
+        # adata_name = self.in_adata_path.stem
         # save the tokenized dataset in the same directory as the adata
-        self.adata_dir = self.in_adata_path.parent / "geneformer"
-        self.adata_path = self.adata_dir / adata_name
-        adata.write_h5ad(self.adata_path)
-        self.out_dataset_dir = self.adata_dir
+        self.adata_dir = self.in_adata_path.parent
+        # self.adata_path = self.adata_dir / adata_name
+        # adata.write_h5ad(self.adata_path)
+        self.out_dataset_dir = self.adata_dir / "geneformer"
         # 1. Make sure the data has the required fields
         if "ensembl_id" not in adata.var.columns:
             logger.error(
@@ -599,8 +599,6 @@ class GeneformerEmbedder(BaseEmbedder):
                 f"No tokenized dataset found at {dataset_path}. "
                 "Did you run `prepare(..., do_tokenization=True)` first?"
             )
-        if not self.adata_path:
-            raise ValueError("Run prepare first to set the adata_path.")
 
         # Check if csv with embeddings already exists (is simultaniously created for both splits of the dataset and therefore doesnt need to be recreated)
         embs_csv_path = self.out_dataset_dir / "geneformer_embeddings.csv"
