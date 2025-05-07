@@ -5,10 +5,10 @@ set -euo pipefail
 # === User‐configurable section ===
 MODE="cpu"         # "cpu" or "gpu"
 GPU_COUNT="1"      # how many GPUs if MODE=gpu
-DATANAME="cellxgene_pseudo_bulk_35k"
-BATCH_KEY="dataset_title"
+DATANAME="geo_700k"
+BATCH_KEY="study"
 BATCH_SIZE=32
-METHODS="hvg pca scvi_fm"   # space‐separated list
+METHODS="hvg pca scvi_fm"  #"geneformer"  # space‐separated list
 SCRIPT="scripts/embed_chunks_parallel.slurm"
 TRAIN_OR_TEST="train"
 # =================================
@@ -57,7 +57,7 @@ bash "$SCRIPT"
 }
 
 if [[ "$TRAIN_OR_TEST" == "test" ]]; then
-    DATA_DIR="data/RNA/processed/test/${DATANAME}"
+    DATA_DIR="data/RNA/processed/test/${DATANAME}/all"
     submit_array test "$DATA_DIR"
 else
     TRAIN_DIR="data/RNA/processed/train/${DATANAME}/train"
