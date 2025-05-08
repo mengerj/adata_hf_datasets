@@ -1,4 +1,3 @@
-import json
 import logging
 from unittest.mock import MagicMock
 
@@ -385,7 +384,7 @@ def test_get_dataset_positive_and_negative(
     # Now parse each row and verify
     for ex in pos_examples:
         # parse the JSON string
-        metadata = json.loads(ex["anndata_ref"])
+        metadata = ex["anndata_ref"]
         caption = ex["caption"]
         file_path = metadata["file_record"]["dataset_path"]
         sample_id = metadata["sample_id"]
@@ -395,7 +394,7 @@ def test_get_dataset_positive_and_negative(
         assert caption == original_caption
 
     for ex in neg_examples:
-        metadata = json.loads(ex["anndata_ref"])
+        metadata = ex["anndata_ref"]
         caption = ex["caption"]
         file_path = metadata["file_record"]["dataset_path"]
         sample_id = metadata["sample_id"]
@@ -450,7 +449,7 @@ def test_batch_key_negatives_remain_within_same_batch(
         if label == 0.0:
             # This is a negative row
             # 1. Parse the anchor sample info from anndata_ref
-            metadata = json.loads(anndata_ref)
+            metadata = anndata_ref
             file_record = metadata["file_record"]
             sample_id = metadata["sample_id"]
 
@@ -673,7 +672,7 @@ def test_dataset_includes_embedding_reference(
     # Check each record for the "anndata_ref" key and that it contains a valid JSON with "file_path"
     for record in ds:
         assert "anndata_ref" in record, "Dataset record missing 'anndata_ref'."
-        metadata = json.loads(record["anndata_ref"])
+        metadata = record["anndata_ref"]
         assert "file_record" in metadata, "Metadata missing 'file_record'."
         # Optionally, check that the file_path is the one we added.
         assert metadata["file_record"]["dataset_path"] == ann_data_file_with_obsm, (

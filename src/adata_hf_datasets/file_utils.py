@@ -9,13 +9,184 @@ import json
 import anndata as ad
 import pandas as pd
 import numpy as np
-from typing import Optional
+from typing import Optional, Union, Any
 import tempfile
 from pathlib import Path
 import random
-import anndata
+import shutil
+import gc
+from anndata.abc import CSRDataset
+
+# io_utils.py
+import errno
+import time
+import uuid
 
 logger = logging.getLogger(__name__)
+
+
+def add_obs_column_to_h5ad(
+    infile: Union[str, Path],
+    temp_out: Union[str, Path],
+    column_name: str = "sample_index",
+    column_data: Optional[np.ndarray] = None,
+    dtype: np.dtype = np.int64,
+    is_categorical: bool = False,
+) -> Path:
+    """
+    Copy an .h5ad on disk and inject a column into the obs dataframe
+    with minimal memory usage by using backed mode.
+
+    Parameters
+    ----------
+    infile : Union[str, Path]
+        Path to the original .h5ad file.
+    temp_out : Union[str, Path]
+        Path where the modified copy will be written.
+    column_name : str, optional
+        Name of the column to add to obs, by default "sample_index".
+    column_data : Optional[np.ndarray], optional
+        Data for the column. If None and column_name is "sample_index",
+        will use np.arange(n_obs). Must be provided for other column names.
+    dtype : np.dtype, optional
+        Data type for the column, by default np.int64.
+    is_categorical : bool, optional
+        Whether to mark the column as categorical, by default False.
+        Useful for string data that represents categories.
+
+    Returns
+    -------
+    Path
+        The path to `temp_out`, now containing the new column in obs.
+
+    Notes
+    -----
+    - Uses AnnData's backed mode to minimize memory usage.
+    - Only loads the metadata into memory, not the full X matrix.
+    - If you need to handle files too large for even this approach, consider
+      a more specialized solution with pure h5py.
+    """
+    # avoid POSIX locking
+    os.environ["HDF5_USE_FILE_LOCKING"] = "FALSE"
+
+    infile = Path(infile)
+    temp_out = Path(temp_out)
+
+    # Check if we're modifying in-place
+    in_place = infile == temp_out
+
+    if not in_place:
+        logger.info(f"Copying {infile} → {temp_out}")
+        shutil.copyfile(str(infile), str(temp_out))
+    else:
+        logger.info(f"Modifying {infile} in-place")
+
+    # Open in backed mode - only loads metadata, not the full matrix
+    logger.info("Opening in backed mode to add column")
+
+    adata = None
+    try:
+        adata = ad.read_h5ad(temp_out, backed="r+")
+
+        # Get number of observations
+        n_obs = adata.n_obs
+        logger.info(f"File has {n_obs} observations")
+
+        if column_name in adata.obs.columns:
+            logger.info(f"Column '{column_name}' already exists, skipping")
+            return temp_out
+
+        # Generate data if needed
+        if column_data is None:
+            if column_name == "sample_index":
+                logger.info("Generating sample_index data")
+                column_data = np.arange(n_obs, dtype=dtype)
+            else:
+                raise ValueError(
+                    f"column_data must be provided for column '{column_name}'"
+                )
+
+        # Ensure data has the right length
+        if len(column_data) != n_obs:
+            raise ValueError(
+                f"column_data length ({len(column_data)}) doesn't match n_obs ({n_obs})"
+            )
+
+        # Add the column
+        logger.info(f"Adding column '{column_name}' to obs")
+        if is_categorical:
+            # Convert to categorical if requested
+            from pandas import Categorical
+
+            adata.obs[column_name] = Categorical(column_data)
+        else:
+            adata.obs[column_name] = column_data
+
+        # ---- FIX: check for missing raw.X ----
+        # This is a workaround for a bug that writing to h5ad from backed mode gives if raw is empty/corrupted
+        is_backed_object = getattr(adata, "isbacked", False)
+        raw_is_csr_hdf5_group = (
+            adata.raw is not None
+            and isinstance(adata.raw.X, CSRDataset)  # ← catches wrapper
+            # defensive fallback in case class name changes
+            or (
+                hasattr(adata, "file")
+                and isinstance(adata.file["raw"]["X"], h5py.Group)
+            )
+        )
+
+        if is_backed_object and raw_is_csr_hdf5_group:
+            logger.info(
+                "Backed object with sparse .raw – materialising .raw in memory."
+            )
+            adata = (
+                adata.to_memory()
+            )  # move the whole object into memory and hope it isnt to big
+        # -------------------------------------------------------------------
+        # Write changes to disk
+        logger.info("Writing changes to disk")
+        adata.write_h5ad(temp_out, compression="gzip")
+
+        logger.info(f"Done adding column '{column_name}'")
+    except Exception as e:
+        logger.error(f"Error while adding column: {e}")
+        raise
+    finally:
+        # Explicitly close the AnnData object to release file handles
+        if adata is not None:
+            if hasattr(adata, "file") and adata.file is not None:
+                adata.file.close()
+            del adata
+            # Force garbage collection to ensure file handles are released
+            gc.collect()
+
+    # Verify the file can be opened after modification
+    try:
+        with h5py.File(temp_out, "r") as f:
+            if "obs" in f and column_name in f["obs"]:
+                logger.info(
+                    f"Verified column '{column_name}' exists in the output file"
+                )
+            else:
+                logger.warning(
+                    f"Column '{column_name}' was not found in the output file"
+                )
+    except Exception as e:
+        logger.error(f"Error verifying output file: {e}")
+
+    return temp_out
+
+
+# Legacy function for backward compatibility
+def add_sample_index_to_h5ad(
+    infile: Union[str, Path],
+    temp_out: Union[str, Path],
+) -> Path:
+    """
+    Legacy function that calls add_obs_column_to_h5ad with sample_index as column_name.
+    Kept for backward compatibility.
+    """
+    return add_obs_column_to_h5ad(infile, temp_out, column_name="sample_index")
 
 
 def load_adata_from_hf_dataset(
@@ -70,7 +241,7 @@ def load_adata_from_hf_dataset(
     with tempfile.TemporaryDirectory() as tmpdir:
         save_path = Path(tmpdir) / "test.h5ad"
         download_file_from_share_link(first_path, str(save_path))
-        adata = anndata.read_h5ad(save_path)
+        adata = ad.read_h5ad(save_path)
 
     return adata
 
@@ -120,15 +291,194 @@ def download_from_link(url, save_path):
         return False
 
 
-def save_and_upload_adata(
-    adata, local_path, nextcloud_config=None, create_share_link=True
-):
+# -----------------------------------------------------------------------------#
+# Helper: Very fast sanity-check of a Nextcloud share link                      #
+# -----------------------------------------------------------------------------#
+HDF5_MAGIC = b"\x89HDF\r\n\x1a\n"  # First 8 bytes of every HDF5 file (.h5, .h5ad)
+NUMPY_MAGIC = b"\x93NUMPY"  # First 6 bytes of a .npy file
+ZIP_MAGIC = b"PK\x03\x04"  # First 4 bytes of a zip/npz
+_CHUNK_RANGE_HEADER = {"Range": "bytes=0-255"}  # 256-byte range
+
+
+def verify_share_link(
+    share_link: str,
+    expected_suffix: str | None = None,
+    timeout: int = 10,
+) -> bool:
+    """
+    Cheap on-the-wire verification that a Nextcloud share link is alive and
+    points to a *downloadable* file of the expected type.
+
+    The function sends _two_ minimal requests:
+
+    1. **HEAD** – confirms HTTP 2xx and collects basic metadata.
+    2. **Range GET** (first ≤256 bytes) – checks the file signature (“magic”).
+
+    Parameters
+    ----------
+    share_link
+        Public Nextcloud share URL.
+    expected_suffix
+        File‐extension (e.g. ``".h5ad"``).  When *None*, the suffix is inferred
+        from the URL.
+    timeout
+        Network timeout in seconds for each request.
+
+    Returns
+    -------
+    bool
+        ``True`` if the link is reachable *and* the leading bytes match the
+        signature of ``expected_suffix`` (if supplied); ``False`` otherwise.
+
+    Notes
+    -----
+    *No full download is performed.*  The largest transfer is 256 bytes.
+    """
+    suffix = (expected_suffix or Path(share_link).suffix).lower()
+
+    # --- 1) HEAD -------------------------------------------------------------#
+    try:
+        head = requests.head(share_link, allow_redirects=True, timeout=timeout)
+        head.raise_for_status()
+    except requests.RequestException as exc:
+        logger.warning("HEAD request failed for %s → %s", share_link, exc)
+        return False
+
+    # --- 2) tiny Range-GET ---------------------------------------------------#
+    try:
+        rng = requests.get(
+            share_link,
+            headers=_CHUNK_RANGE_HEADER,
+            allow_redirects=True,
+            timeout=timeout,
+        )
+        rng.raise_for_status()
+        magic = rng.content[:8]
+    except requests.RequestException as exc:
+        logger.warning("Range request failed for %s → %s", share_link, exc)
+        return False
+
+    # --- 3) Signature check --------------------------------------------------#
+    if suffix == ".h5ad":
+        return magic.startswith(HDF5_MAGIC)
+    if suffix == ".npy":
+        return magic.startswith(NUMPY_MAGIC)
+    if suffix == ".npz":
+        return magic.startswith(ZIP_MAGIC)
+    # Unknown type → we can at least confirm it is downloadable
+    return True
+
+
+def upload_folder_to_nextcloud(
+    data_folder: Union[str, Path],
+    nextcloud_config: dict[str, Any],
+    create_share_link: bool = True,
+) -> Path:
+    """
+    Upload every file under *data_folder* to Nextcloud **unless** a valid link
+    already exists in ``share_map.json``.
+
+    For each (new or re-uploaded) file a fresh share link is obtained via
+    :pyfunc:`save_and_upload_adata`.  All final links – verified existing ones
+    *and* newly created ones – are (over)written to one
+    ``data_folder/share_map.json``.
+
+    Parameters
+    ----------
+    data_folder
+        Folder that contains the files to be uploaded.
+    nextcloud_config
+        Dict forwarded to :pyfunc:`save_and_upload_adata`.
+        At minimum it must contain *remote_path*; this field is overwritten
+        internally for each file.
+    create_share_link
+        Forwarded to :pyfunc:`save_and_upload_adata`.
+
+    Returns
+    -------
+    Path
+        Absolute path of the written ``share_map.json``.
+
+    Raises
+    ------
+    ValueError
+        If *data_folder* is not an existing directory.
+
+    References
+    ----------
+    All data originate from files under *data_folder* and are stored to the
+    Nextcloud instance configured in *nextcloud_config*.
+    """
+
+    data_folder = Path(data_folder)
+    if not data_folder.is_dir():
+        raise ValueError(f"{data_folder!r} is not a directory")
+
+    # ---------------------------------------------------------------------#
+    # 1) Load existing mapping (if any)                                     #
+    # ---------------------------------------------------------------------#
+    mapping_path = data_folder / "share_map.json"
+    if mapping_path.exists():
+        logger.info("Found existing share_map.json → loading")
+        share_map: dict[str, str] = json.loads(mapping_path.read_text("utf-8"))
+    else:
+        logger.info("No share_map.json present → starting fresh")
+        share_map = {}
+
+    # ---------------------------------------------------------------------#
+    # 2) Walk over every file                                               #
+    # ---------------------------------------------------------------------#
+    for root, _, files in os.walk(data_folder):
+        root_path = Path(root)
+        for fname in files:
+            local_path = root_path / fname
+            if local_path.name == "share_map.json":
+                continue  # skip the mapping file itself
+
+            rel_path = local_path.relative_to(data_folder).as_posix()
+            remote_path = f"data/{rel_path}"
+
+            link_is_valid = False
+            if rel_path in share_map:
+                candidate_link = share_map[rel_path]
+                logger.info("Verifying stored share link for %s …", rel_path)
+                link_is_valid = verify_share_link(candidate_link, local_path.suffix)
+                if link_is_valid:
+                    logger.info("✓ link OK – skipping upload")
+                else:
+                    logger.info("✗ link broken – will re-upload")
+
+            if link_is_valid:
+                continue
+
+            # ----------------------------------------------------------------#
+            # 2a) Upload / re-upload                                          #
+            # ----------------------------------------------------------------#
+            nc_cfg = {**nextcloud_config, "remote_path": remote_path}
+            logger.info("Uploading %s → %s …", local_path, remote_path)
+            share_link = save_and_upload_adata(
+                str(local_path),
+                nc_cfg,
+                create_share_link=create_share_link,
+            )
+            logger.info(" → got new share link %s", share_link)
+            share_map[rel_path] = share_link
+
+    # ---------------------------------------------------------------------#
+    # 3) Persist (possibly updated) share_map                               #
+    # ---------------------------------------------------------------------#
+    logger.info("Writing share_map.json to %s", mapping_path)
+    mapping_path.write_text(json.dumps(share_map, indent=2), encoding="utf-8")
+    logger.info("Done.")
+    return mapping_path
+
+
+def save_and_upload_adata(local_path, nextcloud_config=None, create_share_link=True):
     """
     Saves an AnnData object to a file and optionally uploads it to a Nextcloud server based on provided configuration.
 
     Parameters:
-        adata (AnnData): The AnnData object to save.
-        local_path (str): Local path to save the .h5ad file.
+        local_path (str): Local path where AnnData object is saved.
         nextcloud_config (dict, optional): Configuration dictionary for Nextcloud which contains:
                                            'url' (str): URL to the Nextcloud server.
                                            'username' (str): Username for Nextcloud.
@@ -143,9 +493,6 @@ def save_and_upload_adata(
                               'password': 'your_password',
                               'remote_path': '/path/on/nextcloud/file.h5ad.gz'})
     """
-    # Save the AnnData object to a local .h5ad file
-    adata.write(local_path, compression="gzip")
-    logging.info(f"File saved locally at {local_path}")
 
     # Upload the file to Nextcloud if configuration is provided
     if nextcloud_config:
@@ -265,37 +612,91 @@ def save_embedding_data(
     return None
 
 
-def upload_file_to_nextcloud(file_path, nextcloud_url, username, password, remote_path):
+class ReadWithProgress:
     """
-    Uploads a file to a Nextcloud server via WebDAV.
-
-    Parameters:
-        file_path (str): Path to the local file to upload.
-        nextcloud_url (str): URL to your personal nextcloud instance. Can be found in the settings of your nextcloud account. (File Seetings -> WebDAV)
-        username (str): Username for Nextcloud authentication.
-        password (str): Password for Nextcloud authentication.
-        remote_path (str): Path in Nextcloud where the file will be stored.
-
-    Returns:
-        requests.Response: The response object from the requests library.
-
-    Example:
-        response = upload_file_to_nextcloud('path/to/local/file.txt',
-                                            'https://nxc-fredato.imbi.uni-freiburg.de',
-                                            'your_username',
-                                            'your_password',
-                                            '/path/to/save/file.txt')
-        print(response.status_code)
+    Wrap a file object to iterate over fixed‐size chunks, updating a tqdm bar,
+    and providing a __len__ so that requests can send a Content-Length header.
     """
-    # Complete URL to access the WebDAV interface
-    full_url = f"{nextcloud_url}/remote.php/dav/files/{username}/{remote_path}"
 
-    # Open the file in binary mode
-    with open(file_path, "rb") as file_content:
-        # Make the PUT request to upload the file
-        response = requests.put(
-            full_url, data=file_content, auth=HTTPBasicAuth(username, password)
+    def __init__(self, f, total_size, chunk_size=1024 * 1024, desc=None):
+        self.f = f
+        self.total_size = total_size
+        self.chunk_size = chunk_size
+        self.tqdm = tqdm(
+            total=total_size,
+            unit="B",
+            unit_scale=True,
+            unit_divisor=1024,
+            desc=desc,
+            leave=True,
         )
+
+    def __iter__(self):
+        return self
+
+    def __next__(self):
+        chunk = self.f.read(self.chunk_size)
+        if not chunk:
+            self.tqdm.close()
+            raise StopIteration
+        self.tqdm.update(len(chunk))
+        return chunk
+
+    def __len__(self):
+        # This lets requests detect the total length.
+        return self.total_size
+
+
+def upload_file_to_nextcloud(
+    file_path: str,
+    nextcloud_url: str,
+    username: str,
+    password: str,
+    remote_path: str,
+    chunk_size: int = 1024 * 1024,
+    timeout: tuple = (5, 60),
+) -> requests.Response:
+    """
+    Upload a file to Nextcloud via WebDAV, showing a tqdm progress bar (with speed),
+    while ensuring a proper Content-Length header (no chunked transfer).
+
+    Parameters
+    ----------
+    file_path : str
+    nextcloud_url : str
+    username : str
+    password : str
+    remote_path : str
+    chunk_size : int, optional
+    timeout : tuple, optional
+
+    Returns
+    -------
+    requests.Response
+    """
+    full_url = f"{nextcloud_url.rstrip('/')}/remote.php/dav/files/{username}/{remote_path.lstrip('/')}"
+    total_size = os.path.getsize(file_path)
+    filename = os.path.basename(file_path)
+
+    with open(file_path, "rb") as f:
+        reader = ReadWithProgress(
+            f, total_size, chunk_size, desc=f"Uploading {filename}"
+        )
+        # Manually set Content-Length so requests does NOT chunk
+        headers = {"Content-Length": str(total_size)}
+        response = requests.put(
+            full_url,
+            data=reader,
+            auth=HTTPBasicAuth(username, password),
+            headers=headers,
+            timeout=timeout,
+        )
+
+    if response.ok:
+        tqdm.write(f"✔️  Uploaded {filename}")
+    else:
+        tqdm.write(f"❌  Upload failed ({response.status_code}) for {filename}")
+
     return response
 
 
@@ -579,3 +980,95 @@ def download_figshare_data(
             f"Loaded AnnData object with {data.shape[0]} samples and {data.shape[1]} features."
         )
         return
+
+
+def safe_read_h5ad(
+    path: str | Path,
+    *,
+    max_retry: int = 3,
+    copy_local: bool = True,
+    verify: bool = True,
+    sleep: int = 5,
+) -> ad.AnnData:
+    """
+    Robustly read an .h5ad file, retrying on transient I/O errors.
+
+    Parameters
+    ----------
+    path
+        Path to the .h5ad on the shared filesystem.
+    max_retry
+        Max attempts before giving up (default 3).
+    copy_local
+        On retry, copy the file to $TMPDIR and read from there.
+    verify
+        After reading, open with h5py and touch ``/X/data`` to make sure
+        the file isn't truncated.
+    sleep
+        Seconds to wait between retries.
+    """
+    path = Path(path)
+    attempt = 0
+    local_copy: Path | None = None
+
+    while attempt < max_retry:
+        attempt += 1
+        try:
+            src = local_copy or path
+            adata = ad.read_h5ad(src)
+
+            if verify:
+                with h5py.File(src, "r") as f:
+                    # cheap probe, raises if dataset missing/corrupt
+                    _ = f["X/data"][0:1]
+
+            return adata
+
+        except (OSError, IOError) as e:
+            # only retry on low-level I/O errors
+            if getattr(e, "errno", None) not in (errno.EIO, errno.ESTALE):
+                raise
+
+            if attempt >= max_retry:
+                logger.error("safe_read: giving up after %d attempts – %s", attempt, e)
+                raise
+
+            logger.warning(
+                "safe_read: %s on %s – retry %d/%d", e, path, attempt, max_retry
+            )
+            time.sleep(sleep)
+
+            # first retry ⇒ make a local tmp copy
+            if copy_local and local_copy is None:
+                tmpdir = Path(os.getenv("TMPDIR", tempfile.gettempdir()))
+                local_copy = tmpdir / f"{path.stem}_{uuid.uuid4().hex}.h5ad"
+                try:
+                    shutil.copy2(path, local_copy)
+                    logger.info("safe_read: copied to %s for local access", local_copy)
+                except Exception as cp_err:
+                    logger.warning(
+                        "safe_read: local copy failed (%s); continue without copy",
+                        cp_err,
+                    )
+                    local_copy = None
+
+    # Should never reach here
+    raise RuntimeError("safe_read_h5ad: unexpected exit")
+
+
+def safe_write_h5ad(adata, target, max_retry=3, **kw):
+    tmp = Path(tempfile.mktemp(dir=target.parent, suffix=".h5ad.tmp"))
+    for attempt in range(1, max_retry + 1):
+        try:
+            adata.write_h5ad(tmp, **kw)
+            os.replace(tmp, target)  # atomic on POSIX
+            return
+        except OSError as e:
+            if e.errno == errno.EIO and attempt < max_retry:
+                logger.warning(
+                    "EIO on write (%s). Retry %d/%d …", target, attempt, max_retry
+                )
+                time.sleep(5)
+                continue
+            raise
+    # should not reach here
