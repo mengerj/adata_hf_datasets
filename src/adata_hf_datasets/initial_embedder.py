@@ -469,16 +469,22 @@ class GeneformerEmbedder(BaseEmbedder):
                 "`pip install external/Geneformer`."
             )
         if adata_path is None:
-            adata_path = str(
-                Path(__file__).resolve().parents[2] / "geneformer" / "adata.h5ad"
+            raise ValueError(
+                "adata_path must be provided to save the tokenized dataset."
             )
         self.in_adata_path = Path(adata_path)
-        # adata_name = self.in_adata_path.stem
+        adata_name = self.in_adata_path.stem
         # save the tokenized dataset in the same directory as the adata
-        self.adata_dir = self.in_adata_path.parent
+        self.og_adata_dir = self.in_adata_path.parent
         # self.adata_path = self.adata_dir / adata_name
         # adata.write_h5ad(self.adata_path)
-        self.out_dataset_dir = self.adata_dir / "geneformer"
+        self.adata_dir = self.og_adata_dir / "geneformer" / adata_name / "adata"
+        self.adata_dir.mkdir(parents=True, exist_ok=True)
+        # write the adata to the directory
+        adata.write_h5ad(self.adata_dir / f"{adata_name}.h5ad")
+        self.out_dataset_dir = (
+            self.og_adata_dir / "geneformer" / adata_name / "tokenized_ds"
+        )
         # 1. Make sure the data has the required fields
         if "ensembl_id" not in adata.var.columns:
             logger.error(

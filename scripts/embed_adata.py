@@ -18,7 +18,7 @@ from omegaconf import DictConfig
 from dotenv import load_dotenv
 
 from adata_hf_datasets.utils import setup_logging
-from adata_hf_datasets.file_utils import safe_read_h5ad, safe_write_h5ad
+from adata_hf_datasets.file_utils import safe_read_h5ad, safe_write_zarr
 from adata_hf_datasets.initial_embedder import InitialEmbedder
 from adata_hf_datasets.sys_monitor import SystemMonitor
 from hydra.core.hydra_config import HydraConfig
@@ -64,7 +64,7 @@ def main(cfg: DictConfig):
                 str(infile.parent).replace("processed", "processed_with_emb")
             )
             out_dir.mkdir(parents=True, exist_ok=True)
-            outfile = out_dir / f"{infile.stem}.h5ad"
+            outfile = out_dir / f"{infile.stem}.zarr"
 
             # Load existing combined file if present (and not overwrite), else raw
             if outfile.exists() and not cfg.overwrite:
@@ -114,7 +114,7 @@ def main(cfg: DictConfig):
 
             # Write combined AnnData with all embeddings
             logger.info("Writing combined output to %s", outfile)
-            safe_write_h5ad(adata=adata, target=outfile)
+            safe_write_zarr(adata=adata, target=outfile)
             logger.info("Saved combined embeddings to %s", outfile)
 
     except Exception as e:

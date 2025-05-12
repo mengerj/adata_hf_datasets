@@ -4,6 +4,7 @@ import logging
 import requests
 from requests.auth import HTTPBasicAuth
 import xml.etree.ElementTree as ET
+from pathlib import PurePosixPath
 from tqdm import tqdm
 import json
 import anndata as ad
@@ -16,11 +17,10 @@ import random
 import shutil
 import gc
 from anndata.abc import CSRDataset
-
-# io_utils.py
 import errno
 import time
 import uuid
+import zarr
 
 logger = logging.getLogger(__name__)
 
@@ -125,15 +125,18 @@ def add_obs_column_to_h5ad(
         # ---- FIX: check for missing raw.X ----
         # This is a workaround for a bug that writing to h5ad from backed mode gives if raw is empty/corrupted
         is_backed_object = getattr(adata, "isbacked", False)
-        raw_is_csr_hdf5_group = (
-            adata.raw is not None
-            and isinstance(adata.raw.X, CSRDataset)  # ← catches wrapper
-            # defensive fallback in case class name changes
-            or (
-                hasattr(adata, "file")
-                and isinstance(adata.file["raw"]["X"], h5py.Group)
+        if adata.raw is not None:
+            raw_is_csr_hdf5_group = (
+                adata.raw is not None
+                and isinstance(adata.raw.X, CSRDataset)  # ← catches wrapper
+                # defensive fallback in case class name changes
+                or (
+                    hasattr(adata, "file")
+                    and isinstance(adata.file["raw"]["X"], h5py.Group)
+                )
             )
-        )
+        else:
+            raw_is_csr_hdf5_group = False
 
         if is_backed_object and raw_is_csr_hdf5_group:
             logger.info(
@@ -369,108 +372,223 @@ def verify_share_link(
     return True
 
 
+'''
 def upload_folder_to_nextcloud(
     data_folder: Union[str, Path],
     nextcloud_config: dict[str, Any],
     create_share_link: bool = True,
-) -> Path:
+) -> dict[str, str]:
     """
-    Upload every file under *data_folder* to Nextcloud **unless** a valid link
-    already exists in ``share_map.json``.
-
-    For each (new or re-uploaded) file a fresh share link is obtained via
-    :pyfunc:`save_and_upload_adata`.  All final links – verified existing ones
-    *and* newly created ones – are (over)written to one
-    ``data_folder/share_map.json``.
-
-    Parameters
-    ----------
-    data_folder
-        Folder that contains the files to be uploaded.
-    nextcloud_config
-        Dict forwarded to :pyfunc:`save_and_upload_adata`.
-        At minimum it must contain *remote_path*; this field is overwritten
-        internally for each file.
-    create_share_link
-        Forwarded to :pyfunc:`save_and_upload_adata`.
-
-    Returns
-    -------
-    Path
-        Absolute path of the written ``share_map.json``.
-
-    Raises
-    ------
-    ValueError
-        If *data_folder* is not an existing directory.
-
-    References
-    ----------
-    All data originate from files under *data_folder* and are stored to the
-    Nextcloud instance configured in *nextcloud_config*.
+    As before – *but* when a top-level entry ends with ``.zarr`` we
+    (1) walk & upload its internal files **once**,
+    (2) create **one** folder-level share link, and
+    (3) store it under the key ``"<name>.zarr/"`` (note the slash).
     """
-
-    data_folder = Path(data_folder)
+    data_folder = Path(data_folder).resolve()
     if not data_folder.is_dir():
         raise ValueError(f"{data_folder!r} is not a directory")
 
-    # ---------------------------------------------------------------------#
-    # 1) Load existing mapping (if any)                                     #
-    # ---------------------------------------------------------------------#
     mapping_path = data_folder / "share_map.json"
-    if mapping_path.exists():
-        logger.info("Found existing share_map.json → loading")
-        share_map: dict[str, str] = json.loads(mapping_path.read_text("utf-8"))
-    else:
-        logger.info("No share_map.json present → starting fresh")
-        share_map = {}
+    share_map = json.loads(mapping_path.read_text()) if mapping_path.exists() else {}
 
-    # ---------------------------------------------------------------------#
-    # 2) Walk over every file                                               #
-    # ---------------------------------------------------------------------#
-    for root, _, files in os.walk(data_folder):
-        root_path = Path(root)
-        for fname in files:
-            local_path = root_path / fname
-            if local_path.name == "share_map.json":
-                continue  # skip the mapping file itself
+    # -------------------------------------------------------------- #
+    # helper that ensures remote dir exists and uploads ONE file
+    # -------------------------------------------------------------- #
+    def _upload_one(local_f: Path):
+        rel_path = str(local_f).split("data/")[1]
+        remote_path = f"data/{rel_path}"
+        nc_cfg = {**nextcloud_config, "remote_path": remote_path}
+        return save_and_upload_adata(str(local_f), nc_cfg, create_share_link=False)
 
-            rel_path = local_path.relative_to(data_folder).as_posix()
-            remote_path = f"data/{rel_path}"
+    # -------------------------------------------------------------- #
+    # iterate over **top-level items** first – detects *.zarr dirs
+    # -------------------------------------------------------------- #
+    for item in sorted(data_folder.iterdir()):
+        if item.name == "share_map.json":
+            continue
 
-            link_is_valid = False
-            if rel_path in share_map:
-                candidate_link = share_map[rel_path]
-                logger.info("Verifying stored share link for %s …", rel_path)
-                link_is_valid = verify_share_link(candidate_link, local_path.suffix)
-                if link_is_valid:
-                    logger.info("✓ link OK – skipping upload")
-                else:
-                    logger.info("✗ link broken – will re-upload")
+        # ---------- CASE 1: plain file ----------------------------------- #
+        if item.is_file():
+            rel = item.relative_to(data_folder).as_posix()
+            if rel not in share_map:           # no link yet → upload + link
+                _upload_one(item)
+                share_map[rel] = save_and_upload_adata(
+                    str(item),
+                    {**nextcloud_config, "remote_path": f"data/{rel}"},
+                    create_share_link=True,
+                )
+            continue
 
-            if link_is_valid:
+        # ---------- CASE 2: *.zarr directory ----------------------------- #
+        if item.is_dir() and item.suffix == ".zarr":
+            rel_dir_key = item.name + "/"      # e.g. "myembed.zarr/"
+            if rel_dir_key in share_map and verify_share_link(
+                share_map[rel_dir_key], suffix=""
+            ):
+                logger.info("✓ existing share for %s OK – skipping upload", rel_dir_key)
                 continue
 
-            # ----------------------------------------------------------------#
-            # 2a) Upload / re-upload                                          #
-            # ----------------------------------------------------------------#
-            nc_cfg = {**nextcloud_config, "remote_path": remote_path}
-            logger.info("Uploading %s → %s …", local_path, remote_path)
-            share_link = save_and_upload_adata(
-                str(local_path),
-                nc_cfg,
-                create_share_link=create_share_link,
+            logger.info("Uploading Zarr store %s …", item.name)
+            for sub in item.rglob("*"):
+                if sub.is_file():
+                    _upload_one(sub)
+
+            # one folder-level link
+            remote_dir = f"data/{item.name}"
+            nc_cfg = {**nextcloud_config, "remote_path": remote_dir}
+            folder_link = get_share_link(
+                nc_cfg["url"],
+                os.getenv(nc_cfg["username"]),
+                os.getenv(nc_cfg["password"]),
+                remote_dir,
             )
-            logger.info(" → got new share link %s", share_link)
-            share_map[rel_path] = share_link
+            share_map[rel_dir_key] = folder_link
+            logger.info("Got share link for Zarr folder: %s", folder_link)
+
+    # -------------------------------------------------------------- #
+    # persist & return --------------------------------------------- #
+    mapping_path.write_text(json.dumps(share_map, indent=2))
+    return share_map
+'''
+
+
+def upload_folder_to_nextcloud(
+    data_folder: Union[str, Path],
+    nextcloud_config: dict[str, Any],
+    max_workers: int = 6,  # new
+) -> dict[str, str]:
+    """
+    Upload **all** files in *data_folder* (incl. Zarr chunks) with
+    connection reuse & parallelism.
+    Returns/updates share_map.json exactly as before.
+    """
+    data_folder = Path(data_folder).resolve()
+    if not data_folder.is_dir():
+        raise ValueError(f"{data_folder!r} is not a directory")
+
+    mapping_path = data_folder / "share_map.json"
+    share_map = json.loads(mapping_path.read_text()) if mapping_path.exists() else {}
+
+    session_factory = requests.Session
+    auth = HTTPBasicAuth(
+        os.getenv(nextcloud_config["username"]), os.getenv(nextcloud_config["password"])
+    )
+    nc_url = os.getenv(nextcloud_config["url"])
+
+    # gather (local, remote) pairs still missing on server
+    uploads: list[tuple[Path, str]] = []
+    remote_dirs: set[str] = set()
+
+    for local_path in data_folder.rglob("*"):
+        if local_path.is_dir() or local_path.name == "share_map.json":
+            continue
+
+        rel_path = local_path.relative_to(data_folder).as_posix()
+        if rel_path not in share_map:  # skip if already linked
+            uploads.append((local_path, f"data/{rel_path}"))
+
+        # collect remote directory path for MKCOL
+        remote_dirs.add(f"data/{local_path.parent.relative_to(data_folder).as_posix()}")
+
+    # 1) ensure directory tree exists on server
+    _mk_remote_dirs(session_factory(), nc_url, auth, remote_dirs)
+    """
+    # 2) parallel upload of missing files
+    if uploads:
+        logger.info("Uploading %d new files with %d workers …", len(uploads), max_workers)
+        thread_map(
+            partial(_upload_one_file, nc_url=nc_url, session=session, auth=auth),
+            uploads,
+            max_workers=max_workers,
+            desc="WebDAV upload",
+            disable= not nextcloud_config.get("progress", False)
+        )
+    """
 
     # ---------------------------------------------------------------------#
-    # 3) Persist (possibly updated) share_map                               #
+    # threaded upload with *one* Session per worker
     # ---------------------------------------------------------------------#
-    logger.info("Writing share_map.json to %s", mapping_path)
-    mapping_path.write_text(json.dumps(share_map, indent=2), encoding="utf-8")
-    logger.info("Done.")
-    return mapping_path
+    def _worker(local_remote: tuple[Path, str]) -> str:
+        """Upload a single file using a dedicated Session."""
+        local_path, remote_rel = local_remote
+        sess = session_factory()  # NEW: private Session
+        try:
+            _upload_one_file(
+                local_remote,
+                nc_url=nc_url,
+                session=sess,
+                auth=auth,
+                chunk=nextcloud_config.get("chunk_size", 1 << 20),
+                timeout=(5, 60),
+            )
+            return remote_rel
+        finally:
+            sess.close()
+
+    if uploads:
+        from concurrent.futures import ThreadPoolExecutor
+        from tqdm import tqdm
+
+        max_workers = nextcloud_config.get("max_workers", 6)
+        with ThreadPoolExecutor(max_workers=max_workers) as pool:
+            for _ in tqdm(
+                pool.map(_worker, uploads),
+                total=len(uploads),
+                desc="WebDAV upload",
+                disable=not nextcloud_config.get("progress", False),
+                unit="file",
+            ):
+                pass  # tqdm updates on each completed future
+    # 3) create/update share link once per top-level .zarr dir OR file
+    for item in data_folder.iterdir():
+        key = item.name + ("/" if item.is_dir() else "")
+        if key in share_map and verify_share_link(share_map[key], suffix=""):
+            continue
+        remote_path = f"data/{item.name}"
+        share_map[key] = get_share_link(
+            nc_url, auth.username, auth.password, remote_path
+        )
+
+    mapping_path.write_text(json.dumps(share_map, indent=2))
+    return share_map
+
+
+def _mk_remote_dirs(
+    session: requests.Session, nc_url: str, auth: HTTPBasicAuth, remote_dirs: set[str]
+):
+    """Create remote directories (WebDAV MKCOL) once per unique path."""
+    base = f"{nc_url.rstrip('/')}/remote.php/dav/files/{auth.username}"
+    for path in sorted(remote_dirs, key=lambda p: p.count("/")):
+        url = f"{base}/{path.lstrip('/')}"
+        res = session.request("MKCOL", url, auth=auth)
+        if res.status_code in (201, 405):  # 201 created, 405 already exists
+            continue
+        logger.warning("MKCOL %s → %s", url, res.status_code)
+
+
+def _upload_one_file(
+    local_remote: tuple[Path, str],
+    nc_url: str,
+    session: requests.Session,
+    auth: HTTPBasicAuth,
+    chunk: int = 1024 * 1024,
+    timeout: tuple[int, int] = (5, 60),
+):
+    """PUT one file with streaming upload."""
+    local_path, remote_rel = local_remote
+    full_url = f"{nc_url.rstrip('/')}/remote.php/dav/files/{auth.username}/{remote_rel}"
+    size = os.path.getsize(local_path)
+    with open(local_path, "rb") as fh:
+        headers = {"Content-Length": str(size)}
+        res = session.put(
+            full_url, data=fh, headers=headers, timeout=timeout, auth=auth
+        )
+        if not res.ok:
+            logger.error(
+                "Upload failed %s → %s (%s)", local_path, full_url, res.status_code
+            )
+            res.raise_for_status()
+    return remote_rel
 
 
 def save_and_upload_adata(local_path, nextcloud_config=None, create_share_link=True):
@@ -498,7 +616,7 @@ def save_and_upload_adata(local_path, nextcloud_config=None, create_share_link=T
     if nextcloud_config:
         try:
             create_nested_directories(
-                nextcloud_config["url"],
+                os.getenv(nextcloud_config["url"]),
                 os.getenv(nextcloud_config["username"]),
                 os.getenv(nextcloud_config["password"]),
                 nextcloud_config["remote_path"],
@@ -506,7 +624,7 @@ def save_and_upload_adata(local_path, nextcloud_config=None, create_share_link=T
 
             response = upload_file_to_nextcloud(
                 local_path,
-                nextcloud_config["url"],
+                os.getenv(nextcloud_config["url"]),
                 os.getenv(nextcloud_config["username"]),
                 os.getenv(nextcloud_config["password"]),
                 nextcloud_config["remote_path"],
@@ -518,7 +636,7 @@ def save_and_upload_adata(local_path, nextcloud_config=None, create_share_link=T
             logging.error(f"Failed to upload file to Nextcloud: {e}")
         if create_share_link:
             share_url = get_share_link(
-                nextcloud_config["url"],
+                os.getenv(nextcloud_config["url"]),
                 os.getenv(nextcloud_config["username"]),
                 os.getenv(nextcloud_config["password"]),
                 nextcloud_config["remote_path"],
@@ -581,14 +699,14 @@ def save_embedding_data(
 
         # create a remote path by replacing
         create_nested_directories(
-            nextcloud_config["url"],
+            os.getenv(nextcloud_config["url"]),
             os.getenv(nextcloud_config["username"]),
             os.getenv(nextcloud_config["password"]),
             remote_path,
         )
         response = upload_file_to_nextcloud(
             local_path,
-            nextcloud_config["url"],
+            os.getenv(nextcloud_config["url"]),
             os.getenv(nextcloud_config["username"]),
             os.getenv(nextcloud_config["password"]),
             remote_path,
@@ -603,7 +721,7 @@ def save_embedding_data(
         return None
     if create_share_link:
         share_url = get_share_link(
-            nextcloud_config["url"],
+            os.getenv(nextcloud_config["url"]),
             os.getenv(nextcloud_config["username"]),
             os.getenv(nextcloud_config["password"]),
             remote_path,
@@ -734,6 +852,94 @@ def create_nested_directories(nextcloud_url, username, password, remote_path):
     return True
 
 
+def _extract_token_from_xml(xml_text: str) -> str:
+    """Return the <token> value or raise ValueError."""
+    root = ET.fromstring(xml_text)
+    token_el = root.find(".//token")
+    if token_el is None or not token_el.text:
+        raise ValueError("No <token> element in XML")
+    return token_el.text
+
+
+def _extract_token_from_json(json_obj: dict) -> str:
+    """Return the token from a JSON OCS answer or raise ValueError."""
+    try:
+        return json_obj["ocs"]["data"]["token"]
+    except (KeyError, TypeError):
+        raise ValueError("No token field in JSON response")
+
+
+def get_share_link(
+    nextcloud_url: str,
+    username: str,
+    password: str,
+    remote_path: str,
+    permissions: int = 1,
+) -> Optional[str]:
+    """
+    Get (or create) a **public share link** for *remote_path* on Nextcloud.
+
+    Works for both files **and** folders.  If the item is already shared,
+    the existing link is reused instead of creating duplicates.
+
+    Parameters
+    ----------
+    nextcloud_url
+        Base URL, e.g. ``https://cloud.example.org``.
+    username / password
+        Basic-auth credentials.
+    remote_path
+        Path *inside your Files area* (no leading slash), e.g.
+        ``"data/train/sample_1.zarr"`` **or** ``"data/train/"``.
+    permissions
+        1 = read-only, 15 = all (see Nextcloud OCS docs).
+
+    Returns
+    -------
+    str or None
+        Public URL (no ``/download`` suffix) or *None* on failure.
+    """
+    base = nextcloud_url.rstrip("/")
+    api = f"{base}/ocs/v2.php/apps/files_sharing/api/v1/shares"
+    auth = HTTPBasicAuth(username, password)
+    headers = {"OCS-APIRequest": "true", "Accept": "application/json"}
+
+    # Ensure POSIX style path & strip redundant leading slash
+    remote_path = str(PurePosixPath(remote_path).as_posix()).lstrip("/")
+
+    # ------------------------------------------------------------------ #
+    # 1) Try to CREATE a share                                           #
+    # ------------------------------------------------------------------ #
+    payload = {"shareType": 3, "path": remote_path, "permissions": permissions}
+    resp = requests.post(api, data=payload, headers=headers, auth=auth)
+    if resp.status_code in (200, 201):
+        token = _extract_token_from_json(resp.json())
+        return f"{base}/s/{token}"
+    elif resp.status_code == 400 and "already shared" in resp.text.lower():
+        logger.info("Path already shared – retrieving existing link.")
+    else:
+        logger.warning(
+            "Share creation failed (%d): %s", resp.status_code, resp.text.strip()
+        )
+
+    # ------------------------------------------------------------------ #
+    # 2) Fallback: LIST shares for that path and reuse first token       #
+    # ------------------------------------------------------------------ #
+    list_params = {"path": remote_path, "reshares": "true", "subfiles": "true"}
+    resp = requests.get(api, params=list_params, headers=headers, auth=auth)
+    if resp.status_code != 200:
+        logger.error("Could not list shares (%d): %s", resp.status_code, resp.text)
+        return None
+
+    try:
+        token = _extract_token_from_json(resp.json()["ocs"]["data"][0])
+        return f"{base}/s/{token}"
+    except (IndexError, ValueError, KeyError):
+        logger.error("No existing share link found for %s", remote_path)
+        return None
+
+
+'''
 def get_share_link(nextcloud_url, username, password, remote_path):
     """
     Creates a public share link for a file on Nextcloud.
@@ -781,6 +987,7 @@ def get_share_link(nextcloud_url, username, password, remote_path):
         print(f"Failed to create share link: {response.status_code}")
         print("Response details:", response.text)
         return None
+'''
 
 
 def download_file_from_share_link(share_link, save_path, chunk_size=8192):
@@ -1072,3 +1279,62 @@ def safe_write_h5ad(adata, target, max_retry=3, **kw):
                 continue
             raise
     # should not reach here
+
+
+def _atomic_overwrite(src_dir: Path, dst_dir: Path) -> None:
+    """
+    Atomically replace *dst_dir* with *src_dir*.
+
+    If *dst_dir* already exists and is non-empty, move it to a temporary
+    backup directory first, then rename *src_dir* into place.  Finally
+    remove the backup.
+    """
+    backup: Optional[Path] = None
+    try:
+        if dst_dir.exists():
+            backup = Path(tempfile.mkdtemp(dir=dst_dir.parent, suffix=".zarr.bak"))
+            # dst_dir -> backup  (atomic)
+            os.replace(dst_dir, backup)
+
+        # tmp -> dst_dir  (atomic)
+        os.replace(src_dir, dst_dir)
+
+        # success ➜ purge backup
+        if backup:
+            shutil.rmtree(backup, ignore_errors=True)
+
+    except Exception:
+        # on failure try to restore original store
+        if backup and not dst_dir.exists():
+            os.replace(backup, dst_dir)
+        elif backup:
+            shutil.rmtree(backup, ignore_errors=True)
+        raise
+
+
+def safe_write_zarr(
+    adata: ad.AnnData,
+    target: Path,
+    *,
+    max_retry: int = 3,
+) -> None:
+    """
+    Atomically write *adata* to *target* (a directory-Zarr store),
+    **overwriting** any existing store at the same path.
+    """
+
+    for attempt in range(1, max_retry + 1):
+        tmp_dir = Path(tempfile.mkdtemp(dir=target.parent, suffix=".zarr.tmp"))
+        try:
+            adata.write_zarr(str(tmp_dir))
+            zarr.consolidate_metadata(tmp_dir)
+
+            _atomic_overwrite(tmp_dir, target)  # ← handles overwrite
+
+            return  # success
+        except OSError as e:
+            shutil.rmtree(tmp_dir, ignore_errors=True)
+            if e.errno == errno.EIO and attempt < max_retry:
+                time.sleep(5)
+                continue
+            raise
