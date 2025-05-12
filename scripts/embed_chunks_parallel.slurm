@@ -2,7 +2,7 @@
 #SBATCH --job-name=embed
 #SBATCH --output=logs/embed/%x_%A_%a.out
 #SBATCH --error=logs/embed/%x_%A_%a.err
-#SBATCH --mem=80G
+#SBATCH --mem=60G
 #SBATCH --time=24:00:00
 
 set -euo pipefail
@@ -11,7 +11,7 @@ set -euo pipefail
 # 1) CONFIGURATION (override via sbatch --export or ENV)
 # ─────────────────────────────────────────────────────────────────────────────
 TRAIN_OR_TEST="${TRAIN_OR_TEST:-train}"
-DATANAME="${DATANAME:-cellxgene_pseudo_bulk_35k}"
+DATANAME="${DATANAME:-cellxgene_pseudo_bulk_3_5k}"
 SPLIT="${SPLIT:-train}"
 INPUT_DIR="${INPUT_DIR:-data/RNA/processed/${TRAIN_OR_TEST}/${DATANAME}/${SPLIT}}"
 METHODS="${METHODS:-hvg pca scvi_fm}"
