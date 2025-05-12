@@ -16,9 +16,9 @@ from pathlib import Path
 import hydra
 from omegaconf import DictConfig
 from dotenv import load_dotenv
-from anndata import read_h5ad
 
 from adata_hf_datasets.utils import setup_logging
+from adata_hf_datasets.file_utils import safe_read_h5ad, safe_write_h5ad
 from adata_hf_datasets.initial_embedder import InitialEmbedder
 from adata_hf_datasets.sys_monitor import SystemMonitor
 from hydra.core.hydra_config import HydraConfig
@@ -72,7 +72,7 @@ def main(cfg: DictConfig):
                 infile = outfile
 
             logger.info("Loading raw AnnData from %s", infile)
-            adata = read_h5ad(str(infile))
+            adata = safe_read_h5ad(infile, copy_local=False)
             logger.info(
                 "Loaded AnnData with %d cells and %d genes", adata.n_obs, adata.n_vars
             )
@@ -114,7 +114,7 @@ def main(cfg: DictConfig):
 
             # Write combined AnnData with all embeddings
             logger.info("Writing combined output to %s", outfile)
-            adata.write_h5ad(str(outfile))
+            safe_write_h5ad(adata=adata, target=outfile)
             logger.info("Saved combined embeddings to %s", outfile)
 
     except Exception as e:

@@ -13,10 +13,14 @@ from typing import Optional, Union, Any
 import tempfile
 from pathlib import Path
 import random
-import anndata
 import shutil
 import gc
 from anndata.abc import CSRDataset
+
+# io_utils.py
+import errno
+import time
+import uuid
 
 logger = logging.getLogger(__name__)
 
@@ -82,7 +86,7 @@ def add_obs_column_to_h5ad(
 
     adata = None
     try:
-        adata = anndata.read_h5ad(temp_out, backed="r+")
+        adata = ad.read_h5ad(temp_out, backed="r+")
 
         # Get number of observations
         n_obs = adata.n_obs
@@ -976,3 +980,95 @@ def download_figshare_data(
             f"Loaded AnnData object with {data.shape[0]} samples and {data.shape[1]} features."
         )
         return
+
+
+def safe_read_h5ad(
+    path: str | Path,
+    *,
+    max_retry: int = 3,
+    copy_local: bool = True,
+    verify: bool = True,
+    sleep: int = 5,
+) -> ad.AnnData:
+    """
+    Robustly read an .h5ad file, retrying on transient I/O errors.
+
+    Parameters
+    ----------
+    path
+        Path to the .h5ad on the shared filesystem.
+    max_retry
+        Max attempts before giving up (default 3).
+    copy_local
+        On retry, copy the file to $TMPDIR and read from there.
+    verify
+        After reading, open with h5py and touch ``/X/data`` to make sure
+        the file isn't truncated.
+    sleep
+        Seconds to wait between retries.
+    """
+    path = Path(path)
+    attempt = 0
+    local_copy: Path | None = None
+
+    while attempt < max_retry:
+        attempt += 1
+        try:
+            src = local_copy or path
+            adata = ad.read_h5ad(src)
+
+            if verify:
+                with h5py.File(src, "r") as f:
+                    # cheap probe, raises if dataset missing/corrupt
+                    _ = f["X/data"][0:1]
+
+            return adata
+
+        except (OSError, IOError) as e:
+            # only retry on low-level I/O errors
+            if getattr(e, "errno", None) not in (errno.EIO, errno.ESTALE):
+                raise
+
+            if attempt >= max_retry:
+                logger.error("safe_read: giving up after %d attempts – %s", attempt, e)
+                raise
+
+            logger.warning(
+                "safe_read: %s on %s – retry %d/%d", e, path, attempt, max_retry
+            )
+            time.sleep(sleep)
+
+            # first retry ⇒ make a local tmp copy
+            if copy_local and local_copy is None:
+                tmpdir = Path(os.getenv("TMPDIR", tempfile.gettempdir()))
+                local_copy = tmpdir / f"{path.stem}_{uuid.uuid4().hex}.h5ad"
+                try:
+                    shutil.copy2(path, local_copy)
+                    logger.info("safe_read: copied to %s for local access", local_copy)
+                except Exception as cp_err:
+                    logger.warning(
+                        "safe_read: local copy failed (%s); continue without copy",
+                        cp_err,
+                    )
+                    local_copy = None
+
+    # Should never reach here
+    raise RuntimeError("safe_read_h5ad: unexpected exit")
+
+
+def safe_write_h5ad(adata, target, max_retry=3, **kw):
+    tmp = Path(tempfile.mktemp(dir=target.parent, suffix=".h5ad.tmp"))
+    for attempt in range(1, max_retry + 1):
+        try:
+            adata.write_h5ad(tmp, **kw)
+            os.replace(tmp, target)  # atomic on POSIX
+            return
+        except OSError as e:
+            if e.errno == errno.EIO and attempt < max_retry:
+                logger.warning(
+                    "EIO on write (%s). Retry %d/%d …", target, attempt, max_retry
+                )
+                time.sleep(5)
+                continue
+            raise
+    # should not reach here
