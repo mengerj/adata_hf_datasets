@@ -5,12 +5,15 @@ set -euo pipefail
 # === User‐configurable section ===
 MODE="cpu"         # "cpu" or "gpu"
 GPU_COUNT="1"      # how many GPUs if MODE=gpu
-DATANAME="geo_700k"
-BATCH_KEY="study"
+DATANAME="cellxgene_pseudo_bulk_35k"
+BATCH_KEY="dataset_title"
 BATCH_SIZE=32
-METHODS="hvg pca scvi_fm"  #"geneformer"  # space‐separated list
-SCRIPT="scripts/embed_chunks_parallel.slurm"
+METHODS="pca" #"geneformer"  # space‐separated list
+SCRIPT="scripts/embed/embed_chunks_parallel.slurm"
+#SCRIPT="scripts/embed/prepare_embed_chunks_parallel.slurm"
 TRAIN_OR_TEST="train"
+#äDATA_BASE_DIR="/scratch/global/menger/data/RNA/processed"
+DATA_BASE_DIR="data/RNA/processed/"
 # =================================
 # build extra sbatch flags based on MODE
 SBATCH_EXTRA=()
@@ -37,10 +40,9 @@ submit_array() {
     if command -v sbatch &>/dev/null; then
         # — under SLURM, submit an array job —
         sbatch \
-          --job-name="embed_${label}_${JOB_SUFFIX}" \
           --array=0-$((n-1)) \
           "${SBATCH_EXTRA[@]}" \
-          --export=INPUT_DIR="${dir}",\
+          --export=ALL,INPUT_DIR="${dir}",\
 METHODS="${METHODS}",\
 BATCH_KEY="${BATCH_KEY}",\
 BATCH_SIZE="${BATCH_SIZE}",\
@@ -57,11 +59,11 @@ bash "$SCRIPT"
 }
 
 if [[ "$TRAIN_OR_TEST" == "test" ]]; then
-    DATA_DIR="data/RNA/processed/test/${DATANAME}/all"
+    DATA_DIR="${DATA_BASE_DIR}/test/${DATANAME}/all"
     submit_array test "$DATA_DIR"
 else
-    TRAIN_DIR="data/RNA/processed/train/${DATANAME}/train"
-    VAL_DIR="data/RNA/processed/train/${DATANAME}/val"
+    TRAIN_DIR="${DATA_BASE_DIR}/train/${DATANAME}/train"
+    VAL_DIR="${DATA_BASE_DIR}/train/${DATANAME}/val"
     submit_array train "$TRAIN_DIR"
     submit_array val   "$VAL_DIR"
 fi
