@@ -480,8 +480,16 @@ class GeneformerEmbedder(BaseEmbedder):
         # adata.write_h5ad(self.adata_path)
         self.adata_dir = self.og_adata_dir / "geneformer" / adata_name / "adata"
         self.adata_dir.mkdir(parents=True, exist_ok=True)
-        # write the adata to the directory
-        adata.write_h5ad(self.adata_dir / f"{adata_name}.h5ad")
+        # write the adata to the directory, if the file doesnt exist yet
+        gf_adata_file = self.adata_dir / f"{adata_name}.h5ad"
+        if not gf_adata_file.exists():
+            logger.info("Writing AnnData to %s", gf_adata_file)
+            adata.write_h5ad(gf_adata_file)
+        else:
+            logger.info(
+                "AnnData already exists at %s. Skipping writing.",
+                gf_adata_file,
+            )
         self.out_dataset_dir = (
             self.og_adata_dir / "geneformer" / adata_name / "tokenized_ds"
         )
