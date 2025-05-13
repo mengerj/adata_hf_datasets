@@ -11,11 +11,11 @@ or
 
 For each split folder we
 
-1. upload the folder to Nextcloud (1 API call per split)
-2. read every file into an AnnData, check embedding keys,
-   create cell sentences, and add it to the dataset constructor
-3. build the Hugging Face dataset split
-4. optionally push the resulting DatasetDict to the HF Hub
+1. read every file into an AnnData, check embedding keys.
+2. upload the chunks of h5ad or zarr stores to nextcloud
+3. create cell sentences, and add anndata to the dataset constructor
+4. build the Hugging Face dataset split
+5. optionally push the resulting DatasetDict to the HF Hub
 """
 
 from __future__ import annotations
@@ -24,9 +24,8 @@ import logging
 import sys
 from pathlib import Path
 from typing import Dict, List
-
-import scanpy as sc
 import hydra
+import anndata as ad
 from dotenv import load_dotenv
 from omegaconf import DictConfig
 from datasets import Dataset, DatasetDict
@@ -46,9 +45,9 @@ logger = logging.getLogger(__name__)
 def _read_adata(path: Path):
     """Read an AnnData from .h5ad or .zarr."""
     if path.suffix == ".h5ad":
-        return sc.read_h5ad(path)
+        return ad.read_h5ad(path)
     if path.suffix == ".zarr":
-        return sc.read_zarr(path)
+        return ad.read_zarr(path)
     raise ValueError(f"Unsupported file type: {path}")
 
 
@@ -240,22 +239,22 @@ def main(cfg: DictConfig):
         logger.info("Processing split '%s' (%s)", split, split_dir)
 
         # ------------------------------------------------------------------ #
-        # 1) upload folder once – returns filename → link mapping
-        # ------------------------------------------------------------------ #
-        nextcloud_cfg["remote_path"] = str(split_dir)
-        share_links = upload_folder_to_nextcloud(
-            data_folder=str(split_dir),
-            nextcloud_config=nextcloud_cfg,
-        )
-        share_links_per_split[split] = share_links
-
-        # ------------------------------------------------------------------ #
-        # 2) sanity-check every file before heavy processing
+        # 1) sanity-check every file before uploading
         # ------------------------------------------------------------------ #
         for f in sorted(split_dir.glob("*.h5ad")) + sorted(split_dir.glob("*.zarr")):
             adata_tmp = _read_adata(f)
             _validate_obsm_keys(adata_tmp, required_obsm_keys, f)
             del adata_tmp
+
+        # ------------------------------------------------------------------ #
+        # 2) upload folder – returns filename → link mapping
+        # ------------------------------------------------------------------ #
+        nextcloud_cfg["remote_path"] = str(split_dir)
+        share_links = upload_folder_to_nextcloud(
+            data_folder=str(split_dir),
+            nextcloud_config=nextcloud_cfg | {"progress": True},
+        )
+        share_links_per_split[split] = share_links
 
         # ------------------------------------------------------------------ #
         # 3) build the HF dataset for this split

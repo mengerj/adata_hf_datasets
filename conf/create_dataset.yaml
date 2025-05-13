@@ -6,14 +6,14 @@ split_dataset: true
 
 # These get used only if split_dataset is true
 data_dir: "data/RNA/processed_with_emb/train/cellxgene_pseudo_bulk_35k"
-# will be added to obs within the script
+#keys in obs to be used for sentence generation
 sentence_keys: [
-    "sample_id_og",
+    "sample_id_og", # will be added to obs within the script
     "cell_sentence",
     "semantic_true",
     "semantic_similar",
-  ] #keys in obs to be used for sentence generation
-required_obsm_keys: ["X_pca", "X_hvg", "X_scvi", "X_geneformer"]
+  ]
+required_obsm_keys: ["X_pca", "X_hvg", "X_scvi_fm"]
 # cell sentence generation. Will generate obs keys: "cell_sentence", "semantic_true", "semantic_similar"
 annotation_key: "cell_type"
 gene_name_column: "gene_name" #column in .var containing gene names
@@ -32,7 +32,7 @@ base_repo_id: "jo-mengr"
 
 use_nextcloud: true
 nextcloud_config:
-  url: "https://nxc-fredato.imbi.uni-freiburg.de"
+  url: "NEXTCLOUD_URL"
   username: "NEXTCLOUD_USER" # Use environment variable or override
   password: "NEXTCLOUD_PASSWORD" # Use environment variable or override
   remote_path: ""
