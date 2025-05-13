@@ -14,3 +14,4 @@ data/
 out/
 *.DS_Store
 outputs
+models/
