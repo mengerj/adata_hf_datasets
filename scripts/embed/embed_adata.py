@@ -26,7 +26,7 @@ from hydra.core.hydra_config import HydraConfig
 logger = setup_logging()
 
 
-@hydra.main(version_base=None, config_path="../conf", config_name="embed_adata")
+@hydra.main(version_base=None, config_path="../../conf", config_name="embed_adata")
 def main(cfg: DictConfig):
     """
     Apply multiple embedding methods to one or more AnnData files.
