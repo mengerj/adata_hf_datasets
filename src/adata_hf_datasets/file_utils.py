@@ -366,204 +366,291 @@ def verify_share_link(
         return magic.startswith(HDF5_MAGIC)
     if suffix == ".npy":
         return magic.startswith(NUMPY_MAGIC)
-    if suffix == ".npz":
+    if suffix == {".npz", ".zip"}:
         return magic.startswith(ZIP_MAGIC)
     # Unknown type → we can at least confirm it is downloadable
     return True
 
 
-'''
 def upload_folder_to_nextcloud(
-    data_folder: Union[str, Path],
+    data_folder: str | Path,
     nextcloud_config: dict[str, Any],
-    create_share_link: bool = True,
 ) -> dict[str, str]:
     """
-    As before – *but* when a top-level entry ends with ``.zarr`` we
-    (1) walk & upload its internal files **once**,
-    (2) create **one** folder-level share link, and
-    (3) store it under the key ``"<name>.zarr/"`` (note the slash).
+    • Zip every *.zarr directory or *.h5ad file in *data_folder*
+    • Create missing parent directories once
+    • Upload each ZIP sequentially (one Session per file)
+    • Write/extend share_map.json
     """
-    data_folder = Path(data_folder).resolve()
-    if not data_folder.is_dir():
-        raise ValueError(f"{data_folder!r} is not a directory")
+    import json
+    import os
+    import shutil
+    import requests
+    from pathlib import Path
 
+    data_folder = Path(data_folder).resolve()
     mapping_path = data_folder / "share_map.json"
     share_map = json.loads(mapping_path.read_text()) if mapping_path.exists() else {}
 
-    # -------------------------------------------------------------- #
-    # helper that ensures remote dir exists and uploads ONE file
-    # -------------------------------------------------------------- #
-    def _upload_one(local_f: Path):
-        rel_path = str(local_f).split("data/")[1]
-        remote_path = f"data/{rel_path}"
-        nc_cfg = {**nextcloud_config, "remote_path": remote_path}
-        return save_and_upload_adata(str(local_f), nc_cfg, create_share_link=False)
-
-    # -------------------------------------------------------------- #
-    # iterate over **top-level items** first – detects *.zarr dirs
-    # -------------------------------------------------------------- #
-    for item in sorted(data_folder.iterdir()):
-        if item.name == "share_map.json":
-            continue
-
-        # ---------- CASE 1: plain file ----------------------------------- #
-        if item.is_file():
-            rel = item.relative_to(data_folder).as_posix()
-            if rel not in share_map:           # no link yet → upload + link
-                _upload_one(item)
-                share_map[rel] = save_and_upload_adata(
-                    str(item),
-                    {**nextcloud_config, "remote_path": f"data/{rel}"},
-                    create_share_link=True,
-                )
-            continue
-
-        # ---------- CASE 2: *.zarr directory ----------------------------- #
-        if item.is_dir() and item.suffix == ".zarr":
-            rel_dir_key = item.name + "/"      # e.g. "myembed.zarr/"
-            if rel_dir_key in share_map and verify_share_link(
-                share_map[rel_dir_key], suffix=""
-            ):
-                logger.info("✓ existing share for %s OK – skipping upload", rel_dir_key)
-                continue
-
-            logger.info("Uploading Zarr store %s …", item.name)
-            for sub in item.rglob("*"):
-                if sub.is_file():
-                    _upload_one(sub)
-
-            # one folder-level link
-            remote_dir = f"data/{item.name}"
-            nc_cfg = {**nextcloud_config, "remote_path": remote_dir}
-            folder_link = get_share_link(
-                nc_cfg["url"],
-                os.getenv(nc_cfg["username"]),
-                os.getenv(nc_cfg["password"]),
-                remote_dir,
+    # ---------- 1) turn stores into zip files --------------------------
+    def ensure_zip(p: Path) -> Path:
+        if p.suffix == ".zip":
+            return p
+        if p.is_dir() and p.suffix == ".zarr":
+            z = p.with_suffix(".zarr.zip")
+            shutil.make_archive(z.with_suffix(""), "zip", p)
+            return z
+        if p.is_file() and p.suffix == ".h5ad":
+            z = p.with_suffix(".h5ad.zip")
+            shutil.make_archive(
+                z.with_suffix(""), "zip", root_dir=p.parent, base_dir=p.name
             )
-            share_map[rel_dir_key] = folder_link
-            logger.info("Got share link for Zarr folder: %s", folder_link)
+            return z
+        return p  # ignore everything else
 
-    # -------------------------------------------------------------- #
-    # persist & return --------------------------------------------- #
+    zip_paths = [
+        ensure_zip(p) for p in data_folder.iterdir() if p.name != "share_map.json"
+    ]
+
+    # ---------- 2) build remote paths & create dirs --------------------
+    nc_url = os.getenv(nextcloud_config["url"]).rstrip("/")
+    auth = requests.auth.HTTPBasicAuth(
+        os.getenv(nextcloud_config["username"]),
+        os.getenv(nextcloud_config["password"]),
+    )
+
+    remote_dirs = set()
+    uploads = []
+    for z in zip_paths:
+        rel_key = z.relative_to(data_folder).as_posix()
+
+        # keep original hierarchy after first “data/”
+        remote_tail = rel_key if "data/" not in str(z) else str(z).split("data/", 1)[1]
+        remote_rel = f"data/{remote_tail}"
+        parent = Path(remote_tail).parent
+        while parent.as_posix() not in ("", "."):
+            remote_dirs.add(f"data/{parent.as_posix()}")
+            parent = parent.parent
+
+        if rel_key not in share_map or not verify_share_link(
+            share_map[rel_key], ".zip"
+        ):
+            uploads.append((z, remote_rel))
+
+    # create parent dirs sequentially
+    session = requests.Session()
+    base = f"{nc_url}/remote.php/dav/files/{auth.username}"
+    for d in sorted(remote_dirs, key=lambda p: p.count("/")):
+        r = session.request("MKCOL", f"{base}/{d}", auth=auth, timeout=15)
+        if r.status_code not in (201, 405):
+            logger.warning("MKCOL %s → %s", d, r.status_code)
+
+    # ---------- 3) upload each ZIP sequentially ------------------------
+    for local_p, remote_rel in tqdm(uploads, desc="WebDAV upload", unit="file"):
+        full_url = f"{base}/{remote_rel}"
+        size = os.path.getsize(local_p)
+        with open(local_p, "rb") as fh:
+            r = session.put(
+                full_url,
+                data=fh,
+                headers={"Content-Length": str(size)},
+                auth=auth,
+                timeout=(10, 1200),  # 20 min per large file
+            )
+        if not r.ok:
+            logger.error("Upload failed %s → %s (%s)", local_p, full_url, r.status_code)
+            raise RuntimeError("upload failed")
+
+    # ---------- 4) create / refresh share links ------------------------
+    for z in zip_paths:
+        rel_key = z.relative_to(data_folder).as_posix()
+        if rel_key not in share_map or not verify_share_link(
+            share_map[rel_key], ".zip"
+        ):
+            remote_tail = (
+                rel_key if "data/" not in str(z) else str(z).split("data/", 1)[1]
+            )
+            share_map[rel_key] = get_share_link(
+                nc_url, auth.username, auth.password, f"data/{remote_tail}"
+            )
+
     mapping_path.write_text(json.dumps(share_map, indent=2))
     return share_map
+
+
 '''
-
-
+# ------------------------------------------------------------------ #
+# main upload function
+# ------------------------------------------------------------------ #
 def upload_folder_to_nextcloud(
     data_folder: Union[str, Path],
     nextcloud_config: dict[str, Any],
-    max_workers: int = 6,  # new
+    max_workers: int = 6,
 ) -> dict[str, str]:
     """
-    Upload **all** files in *data_folder* (incl. Zarr chunks) with
-    connection reuse & parallelism.
-    Returns/updates share_map.json exactly as before.
+    1. Walk *data_folder*, create one zip per Zarr store / h5ad file.
+    2. Upload only those zip files to Nextcloud (parallel PUT).
+    3. Return / update *share_map.json* exactly as before.
     """
     data_folder = Path(data_folder).resolve()
     if not data_folder.is_dir():
         raise ValueError(f"{data_folder!r} is not a directory")
 
+    # ---------------------------------------------------------------- #
+    # 0) create / update ZIPs
+    # ---------------------------------------------------------------- #
+    zip_targets: list[Path] = []
+    for p in data_folder.iterdir():
+        if p.name == "share_map.json":
+            continue
+        zip_targets.append(_ensure_zip(p))
+
+    # ---------------------------------------------------------------- #
+    # 1) load existing share_map
+    # ---------------------------------------------------------------- #
     mapping_path = data_folder / "share_map.json"
     share_map = json.loads(mapping_path.read_text()) if mapping_path.exists() else {}
 
-    session_factory = requests.Session
     auth = HTTPBasicAuth(
-        os.getenv(nextcloud_config["username"]), os.getenv(nextcloud_config["password"])
+        os.getenv(nextcloud_config["username"]),
+        os.getenv(nextcloud_config["password"]),
     )
-    nc_url = os.getenv(nextcloud_config["url"])
+    nc_url = os.getenv(nextcloud_config["url"]).rstrip("/")
 
-    # gather (local, remote) pairs still missing on server
+    # ------------------------------------------------------------------ #
+    # inside upload_folder_to_nextcloud AFTER you’ve run _ensure_zip(...)
+    # ------------------------------------------------------------------ #
+
     uploads: list[tuple[Path, str]] = []
     remote_dirs: set[str] = set()
 
-    for local_path in data_folder.rglob("*"):
-        if local_path.is_dir() or local_path.name == "share_map.json":
-            continue
+    for zip_path in zip_targets:
+        # key that stays in share_map.json (relative to the local split root)
+        rel_key = zip_path.relative_to(data_folder).as_posix()
+        if rel_key in share_map and verify_share_link(share_map[rel_key], ".zip"):
+            continue                                # already uploaded & checked
 
-        rel_path = local_path.relative_to(data_folder).as_posix()
-        if rel_path not in share_map:  # skip if already linked
-            uploads.append((local_path, f"data/{rel_path}"))
-
-        # collect remote directory path for MKCOL
-        remote_dirs.add(f"data/{local_path.parent.relative_to(data_folder).as_posix()}")
-
-    # 1) ensure directory tree exists on server
-    _mk_remote_dirs(session_factory(), nc_url, auth, remote_dirs)
-    """
-    # 2) parallel upload of missing files
-    if uploads:
-        logger.info("Uploading %d new files with %d workers …", len(uploads), max_workers)
-        thread_map(
-            partial(_upload_one_file, nc_url=nc_url, session=session, auth=auth),
-            uploads,
-            max_workers=max_workers,
-            desc="WebDAV upload",
-            disable= not nextcloud_config.get("progress", False)
-        )
-    """
-
-    # ---------------------------------------------------------------------#
-    # threaded upload with *one* Session per worker
-    # ---------------------------------------------------------------------#
-    def _worker(local_remote: tuple[Path, str]) -> str:
-        """Upload a single file using a dedicated Session."""
-        local_path, remote_rel = local_remote
-        sess = session_factory()  # NEW: private Session
+        # ---------------------------------------------------------------- #
+        # NEW: preserve every component that appears *after* the first
+        #      “data/” in the local path
+        # ---------------------------------------------------------------- #
         try:
+            remote_tail = str(zip_path).split("data/", 1)[1]          # everything after data/
+        except IndexError:                                            # “data/” not in path
+            remote_tail = rel_key                                     # fall back to old behaviour
+        remote_rel = f"data/{remote_tail}"
+
+        uploads.append((zip_path, remote_rel))
+        parent_chain = Path(remote_tail).parent           # e.g. RNA/processed_with_emb/…/train
+        while parent_chain.as_posix() not in ("", "."):
+            remote_dirs.add(f"data/{parent_chain.as_posix()}")
+            parent_chain = parent_chain.parent
+
+    # create parent directory once
+    if remote_dirs:
+        _mk_remote_dirs(
+            nc_url=nc_url,
+            auth=auth,
+            remote_dirs=remote_dirs,
+        )
+    # ---------------------------------------------------------------- #
+    # 3) Upload
+    # ---------------------------------------------------------------- #
+    for local_p, remote_rel in tqdm(uploads, desc="WebDAV upload", unit="file"):
+        with requests.Session() as sess:
             _upload_one_file(
-                local_remote,
+                (local_p, remote_rel),
                 nc_url=nc_url,
                 session=sess,
                 auth=auth,
                 chunk=nextcloud_config.get("chunk_size", 1 << 20),
                 timeout=(5, 60),
             )
-            return remote_rel
-        finally:
-            sess.close()
 
-    if uploads:
-        from concurrent.futures import ThreadPoolExecutor
-        from tqdm import tqdm
-
-        max_workers = nextcloud_config.get("max_workers", 6)
-        with ThreadPoolExecutor(max_workers=max_workers) as pool:
-            for _ in tqdm(
-                pool.map(_worker, uploads),
-                total=len(uploads),
-                desc="WebDAV upload",
-                disable=not nextcloud_config.get("progress", False),
-                unit="file",
-            ):
-                pass  # tqdm updates on each completed future
-    # 3) create/update share link once per top-level .zarr dir OR file
-    for item in data_folder.iterdir():
-        key = item.name + ("/" if item.is_dir() else "")
-        if key in share_map and verify_share_link(share_map[key], suffix=""):
-            continue
-        remote_path = f"data/{item.name}"
-        share_map[key] = get_share_link(
-            nc_url, auth.username, auth.password, remote_path
-        )
+    # ---------------------------------------------------------------- #
+    # 4) (re)create share links
+    # ---------------------------------------------------------------- #
+    for z in zip_targets:
+        rel_key = z.relative_to(data_folder).as_posix()
+        if rel_key not in share_map or not verify_share_link(share_map[rel_key], ".zip"):
+            remote_tail = str(z).split("data/", 1)[1] if "data/" in str(z) else rel_key
+            share_map[rel_key] = get_share_link(
+                nc_url,
+                auth.username,
+                auth.password,
+                f"data/{remote_tail}",
+            )
 
     mapping_path.write_text(json.dumps(share_map, indent=2))
     return share_map
+'''
+
+
+# ------------------------------------------------------------------ #
+# helper: zip target if necessary and return Path to zip
+# ------------------------------------------------------------------ #
+def _ensure_zip(local_path: Path) -> Path:
+    """
+    If *local_path* is
+        - a directory called *.zarr*   → create <name>.zarr.zip
+        - a file     called *.h5ad*    → create <name>.h5ad.zip
+        - already *.zip*               → return as-is
+    The zip is created next to the input and overwritten if outdated.
+    """
+    if local_path.suffix == ".zip":
+        return local_path
+
+    if local_path.is_dir() and local_path.suffix == ".zarr":
+        zip_path = local_path.with_suffix(".zarr.zip")
+    elif local_path.is_file() and local_path.suffix == ".h5ad":
+        zip_path = local_path.with_suffix(".h5ad.zip")
+    else:
+        # leave all other files unchanged (e.g. share_map.json)
+        return local_path
+
+    if not zip_path.exists() or zip_path.stat().st_mtime < local_path.stat().st_mtime:
+        shutil.make_archive(
+            base_name=zip_path.with_suffix(""), format="zip", root_dir=local_path
+        )
+    return zip_path
 
 
 def _mk_remote_dirs(
-    session: requests.Session, nc_url: str, auth: HTTPBasicAuth, remote_dirs: set[str]
-):
-    """Create remote directories (WebDAV MKCOL) once per unique path."""
+    nc_url: str,
+    auth: HTTPBasicAuth,
+    remote_dirs: set[str],
+    timeout: int = 15,
+) -> None:
+    """
+    Create each directory in *remote_dirs* **sequentially**.
+
+    Parameters
+    ----------
+    nc_url
+        Base Nextcloud URL *without* trailing slash.
+    auth
+        `HTTPBasicAuth(username, password)`.
+    remote_dirs
+        Iterable of paths like ``"data/RNA/processed_with_emb/train"``.
+    timeout
+        Seconds to wait for each MKCOL.
+
+    Notes
+    -----
+    • Ignores 405 (already exists).
+    • Logs any other response code but keeps going.
+    """
     base = f"{nc_url.rstrip('/')}/remote.php/dav/files/{auth.username}"
-    for path in sorted(remote_dirs, key=lambda p: p.count("/")):
-        url = f"{base}/{path.lstrip('/')}"
-        res = session.request("MKCOL", url, auth=auth)
-        if res.status_code in (201, 405):  # 201 created, 405 already exists
-            continue
-        logger.warning("MKCOL %s → %s", url, res.status_code)
+    for rel in sorted(
+        remote_dirs, key=lambda p: PurePosixPath(p).as_posix().count("/")
+    ):
+        url = f"{base}/{rel.lstrip('/')}"
+        try:
+            r = requests.request("MKCOL", url, auth=auth, timeout=timeout)
+            if r.status_code not in (201, 405):
+                logger.warning("MKCOL %s → %s", url, r.status_code)
+        except requests.RequestException as exc:
+            logger.warning("MKCOL %s failed: %s", url, exc)
 
 
 def _upload_one_file(
