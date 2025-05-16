@@ -12,28 +12,25 @@ logger = logging.getLogger(__name__)  # best–practice logger
 
 class AnnDataSetConstructor:
     """
-    Create a Hugging Face :class:`datasets.Dataset` out of one or more data
-    sources without retaining large objects in memory.
-
-    You may add data via
-
-    * :py:meth:`add_anndata` – takes an AnnData, internally uses ``adata.obs``
-    * :py:meth:`add_df` – takes any :class:`pandas.DataFrame` with the same
-      column requirements
-
-    After extraction only lightweight Python dicts are kept.
+    Create a Hugging Face :class:`datasets.Dataset` out of single-cell-style
+    data without retaining large objects in memory.
 
     Parameters
     ----------
     negatives_per_sample : int, default 1
-        Number of negatives per anchor in *multiplets* format.
+        Number of negatives per anchor in *multiplets* or *pairs* format.
     dataset_format : {'pairs', 'multiplets', 'single'}, default 'pairs'
-        Dataset layout.
+        Output layout.
+    negative_sentence_idx : int, default 0
+        Only used with ``dataset_format='multiplets'`` and *sentence-*
+        negatives. 0 corresponds to ``cell_sentence_1``, 1 to
+        ``cell_sentence_2`` and so on.
 
     Notes
     -----
-    * Numeric ``obsm`` data have been **removed** – only text columns are used.
-    * Unlimited sequential calls to `add_anndata` and/or `add_df` are allowed.
+    * Numeric ``obsm`` data are **ignored** – only text columns are kept.
+    * You may call :py:meth:`add_anndata` or :py:meth:`add_df` as many times
+      as you wish; all data are concatenated in RAM-light dicts.
     """
 
     # ------------------------------------------------------------------ #
@@ -43,13 +40,20 @@ class AnnDataSetConstructor:
         self,
         negatives_per_sample: int = 1,
         dataset_format: str = "pairs",
+        negative_sentence_idx: int = 0,
     ) -> None:
         if dataset_format not in {"pairs", "multiplets", "single"}:
             raise ValueError(
                 "dataset_format must be 'pairs', 'multiplets', or 'single'."
             )
+        if negatives_per_sample < 1:
+            raise ValueError("negatives_per_sample must be ≥ 1.")
+        if negative_sentence_idx < 0:
+            raise ValueError("negative_sentence_idx must be ≥ 0.")
+
         self.negatives_per_sample = negatives_per_sample
         self.dataset_format = dataset_format
+        self.negative_sentence_idx = negative_sentence_idx
 
         # lightweight per-sample caches
         self._index_to_sentences: Dict[Any, List[str]] = {}
@@ -58,10 +62,8 @@ class AnnDataSetConstructor:
         self._index_to_share: Dict[Any, Optional[str]] = {}
 
         # global maps for fast negative sampling
-        self._batch_caption_map: defaultdict = defaultdict(
-            list
-        )  # (batch, caption) → [idx …]
-        self._caption_map: defaultdict = defaultdict(list)  # caption → [idx …]
+        self._batch_caption_map: defaultdict = defaultdict(list)  # (batch, cap) → idxs
+        self._caption_map: defaultdict = defaultdict(list)  # cap → idxs
 
     # ------------------------------------------------------------------ #
     # public ingest methods
@@ -135,6 +137,7 @@ class AnnDataSetConstructor:
             pos_cap = self._index_to_caption[idx]
 
             if self.dataset_format == "pairs":
+                # unchanged
                 neg_idx = self._get_negative_idx(idx, pos_cap)
                 if neg_idx is None:
                     continue
@@ -152,15 +155,34 @@ class AnnDataSetConstructor:
 
             elif self.dataset_format == "multiplets":
                 negs: Dict[str, str] = {}
-                seen = set()
+                seen_idxs = set()
                 for i in range(self.negatives_per_sample):
-                    neg_idx = self._get_negative_idx(idx, pos_cap)
-                    if neg_idx is None or neg_idx in seen:
-                        continue
-                    seen.add(neg_idx)
-                    negs[f"negative_{i + 1}"] = self._index_to_caption[neg_idx]
+                    # even i (0-based) → caption negative
+                    if i % 2 == 0:
+                        neg_idx = self._get_negative_idx(idx, pos_cap)
+                        if neg_idx is None or neg_idx in seen_idxs:
+                            # if no valid caption negative is available, skip
+                            continue
+                        seen_idxs.add(neg_idx)
+                        negs[f"negative_{i + 1}"] = self._index_to_caption[neg_idx]
+                    # odd i → sentence negative
+                    else:
+                        try:
+                            sent_neg = sent_vals[self.negative_sentence_idx]
+                        except IndexError:
+                            logger.warning(
+                                "negative_sentence_idx %d out of range for sample %s; "
+                                "using first sentence as fallback.",
+                                self.negative_sentence_idx,
+                                idx,
+                            )
+                            sent_neg = sent_vals[0]
+                        negs[f"negative_{i + 1}"] = sent_neg
+
                 if not negs:
+                    # very rare corner-case: no negatives could be drawn
                     continue
+
                 rec = {"sample_idx": idx, **sentences, "positive": pos_cap, **negs}
                 if share:
                     rec["share_link"] = share
