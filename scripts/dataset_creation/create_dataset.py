@@ -127,7 +127,7 @@ def build_split_dataset(
             sentence_keys=sentence_keys,
             caption_key=caption_key,
             batch_key=batch_key,
-            share_link=share_links.get(f.name),
+            share_link=share_links.get(f.name + ".zip"),
         )
 
     return constructor.get_dataset()
@@ -143,8 +143,7 @@ def build_repo_id(
         >>> build_repo_id("jo-mengr", ["bulk_5k", "geo"], "pairs", "cell_type")
         'jo-mengr/bulk_5k_geo_pairs_cell_type'
     """
-    joined = "_".join(sorted(set(dataset_names)))
-    return f"{base_repo_id.rstrip('/')}/{joined}_{dataset_format}_{caption_key}"
+    return f"{base_repo_id.rstrip('/')}/{dataset_names}_{dataset_format}_{caption_key}"
 
 
 def push_dataset_to_hub(
@@ -193,7 +192,7 @@ def push_dataset_to_hub(
 # -----------------------------------------------------------------------------#
 # main Hydra entry-point
 # -----------------------------------------------------------------------------#
-@hydra.main(version_base=None, config_path="../conf", config_name="create_dataset")
+@hydra.main(version_base=None, config_path="../../conf", config_name="create_dataset")
 def main(cfg: DictConfig):
     """
     Build a Hugging Face dataset (with optional splits) from a *data directory*.
@@ -202,6 +201,7 @@ def main(cfg: DictConfig):
     load_dotenv(override=True)
 
     data_dir = Path(to_absolute_path(cfg.data_dir)).expanduser()
+    data_name = data_dir.name
     if not data_dir.exists():
         raise FileNotFoundError(f"data_dir not found: {data_dir}")
 
@@ -232,7 +232,6 @@ def main(cfg: DictConfig):
 
     hf_splits: Dict[str, Dataset] = {}
     share_links_per_split: Dict[str, Dict[str, str]] = {}
-    dataset_name_parts: List[str] = []
 
     for split in split_names:
         split_dir = data_dir / split
@@ -272,8 +271,6 @@ def main(cfg: DictConfig):
             cs_length=cfg.cs_length,
         )
 
-        dataset_name_parts.append(split_dir.name)
-
     hf_dataset = DatasetDict(hf_splits)
     logger.info("Built DatasetDict with splits: %s", list(hf_dataset.keys()))
 
@@ -282,7 +279,7 @@ def main(cfg: DictConfig):
     # ------------------------------------------------------------------ #
     repo_id = build_repo_id(
         base_repo_id=base_repo_id,
-        dataset_names=dataset_name_parts,
+        dataset_names=data_name,
         dataset_format=dataset_format,
         caption_key=caption_key or "no_caption",
     )
