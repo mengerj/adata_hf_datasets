@@ -5,11 +5,12 @@ set -euo pipefail
 # === User‐configurable section ===
 MODE="cpu"         # "cpu" or "gpu"
 GPU_COUNT="1"      # how many GPUs if MODE=gpu
-DATANAME="cellxgene_pseudo_bulk_35k"
+DATANAME="cellxgene_pseudo_bulk_350k"
 BATCH_KEY="dataset_title"
-BATCH_SIZE=32
-METHODS="pca" #"geneformer"  # space‐separated list
+BATCH_SIZE=16
+METHODS="geneformer pca scvi_fm hvg"  # space‐separated list - eg one string with spaces
 SCRIPT="scripts/embed/embed_chunks_parallel.slurm"
+MAX_PROCS=2
 #SCRIPT="scripts/embed/prepare_embed_chunks_parallel.slurm"
 TRAIN_OR_TEST="train"
 #äDATA_BASE_DIR="/scratch/global/menger/data/RNA/processed"
@@ -51,7 +52,7 @@ TRAIN_OR_TEST="${TRAIN_OR_TEST}" \
     else
         # — locally, just run the script (it will detect LOCAL MODE) —
         echo "[LOCAL] Running all $n chunks for '$label' in parallel"
-        INPUT_DIR="$dir" METHODS="$METHODS" \
+        INPUT_DIR="$dir" METHODS="$METHODS" MAX_PROCS="$MAX_PROCS" \
 BATCH_KEY="$BATCH_KEY" BATCH_SIZE="$BATCH_SIZE" \
 TRAIN_OR_TEST="$TRAIN_OR_TEST" \
 bash "$SCRIPT"

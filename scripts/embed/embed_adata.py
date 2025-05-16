@@ -130,6 +130,7 @@ def main(cfg: DictConfig):
 if __name__ == "__main__":
     try:
         main()
+        logger.info("Embedding python script completed successfully.")
     except Exception:
         logger.exception("Fatal error in embed_adata.py")
         sys.exit(1)

@@ -2,34 +2,50 @@
 #SBATCH --job-name=embed
 #SBATCH --mem=60G
 #SBATCH --time=24:00:00
+#SBATCH --array=0-$(($(ls "${INPUT_DIR}"/*.h5ad | wc -l)-1))
 set -euo pipefail
-LOG_DIR="logs/embed/${SLURM_ARRAY_JOB_ID}"
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 0) Define a unified RUN_ID: real array job ID under SLURM, or a timestamp locally
+# ─────────────────────────────────────────────────────────────────────────────
+if [[ -n "${SLURM_ARRAY_JOB_ID:-}" ]]; then
+  RUN_ID="${SLURM_ARRAY_JOB_ID}"
+else
+  # local run: use date+seconds to make it unique
+  RUN_ID="embed_$(date +%Y%m%d_%H%M%S)"
+  # simulate an array task index if unset (so your redirects still work)
+  SLURM_ARRAY_TASK_ID=0
+fi
+# ─────────────────────────────────────────────────────────────────────────────
+# 1) Prepare log directory and redirect
+# ─────────────────────────────────────────────────────────────────────────────
+LOG_DIR="logs/embed/${RUN_ID}"
 mkdir -p "$LOG_DIR"
 # now redirect stdout+stderr into per-task files
-exec 1>logs/embed/"${SLURM_ARRAY_JOB_ID}"/"${SLURM_ARRAY_TASK_ID}".out
-exec 2>logs/embed/"${SLURM_ARRAY_JOB_ID}"/"${SLURM_ARRAY_TASK_ID}".err
+exec 1>logs/embed/"${RUN_ID}"/"${SLURM_ARRAY_TASK_ID}".out
+exec 2>logs/embed/"${RUN_ID}"/"${SLURM_ARRAY_TASK_ID}".err
 
 # record start time
 start_ts=$(date +%s)
 # ─────────────────────────────────────────────────────────────────────────────
-# 1) CONFIGURATION (override via sbatch --export or ENV)
+# 2) CONFIGURATION (override via sbatch --export or ENV)
 # ─────────────────────────────────────────────────────────────────────────────
 TRAIN_OR_TEST="${TRAIN_OR_TEST:-train}"
 DATANAME="${DATANAME:-cellxgene_pseudo_bulk_3_5k}"
 SPLIT="${SPLIT:-train}"
 INPUT_DIR="${INPUT_DIR:-data/RNA/processed/${TRAIN_OR_TEST}/${DATANAME}/${SPLIT}}"
 #INPUT_DIR="${INPUT_DIR:-/scratch/local/menger/data/RNA/processed/${TRAIN_OR_TEST}/${DATANAME}/${SPLIT}}"
-#SBATCH --array=0-$(($(ls "${INPUT_DIR}"/*.h5ad | wc -l)-1))
 METHODS="${METHODS:-hvg pca scvi_fm}"
 BATCH_KEY="${BATCH_KEY:-dataset_title}"
 BATCH_SIZE="${BATCH_SIZE:-32}"
+MAX_PROCS="${MAX_PROCS:-8}"
 # ─────────────────────────────────────────────────────────────────────────────
-# 2) Build a Hydra‐style list literal from our space‑separated METHODS
+# 3) Build a Hydra‐style list literal from our space‑separated METHODS
 # e.g. "hvg pca" → ["hvg","pca"]
 METHODS_JSON="[$(printf '"%s",' $METHODS | sed 's/,$//')]"
 
 # ─────────────────────────────────────────────────────────────────────────────
-# 3) Determine number of CPU cores (local mode only)
+# 4) Determine number of CPU cores (local mode only)
 # ─────────────────────────────────────────────────────────────────────────────
 if command -v nproc &>/dev/null; then
   LOCAL_CONCURRENCY=$(nproc)
@@ -42,42 +58,49 @@ else
 fi
 
 # ─────────────────────────────────────────────────────────────────────────────
-# 4) LOCAL MODE (no SLURM_ARRAY_JOB_ID)
+# LOCAL MODE with capped parallelism via xargs -P
 # ─────────────────────────────────────────────────────────────────────────────
 if [[ -z "${SLURM_ARRAY_JOB_ID:-}" ]]; then
-  echo "[LOCAL MODE] Running all files in parallel with $LOCAL_CONCURRENCY workers"
-  files=( "$INPUT_DIR"/*.h5ad )
-  printf "%s\n" "${files[@]}" \
-    | xargs -n1 -P"$LOCAL_CONCURRENCY" bash -c '
-        this_file="$0"
-        base=$(basename "$this_file" .h5ad)
-        OUTDIR="outputs/$(date +%Y-%m-%d)/local/${base}"
+  echo "[LOCAL MODE] Running all files with up to ${MAX_PROCS:-auto} parallel jobs"
+
+  # 1) Detect total CPUs and set MAX_PROCS if unset
+  LOCAL_CPUS=$(nproc 2>/dev/null || getconf _NPROCESSORS_ONLN 2>/dev/null || echo 1)
+  MAX_PROCS="${MAX_PROCS:-$LOCAL_CPUS}"
+  echo "[LOCAL MODE] CPUs detected: $LOCAL_CPUS; using MAX_PROCS=$MAX_PROCS"
+
+  # 2) Build the file list and hand off to xargs
+  printf "%s\n" "${INPUT_DIR}"/*.h5ad \
+    | xargs -n1 -P"$MAX_PROCS" -I{} bash -c '
+        f="$0"
+        idx=$(basename "$f" .h5ad)
+        OUTDIR="outputs/$(date +%Y-%m-%d)/'"${RUN_ID}"'/local/${idx}"
         mkdir -p "$OUTDIR"
-        echo "[LOCAL][$base] Running methods: '"$METHODS_JSON"'"
+        echo "[LOCAL][${idx}] → $OUTDIR"
         python3 scripts/embed/embed_adata.py \
           ++methods="'"$METHODS_JSON"'" \
           ++batch_key="'"$BATCH_KEY"'" \
           ++batch_size="'"$BATCH_SIZE"'" \
-          ++input_files="[\"$this_file\"]" \
+          ++input_files="[\"$f\"]" \
           ++hydra.run.dir="$OUTDIR"
-      '
+      ' {}
+
   echo "[LOCAL MODE] All done."
   exit 0
 fi
 
 # ─────────────────────────────────────────────────────────────────────────────
-# 5) SLURM ARRAY MODE
+# 6) SLURM ARRAY MODE
 # ─────────────────────────────────────────────────────────────────────────────
 source .venv/bin/activate
 
 files=( "${INPUT_DIR}"/*.h5ad )
 this_file="${files[$SLURM_ARRAY_TASK_ID]}"
-echo "[${SLURM_ARRAY_JOB_ID}:${SLURM_ARRAY_TASK_ID}] Processing $this_file"
+echo "[${RUN_ID}:${SLURM_ARRAY_TASK_ID}] Processing $this_file"
 
-BASE_OUT="outputs/$(date +%Y-%m-%d)/${SLURM_ARRAY_JOB_ID}/${SLURM_ARRAY_TASK_ID}"
+BASE_OUT="outputs/$(date +%Y-%m-%d)/${RUN_ID}/${SLURM_ARRAY_TASK_ID}"
 mkdir -p "$BASE_OUT"
 
-echo "[${SLURM_ARRAY_JOB_ID}:${SLURM_ARRAY_TASK_ID}] Running methods: $METHODS_JSON"
+echo "[${RUN_ID}:${SLURM_ARRAY_TASK_ID}] Running methods: $METHODS_JSON"
 python3 scripts/embed/embed_adata.py \
     ++methods="$METHODS_JSON" \
     ++batch_key="$BATCH_KEY" \
@@ -95,4 +118,4 @@ hours=$(( elapsed/3600 ))
 mins=$(( (elapsed%3600)/60 ))
 secs=$(( elapsed%60 ))
 
-echo "[${SLURM_ARRAY_JOB_ID}:${SLURM_ARRAY_TASK_ID}] Done. Elapsed time: ${hours}h${mins}m${secs}s"
+echo "[${RUN_ID}:${SLURM_ARRAY_TASK_ID}] Done. Elapsed time: ${hours}h${mins}m${secs}s"
