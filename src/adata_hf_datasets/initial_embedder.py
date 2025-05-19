@@ -46,34 +46,75 @@ class BaseEmbedder:
         self.embedding_dim = embedding_dim
         self.init_kwargs = init_kwargs
 
-    def prepare(self, adata, **kwargs):
+    def prepare(
+        self,
+        adata: anndata.AnnData | None = None,
+        adata_path: str | None = None,
+        **kwargs,
+    ):
         """
         Prepare the embedder for embedding. Subclasses decide whether
         to train from scratch, load from hub, or load from S3, etc.
 
         Parameters
         ----------
-        adata : anndata.AnnData
-            Single-cell dataset.
+        adata : anndata.AnnData, optional
+            Single-cell dataset in memory.
+        adata_path : str, optional
+            Path to the AnnData file (.h5ad).
         **kwargs : dict
             Additional keyword arguments used for preparing.
+
+        Raises
+        ------
+        ValueError
+            If neither adata nor adata_path is provided.
         """
+
         raise NotImplementedError("Subclasses must implement 'prepare'")
 
-    def embed(self, adata, obsm_key: str, **kwargs):
+    def embed(
+        self,
+        adata: anndata.AnnData | None = None,
+        adata_path: str | None = None,
+        obsm_key: str = "X_embedding",
+        **kwargs,
+    ) -> np.ndarray:
         """
-        Transform the data into the learned embedding space and store in `adata.obsm`.
+        Transform the data into the learned embedding space.
 
         Parameters
         ----------
-        adata : anndata.AnnData
-            Single-cell dataset to be transformed.
+        adata : anndata.AnnData, optional
+            Single-cell dataset in memory.
+        adata_path : str, optional
+            Path to the AnnData file (.h5ad).
         obsm_key : str
             The key in `adata.obsm` under which to store the embedding.
         **kwargs : dict
             Additional keyword arguments for embedding.
+
+        Returns
+        -------
+        np.ndarray
+            The embedding matrix of shape (n_cells, embedding_dim).
+
+        Raises
+        ------
+        ValueError
+            If neither adata nor adata_path is provided.
         """
         raise NotImplementedError("Subclasses must implement 'embed'")
+
+
+def _check_load_adata(
+    adata: anndata.AnnData | None, adata_path: str | None
+) -> anndata.AnnData:
+    if adata is None and adata_path is None:
+        raise ValueError("Either adata or adata_path must be provided")
+    if adata is None:
+        adata = anndata.read_h5ad(adata_path)
+    return adata
 
 
 class HighlyVariableGenesEmbedder(BaseEmbedder):
@@ -92,42 +133,61 @@ class HighlyVariableGenesEmbedder(BaseEmbedder):
         """
         super().__init__(embedding_dim=embedding_dim)
 
-    def prepare(self, adata: anndata.AnnData, **kwargs) -> None:
+    def prepare(
+        self,
+        adata: anndata.AnnData | None = None,
+        adata_path: str | None = None,
+        **kwargs,
+    ) -> None:
         """
         Identifies the top `embedding_dim` highly variable genes in `adata`.
 
         Parameters
         ----------
-        adata : anndata.AnnData
+        adata : anndata.AnnData, optional
             The single-cell data to analyze.
+        adata_path : str, optional
+            Path to the AnnData file (.h5ad).
         kwargs : dict
             Additional keyword arguments for `scanpy.pp.highly_variable_genes`.
         """
+
         logger.info("Normalizing and log-transforming data before HVG selection.")
+        adata = _check_load_adata(adata, adata_path)
         # check if the data is already normalized
         if "highly_variable" not in adata.var:
             ensure_log_norm(adata, var_threshold=1)
-        # First save the raw counts as a layer
 
     def embed(
         self,
-        adata: anndata.AnnData,
+        adata: anndata.AnnData | None = None,
+        adata_path: str | None = None,
         obsm_key: str = "X_hvg",
         batch_key: str | None = None,
         **kwargs,
-    ) -> None:
+    ) -> np.ndarray:
         """
-        Stores the expression of the selected highly variable genes as an embedding in `adata.obsm`.
+        Stores the expression of the selected highly variable genes as an embedding.
 
         Parameters
         ----------
-        adata : anndata.AnnData
+        adata : anndata.AnnData, optional
             The single-cell data containing highly variable genes.
+        adata_path : str, optional
+            Path to the AnnData file (.h5ad).
         obsm_key : str, optional
             The key under which the embedding will be stored in `adata.obsm`.
-        kwargs : dict
+        batch_key : str, optional
+            The batch key in `adata.obs` to use for batch correction.
+        **kwargs : dict
             Additional keyword arguments. Not used.
+
+        Returns
+        -------
+        np.ndarray
+            The embedding matrix of shape (n_cells, n_hvg_genes).
         """
+        adata = _check_load_adata(adata, adata_path)
         logger.info("Selecting top %d highly variable genes.", self.embedding_dim)
         redo_hvg = True
         # Check if the highly variable genes have already been computed and if there are enough
@@ -189,16 +249,13 @@ class HighlyVariableGenesEmbedder(BaseEmbedder):
 
         hvg_mask = adata.var["highly_variable"].values
         X = adata.X.toarray() if sp.issparse(adata.X) else adata.X
-        adata.obsm[obsm_key] = X[:, hvg_mask]
-        # return to sparse matrix
-        adata.obsm[obsm_key] = sp.csr_matrix(adata.obsm[obsm_key])
+        embedding_matrix = X[:, hvg_mask]
+        # Store in adata for compatibility
+        adata.obsm[obsm_key] = sp.csr_matrix(embedding_matrix)
         logger.info(
-            f"Stored highly variable gene expression in adata.obsm[{obsm_key}], with shape {adata.obsm[obsm_key].shape}"
+            f"Stored highly variable gene expression in adata.obsm[{obsm_key}], with shape {embedding_matrix.shape}"
         )
-        logger.info(
-            "Stored highly variable gene expression in adata.obsm[%s]", obsm_key
-        )
-        return adata
+        return embedding_matrix
 
     def _enforce_exact_hvg_from_dispersion(self, adata: sc.AnnData, n_top: int) -> None:
         """Enforce exact number of HVGs by selecting top genes by normalized dispersion.
@@ -238,8 +295,15 @@ class PCAEmbedder(BaseEmbedder):
         self.embedding_dim = embedding_dim
         self._pca_model = None
 
-    def prepare(self, adata: anndata.AnnData, n_cells=10000, **kwargs) -> None:
+    def prepare(
+        self,
+        adata: anndata.AnnData | None = None,
+        adata_path: str | None = None,
+        n_cells=10000,
+        **kwargs,
+    ) -> None:
         """Fit a PCA model to the AnnData object's .X matrix."""
+        adata = _check_load_adata(adata, adata_path)
         logger.info(
             "Fitting PCA with %d components on %d.", self.embedding_dim, n_cells
         )
@@ -260,13 +324,22 @@ class PCAEmbedder(BaseEmbedder):
         self._pca_model = PCA(n_components=self.embedding_dim)  # Pass kwargs to PCA
         self._pca_model.fit(X)
 
-    def embed(self, adata: anndata.AnnData, obsm_key: str = "X_pca", **kwargs) -> None:
-        """Transform the data via PCA and store in `adata.obsm[obsm_key]`."""
+    def embed(
+        self,
+        adata: anndata.AnnData | None = None,
+        adata_path: str | None = None,
+        obsm_key: str = "X_pca",
+        **kwargs,
+    ) -> np.ndarray:
+        """Transform the data via PCA and return the embedding matrix."""
+        adata = _check_load_adata(adata, adata_path)
         if self._pca_model is None:
             raise RuntimeError("PCA model is not fit yet. Call `prepare(adata)` first.")
         X = adata.X.toarray() if sp.issparse(adata.X) else adata.X
-        adata.obsm[obsm_key] = self._pca_model.transform(X)
-        return adata
+        embedding_matrix = self._pca_model.transform(X)
+        # Store in adata for compatibility
+        adata.obsm[obsm_key] = embedding_matrix
+        return embedding_matrix
 
 
 class GeneformerEmbedder(BaseEmbedder):
@@ -320,7 +393,6 @@ class GeneformerEmbedder(BaseEmbedder):
         """
         super().__init__(embedding_dim=512)
         self.model = None
-        # self.embedding_dim = 512 # Geneformer outputs 512-dimensional embeddings. Is just used for downstream methods to know.
         self.model_input_size = model_input_size
         if model_input_size not in [2048, 4096]:
             raise ValueError(
@@ -410,15 +482,8 @@ class GeneformerEmbedder(BaseEmbedder):
         if emb_extractor_init is not None:
             self.emb_extractor_init.update(emb_extractor_init)
 
-        # Create a unique temp directory for saving intermediate data
-        # time_tag = datetime.now().strftime("%Y%m%d_%H%M%S")
-        # self.tmp_dir = self.project_dir / f"tmp_geneformer_{time_tag}"
-        # self.tmp_adata_dir = self.tmp_dir / "adata"
-        # self.tmp_adata_dir.mkdir(parents=True, exist_ok=True)
-
         # Name of the tokenized dataset
         self.dataset_name = "geneformer"
-        # Where the output tokenized dataset is stored
 
         logger.info(
             "Initialized GeneformerEmbedder with model_input_size=%d, num_layers=%d, special_model=%s",
@@ -427,10 +492,48 @@ class GeneformerEmbedder(BaseEmbedder):
             self.special_model,
         )
 
+    def _read_sample_indices(self, file_path: str | Path) -> np.ndarray:
+        """
+        Efficiently read sample indices from an AnnData file (h5ad or zarr) without loading the entire object.
+
+        Parameters
+        ----------
+        file_path : str or Path
+            Path to the AnnData file (.h5ad or .zarr).
+
+        Returns
+        -------
+        np.ndarray
+            Array of sample indices.
+
+        Raises
+        ------
+        ValueError
+            If the file format is not supported or if sample_index is not found.
+        """
+        file_path = Path(file_path)
+        if file_path.suffix == ".h5ad":
+            import h5py
+
+            with h5py.File(file_path, "r") as f:
+                if "obs" not in f or "sample_index" not in f["obs"]:
+                    raise ValueError("sample_index not found in obs")
+                return f["obs/sample_index"][:]
+        elif file_path.suffix == ".zarr":
+            import zarr
+
+            store = zarr.DirectoryStore(file_path)
+            root = zarr.group(store=store)
+            if "obs" not in root or "sample_index" not in root["obs"]:
+                raise ValueError("sample_index not found in obs")
+            return root["obs/sample_index"][:]
+        else:
+            raise ValueError(f"Unsupported file format: {file_path.suffix}")
+
     def prepare(
         self,
-        adata: anndata.AnnData,
-        adata_path=str,
+        adata: anndata.AnnData | None = None,
+        adata_path: str | None = None,
         do_tokenization: bool = True,
         **kwargs,
     ) -> None:
@@ -446,10 +549,10 @@ class GeneformerEmbedder(BaseEmbedder):
 
         Parameters
         ----------
-        adata : anndata.AnnData
+        adata : anndata.AnnData, optional
             Single-cell dataset to prepare.
-        adata_path : str
-            Path to the AnnData file, to save the tokenized dataset. If not provided, save in "geneformer" folder in current directory.
+        adata_path : str, optional
+            Path to the AnnData file (.h5ad).
         do_tokenization : bool
             Whether to run the tokenization step if no tokenized dataset is found.
         **kwargs : dict
@@ -472,12 +575,11 @@ class GeneformerEmbedder(BaseEmbedder):
             raise ValueError(
                 "adata_path must be provided to save the tokenized dataset."
             )
+        adata = _check_load_adata(adata, adata_path)
         self.in_adata_path = Path(adata_path)
         adata_name = self.in_adata_path.stem
         # save the tokenized dataset in the same directory as the adata
         self.og_adata_dir = self.in_adata_path.parent
-        # self.adata_path = self.adata_dir / adata_name
-        # adata.write_h5ad(self.adata_path)
         self.adata_dir = self.og_adata_dir / "geneformer" / adata_name / "adata"
         self.adata_dir.mkdir(parents=True, exist_ok=True)
         # write the adata to the directory, if the file doesnt exist yet
@@ -515,10 +617,6 @@ class GeneformerEmbedder(BaseEmbedder):
             raise ValueError(
                 "sample_index not found in adata.obs. Run preprocessing script or pp_geneformer first."
             )
-        # 3. Write to a temporary h5ad
-        # h5ad_path = self.tmp_adata_dir / "adata.h5ad"
-        # adata.write_h5ad(h5ad_path)
-        # logger.info("Wrote AnnData to temporary file: %s", h5ad_path)
 
         # 4. Tokenize data if needed
         dataset_path = self.out_dataset_dir / f"{self.dataset_name}.dataset"
@@ -554,11 +652,12 @@ class GeneformerEmbedder(BaseEmbedder):
 
     def embed(
         self,
-        adata: anndata.AnnData,
+        adata: anndata.AnnData | None = None,
+        adata_path: str | None = None,
         obsm_key: str = "X_geneformer",
         batch_size: int = 16,
         **kwargs,
-    ) -> anndata.AnnData:
+    ) -> np.ndarray:
         """
         Run Geneformer embedding on the data.
 
@@ -567,12 +666,13 @@ class GeneformerEmbedder(BaseEmbedder):
          - Invokes Geneformer's `EmbExtractor` to generate embeddings.
          - Re-reads the (processed) AnnData from the temporary directory.
          - Aligns the embeddings with the sample order, storing them in `adata.obsm[obsm_key]`.
-         - (Optionally) cleans up temporary files.
 
         Parameters
         ----------
-        adata : anndata.Anndata
+        adata : anndata.Anndata, optional
             The AnnData object to embed.
+        adata_path : str, optional
+            Path to the AnnData file (.h5ad).
         obsm_key : str, optional
             Key in `adata.obsm` to store the final embeddings. Defaults to "X_geneformer".
         batch_size : int, optional
@@ -582,9 +682,8 @@ class GeneformerEmbedder(BaseEmbedder):
 
         Returns
         -------
-        anndata.AnnData
-            The same AnnData object with `adata.obsm[obsm_key]` filled with
-            the Geneformer embeddings.
+        np.ndarray
+            The embedding matrix of shape (n_cells, 512).
 
         References
         ----------
@@ -639,19 +738,25 @@ class GeneformerEmbedder(BaseEmbedder):
             )
             embs_df = pd.read_csv(embs_csv_path)
 
-        # Attach the embeddings to the adata object
-        og_ids = adata.obs["sample_index"].values
+        # Get sample indices efficiently without loading the entire AnnData
+        if adata_path is not None:
+            og_ids = self._read_sample_indices(adata_path)
+        else:
+            og_ids = adata.obs["sample_index"].values
+
         # Filter and sort embs_df to align with og_ids
         # drop the "Unamed: 0" column
         embs_sorted = self._deduplicate_and_reindex_embeddings(embs_df, og_ids)
-        embs_matrix = embs_sorted.values
-        adata.obsm[obsm_key] = embs_matrix
-        logger.info(
-            "Stored Geneformer embeddings of shape %s in adata.obsm[%r].",
-            embs_matrix.shape,
-            obsm_key,
-        )
-        return adata
+        embedding_matrix = embs_sorted.values
+        # Store in adata for compatibility if provided
+        if adata is not None:
+            adata.obsm[obsm_key] = embedding_matrix
+            logger.info(
+                "Stored Geneformer embeddings of shape %s in adata.obsm[%r].",
+                embedding_matrix.shape,
+                obsm_key,
+            )
+        return embedding_matrix
 
     def _deduplicate_and_reindex_embeddings(self, embs_df, og_ids):
         """
@@ -748,7 +853,12 @@ class SCVIEmbedder(BaseEmbedder):
         self.model = None
         self.init_kwargs = kwargs
 
-    def prepare(self, **kwargs):
+    def prepare(
+        self,
+        adata: anndata.AnnData | None = None,
+        adata_path: str | None = None,
+        **kwargs,
+    ):
         """
         Prepare the SCVI model for embedding.
 
@@ -761,9 +871,14 @@ class SCVIEmbedder(BaseEmbedder):
 
         Parameters
         ----------
+        adata : anndata.AnnData, optional
+            The AnnData object to prepare the embedder.
+        adata_path : str, optional
+            Path to the AnnData file (.h5ad).
         **kwargs : dict
             Additional configuration for loading from S3 or HF.
         """
+        adata = _check_load_adata(adata, adata_path)
         logger.info("Preparing SCVI model, loading from S3 or HF if needed.")
 
         # Decide which approach to use based on the presence of certain kwargs.
@@ -942,10 +1057,11 @@ class SCVIEmbedder(BaseEmbedder):
     def embed(
         self,
         adata: anndata.AnnData | None = None,
+        adata_path: str | None = None,
         obsm_key: str = "X_scvi",
-        batch_key="batch",
+        batch_key: str = "batch",
         **kwargs,
-    ):
+    ) -> np.ndarray:
         """
         Transform the data into the SCVI latent space.
 
@@ -953,26 +1069,28 @@ class SCVIEmbedder(BaseEmbedder):
 
         Parameters
         ----------
-        adata : anndata.AnnData
+        adata : anndata.AnnData, optional
             The query dataset to be embedded.
+        adata_path : str, optional
+            Path to the AnnData file (.h5ad).
         obsm_key : str
             The key in `adata.obsm` under which to store the SCVI embedding.
         batch_key : str
-            The batch key in `adata.obs` to use for batch correction. Most likely the exact categories don't align completly witht the reference data which limits batch correction.
-            But this is how scVI can be used zero shot.
+            The batch key in `adata.obs` to use for batch correction.
         **kwargs : dict
             Additional keyword arguments (unused).
 
         Returns
         -------
-        anndata.AnnData
-            The same AnnData with latent representation stored in `adata.obsm[obsm_key]`.
+        np.ndarray
+            The embedding matrix of shape (n_cells, embedding_dim).
 
         References
         ----------
         The reference data is loaded from S3 or the Hub (depending on configuration).
         Query data is the user-provided `adata`.
         """
+        adata = _check_load_adata(adata, adata_path)
         self.batch_key = batch_key
         if self.scvi_model is None:
             raise ValueError("SCVI model is not prepared. Call `prepare(...)` first.")
@@ -983,11 +1101,10 @@ class SCVIEmbedder(BaseEmbedder):
         logger.info(
             "Computing SCVI latent representation, storing in `%s`...", obsm_key
         )
-        latent_repr = self.scvi_model.get_latent_representation()
-        # restore the original adata
-        adata = self.adata_backup
-        adata.obsm[obsm_key] = latent_repr
-        return adata
+        embedding_matrix = self.scvi_model.get_latent_representation()
+        # Store in adata for compatibility
+        adata.obsm[obsm_key] = embedding_matrix
+        return embedding_matrix
 
 
 class SCVIEmbedderFM(SCVIEmbedder):
@@ -1106,6 +1223,32 @@ class InitialEmbedder:
             self.requires_mem_adata,
         )
 
+    def _validate_file_path(self, file_path: str | Path) -> None:
+        """
+        Validate that the file path exists and has a supported format.
+
+        Parameters
+        ----------
+        file_path : str or Path
+            Path to the file to validate.
+
+        Raises
+        ------
+        FileNotFoundError
+            If the file does not exist.
+        ValueError
+            If the file format is not supported.
+        """
+        file_path = Path(file_path)
+        if not file_path.exists():
+            raise FileNotFoundError(f"File not found: {file_path}")
+
+        if file_path.suffix not in [".h5ad", ".zarr"]:
+            raise ValueError(
+                f"Unsupported file format: {file_path.suffix}. "
+                "Only .h5ad and .zarr formats are supported."
+            )
+
     def prepare(
         self,
         adata: anndata.AnnData | None = None,
@@ -1113,34 +1256,54 @@ class InitialEmbedder:
         **prepare_kwargs,
     ) -> None:
         """
-        Prepare the embedder from a file path.
+        Prepare the embedder from a file path or AnnData object.
 
         Parameters
         ----------
         adata : anndata.AnnData, optional
             The AnnData object to prepare the embedder. Has to be preprocessed already, if embedding method requires it.
-        adata_path : str
-            Path to the AnnData file (.h5ad). Only needed for geneformer.
+        adata_path : str, optional
+            Path to the AnnData file (.h5ad or .zarr). Only needed for geneformer.
         **prepare_kwargs
             Keyword arguments passed to the embedder's prepare().
+
+        Raises
+        ------
+        ValueError
+            If neither adata nor adata_path is provided.
+        FileNotFoundError
+            If the file does not exist.
+        ValueError
+            If the file format is not supported.
         """
-        logger.info("Preparing embedder '%s' with file %s", self.method, adata_path)
+        if adata is None and adata_path is None:
+            raise ValueError("Either adata or adata_path must be provided")
+
+        if adata_path is not None:
+            self._validate_file_path(adata_path)
+
+        logger.info("Preparing embedder '%s'", self.method)
+        if adata_path is not None:
+            logger.info("Using file path: %s", adata_path)
         self.embedder.prepare(adata=adata, adata_path=adata_path, **prepare_kwargs)
 
     def embed(
         self,
-        adata: anndata.AnnData,
+        adata: anndata.AnnData | None = None,
+        adata_path: str | None = None,
         obsm_key: str | None = None,
         batch_key: str = "batch",
         **embed_kwargs,
-    ):
+    ) -> np.ndarray:
         """
-        Embed data and write the result to disk.
+        Embed data and return the embedding matrix.
 
         Parameters
         ----------
-        adata : anndata.AnnData
+        adata : anndata.AnnData, optional
             The AnnData object to embed.
+        adata_path : str, optional
+            Path to the AnnData file (.h5ad or .zarr).
         obsm_key : str, optional
             Key under which embeddings are stored in .obsm.
             Defaults to "X_{method}".
@@ -1151,20 +1314,39 @@ class InitialEmbedder:
 
         Returns
         -------
-        AnnData
-            The AnnData object with embeddings in .obsm[obsm_key].
+        np.ndarray
+            The embedding matrix of shape (n_cells, embedding_dim).
+
+        Raises
+        ------
+        ValueError
+            If neither adata nor adata_path is provided.
+        FileNotFoundError
+            If the file does not exist.
+        ValueError
+            If the file format is not supported.
         """
+        if adata is None and adata_path is None:
+            raise ValueError("Either adata or adata_path must be provided")
+
+        if adata_path is not None:
+            self._validate_file_path(adata_path)
+
         # Derive defaults
         if obsm_key is None:
             obsm_key = f"X_{self.method}"
 
         logger.info(f"Embedding method: {self.method}")
+        if adata_path is not None:
+            logger.info("Using file path: %s", adata_path)
 
-        adata = self.embedder.embed(
+        embedding_matrix = self.embedder.embed(
             adata=adata,
+            adata_path=adata_path,
             obsm_key=obsm_key,
             batch_key=batch_key,
             **embed_kwargs,
         )
+
         logger.info("Embedding complete. Returning the embedding matrix")
-        return adata
+        return embedding_matrix
