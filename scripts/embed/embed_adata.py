@@ -111,20 +111,34 @@ def append_embedding(
     logger.info("Source file: %s", adata_path)
     logger.info("Target file: %s", outfile)
 
-    # Handle file copying if needed
-    if adata_path != outfile:
-        logger.info("Copying %s to %s", adata_path, outfile)
+    # ---------------------------------------------------------------------
+    # Copy (or convert) the source only once, when the target store does
+    # not yet exist.  Subsequent calls will append to the same Zarr.
+    # ---------------------------------------------------------------------
+    if adata_path != outfile and not outfile.exists():
+        logger.info("Creating target store %s from %s", outfile, adata_path)
+
         if adata_path.suffix == ".zarr":
-            # For zarr, we need to copy the entire directory
+            # ---- Source is already Zarr → directory copy is enough
             import shutil
 
-            if outfile.exists():
-                shutil.rmtree(outfile)
             shutil.copytree(adata_path, outfile)
+            logger.debug("Directory-based Zarr copy completed")
+
+        elif adata_path.suffix == ".h5ad":
+            # ---- Source is H5AD → convert to Zarr once
+            tmp_adata = ad.read_h5ad(adata_path, backed="r")
+            tmp_adata.write_zarr(outfile, compressor=None)  # keep original chunks
+            tmp_adata.file.close()
+            logger.debug("One-time H5AD → Zarr conversion completed")
+
         else:
-            # For h5ad, we can use a simple file copy
-            logger.info("H5AD are not copied, only zarr")
-        logger.info("Finished copying file")
+            raise ValueError(
+                "Unsupported source type %s. Only .h5ad or .zarr are accepted."
+                % adata_path.suffix
+            )
+
+        logger.info("Target store initialised; subsequent embeddings will be appended")
 
     if outfile.suffix == ".zarr":
         logger.info("Opening zarr file in read-write mode")
