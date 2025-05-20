@@ -211,7 +211,7 @@ def main(cfg: DictConfig):
             outfile = out_dir / f"{infile.stem}.zarr"
 
             # Load existing combined file if present (and not overwrite), else raw
-            if outfile.exists() and not cfg.overwrite:
+            if outfile.exists():
                 logger.info("Loading existing combined file %s", outfile)
                 infile = outfile
 
