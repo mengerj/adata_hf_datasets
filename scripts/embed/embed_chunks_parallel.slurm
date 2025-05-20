@@ -2,7 +2,7 @@
 #SBATCH --job-name=embed
 #SBATCH --mem=60G
 #SBATCH --time=24:00:00
-#SBATCH --array=0-$(($(ls "${INPUT_DIR}"/*.h5ad | wc -l)-1))
+##SBATCH --array=0-$(($(ls "${INPUT_DIR}"/*.zarr | wc -l)-1))
 set -euo pipefail
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -69,10 +69,10 @@ if [[ -z "${SLURM_ARRAY_JOB_ID:-}" ]]; then
   echo "[LOCAL MODE] CPUs detected: $LOCAL_CPUS; using MAX_PROCS=$MAX_PROCS"
 
   # 2) Build the file list and hand off to xargs
-  printf "%s\n" "${INPUT_DIR}"/*.h5ad \
+  printf "%s\n" "${INPUT_DIR}"/*.zarr \
     | xargs -n1 -P"$MAX_PROCS" -I{} bash -c '
         f="$0"
-        idx=$(basename "$f" .h5ad)
+        idx=$(basename "$f" .zarr)
         OUTDIR="outputs/$(date +%Y-%m-%d)/'"${RUN_ID}"'/local/${idx}"
         mkdir -p "$OUTDIR"
         echo "[LOCAL][${idx}] → $OUTDIR"
@@ -93,7 +93,7 @@ fi
 # ─────────────────────────────────────────────────────────────────────────────
 source .venv/bin/activate
 
-files=( "${INPUT_DIR}"/*.h5ad )
+files=( "${INPUT_DIR}"/*.zarr )
 this_file="${files[$SLURM_ARRAY_TASK_ID]}"
 echo "[${RUN_ID}:${SLURM_ARRAY_TASK_ID}] Processing $this_file"
 

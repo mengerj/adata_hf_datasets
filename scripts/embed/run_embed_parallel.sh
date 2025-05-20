@@ -5,10 +5,10 @@ set -euo pipefail
 # === User‐configurable section ===
 MODE="cpu"         # "cpu" or "gpu"
 GPU_COUNT="1"      # how many GPUs if MODE=gpu
-DATANAME="cellxgene_pseudo_bulk_350k"
+DATANAME="cellxgene_pseudo_bulk_3_5k"
 BATCH_KEY="dataset_title"
-BATCH_SIZE=16
-METHODS="geneformer pca scvi_fm hvg"  # space‐separated list - eg one string with spaces
+BATCH_SIZE=32
+METHODS="pca scvi_fm hvg" #"geneformer" #  # space‐separated list - eg one string with spaces
 SCRIPT="scripts/embed/embed_chunks_parallel.slurm"
 MAX_PROCS=2
 #SCRIPT="scripts/embed/prepare_embed_chunks_parallel.slurm"
@@ -32,7 +32,7 @@ submit_array() {
 
     # count chunks
     local n
-    n=$(ls -1 "${dir}"/*.h5ad | wc -l)
+    n=$(ls -1 "${dir}"/*.zarr | wc -l)
     if (( n == 0 )); then
         echo "No chunks in $dir → skipping"
         return

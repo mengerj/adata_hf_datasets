@@ -18,6 +18,7 @@ import psutil
 from scvi.model import SCVI
 from pathlib import Path
 import os
+import anndata as ad
 import scanpy as sc
 import scipy.sparse as sp
 import numpy as np
@@ -107,13 +108,12 @@ class BaseEmbedder:
         raise NotImplementedError("Subclasses must implement 'embed'")
 
 
-def _check_load_adata(
-    adata: anndata.AnnData | None, adata_path: str | None
-) -> anndata.AnnData:
-    if adata is None and adata_path is None:
-        raise ValueError("Either adata or adata_path must be provided")
-    if adata is None:
-        adata = anndata.read_h5ad(adata_path)
+def _check_load_adata(adata, adata_path):
+    path = Path(adata_path)
+    if path.suffix == ".zarr":
+        adata = ad.read_zarr(path)
+    else:
+        adata = ad.read_h5ad(path)
     return adata
 
 

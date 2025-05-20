@@ -260,7 +260,7 @@ def main(cfg: DictConfig):
                 append_embedding(
                     adata_path=str(infile),
                     embedding=emb_matrix,
-                    outfile=outfile,
+                    outfile=str(outfile),
                     obsm_key=obsm_key,
                 )
 
