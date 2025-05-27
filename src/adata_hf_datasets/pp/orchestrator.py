@@ -38,9 +38,10 @@ def preprocess_h5ad(
     description_key: str | None = None,
     bimodal_col: str | None = None,
     split_bimodal: bool = False,
+    output_format: str = "zarr",
 ) -> None:
     """
-    Preprocess a large .h5ad file in chunks and write a concatenated output.
+    Preprocess a large AnnData file in chunks and write a concatenated output.
 
     This function:
       1. Iterates over smaller AnnData chunks.
@@ -51,7 +52,7 @@ def preprocess_h5ad(
     Parameters
     ----------
     infile : Path
-        Path to the raw .h5ad file.
+        Path to the raw AnnData file (.h5ad or .zarr).
     outdir : Path
         Path to the directory where the chunked output files will be saved.
     chunk_size : int, optional
@@ -73,7 +74,7 @@ def preprocess_h5ad(
         Frequency threshold for consolidating categories (default 1).
     remove_low_frequency : bool, optional
         If True, remove rows (cells) with low-frequency categories. Otherwise, merges them into "unknown".
-    call_geneformer : bool, optional
+    geneformer_pp : bool, optional
         Whether to run the Geneformer step (default True).
     sra_chunk_size : int, optional
         If provided, chunk size for SRA metadata queries.
@@ -93,15 +94,30 @@ def preprocess_h5ad(
         Column in `.obs` for bimodal splitting.
     split_bimodal : bool, optional
         If True, splits the data into two bimodal distributions.
+    output_format : str, default="zarr"
+        Format to write the output file. Must be either "zarr" or "h5ad".
 
     References
     ----------
-    - Data source: single-cell RNA‑seq count matrix stored in H5AD format.
+    - Data source: single-cell RNA‑seq count matrix stored in H5AD or Zarr format.
     """
-    # chunk_dir = outfile.with_suffix("").parent / f"{outfile.stem}_chunks"
+    if output_format not in ["zarr", "h5ad"]:
+        raise ValueError("output_format must be either 'zarr' or 'h5ad'")
+
     chunk_dir = outdir
     chunk_dir.mkdir(parents=True, exist_ok=True)
-    loader = BatchChunkLoader(infile, chunk_size, batch_key=batch_key)
+
+    # Initialize loader based on input file format
+    if infile.suffix == ".zarr":
+        logger.info("Using zarr format for input file")
+        loader = BatchChunkLoader(
+            infile, chunk_size, batch_key=batch_key, file_format="zarr"
+        )
+    else:
+        logger.info("Using h5ad format for input file")
+        loader = BatchChunkLoader(
+            infile, chunk_size, batch_key=batch_key, file_format="h5ad"
+        )
 
     for i, adata in enumerate(loader):
         try:
@@ -187,27 +203,16 @@ def preprocess_h5ad(
             else:
                 adata_merged = processed_splits[0]
 
-            chunk_path = chunk_dir / f"chunk_{i}.h5ad"
-            adata_merged.write_h5ad(chunk_path)
-            # chunks.append(chunk_path)
+            # Write chunk with appropriate format
+            chunk_path = chunk_dir / f"chunk_{i}.{output_format}"
+            logger.info("Writing chunk %d to %s", i, chunk_path)
+            if output_format == "zarr":
+                adata_merged.write_zarr(chunk_path)
+            else:
+                adata_merged.write_h5ad(chunk_path)
+
         except Exception as e:
             logger.error(f"Error processing chunk {i}: {e}")
             continue
 
-    # Concatenate on disk
-    # concat_on_disk(in_files=chunks, out_file=str(outfile))
-    # concat_on_disk(
-    # in_files=chunks,             # list of paths to your input .h5ad files
-    # out_file=str(outfile),       # path for the merged .h5ad
-    # axis=0,                      # concatenate observations; var is the “other” axis
-    # join='inner',                # intersect variables (use 'outer' to union)
-    # merge='same',                # keep .var columns common to all inputs
-    # uns_merge='same',            # keep .uns entries common to all inputs
-    # label='batch',               # store source labels in adata.obs['batch']
-    # keys=[f"chunk{i}" for i in range(len(chunks))],
-    #
-    # explicit labels for each input dataset
-
-
-# )
-#    logger.info("Wrote final file to %s", outfile)
+    logger.info("Finished processing all chunks")
