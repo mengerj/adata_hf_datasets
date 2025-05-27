@@ -270,6 +270,9 @@ def main(cfg: DictConfig):
             annotation_key=cfg.annotation_key,
             cs_length=cfg.cs_length,
         )
+        # if the split is called all, change it to "test" to avoid issue with hf format
+        if split == "all":
+            hf_splits["test"] = hf_splits.pop(split)
 
     hf_dataset = DatasetDict(hf_splits)
     logger.info("Built DatasetDict with splits: %s", list(hf_dataset.keys()))
@@ -284,6 +287,9 @@ def main(cfg: DictConfig):
         caption_key=caption_key or "no_caption",
     )
     logger.info("Final repo_id would be: %s", repo_id)
+
+    # save dataset locally
+    hf_dataset.save_to_disk(f"{cfg.output_dir} / {data_name}")
 
     if push_to_hub_flag:
         push_dataset_to_hub(
