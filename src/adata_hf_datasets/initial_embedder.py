@@ -978,6 +978,15 @@ class SCVIEmbedder(BaseEmbedder):
         # Set batch key as expected from training data
         query_adata.obs["batch"] = query_adata.obs[self.batch_key].astype("category")
 
+        # Clear varm to prevent dimension mismatch errors during SCVI preparation
+        # The varm field may contain PCA components or other variable-level metadata
+        # that was computed on a different set of genes than what SCVI expects
+        if len(query_adata.varm) > 0:
+            logger.info(
+                "Clearing varm field to prevent dimension mismatch during SCVI preparation"
+            )
+            query_adata.varm.clear()
+
         # Prepare scvi fields
         SCVI.prepare_query_anndata(query_adata, self.scvi_model)
 
