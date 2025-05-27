@@ -5,11 +5,11 @@
 #SBATCH --mem=35G               # Request memory
 #SBATCH --time=24:00:00         # Max job time
 
-INPUT_FILE="data/RNA/raw/train/geo_70k.h5ad"
+INPUT_FILE="data/RNA/raw/train/cellxgene_pseudo_bulk_350k.h5ad"
 OUTPUT_DIR="data/RNA/processed/train"
 SPLIT_DATASET=true
-CHUNK_SIZE=2000
-BATCH_KEY=study
+CHUNK_SIZE=100000
+BATCH_KEY=dataset_title
 COUNT_LAYER_KEY=counts
 CATEGORY_THRESHOLD=5
 # If false, the script will NOT split into train/val but instead
@@ -17,20 +17,32 @@ CATEGORY_THRESHOLD=5
 # "single" data scenario.
 
 # SRA options - set to true to avoid connection issues
-SKIP_SRA_FETCH=false
+SKIP_SRA_FETCH=true
 SRA_CONTINUE_ON_FAIL=false
 SRA_MAX_RETRIES=5
 
+# ─────────────────────────────────────────────────────────────────────────────
+# 0) Define a unified RUN_ID: real array job ID under SLURM, or a timestamp locally
+# ─────────────────────────────────────────────────────────────────────────────
+if [[ -n "${SLURM_JOB_ID:-}" ]]; then
+  RUN_ID="${SLURM_JOB_ID}"
+else
+  # local run: use date+seconds to make it unique
+  RUN_ID="pp_$(date +%Y%m%d_%H%M%S)"
+  # simulate an array task index if unset (so your redirects still work)
+  SLURM_JOB_ID=0
+fi
+
 # Create a custom output directory name with date and SLURM job ID
-CUSTOM_DIR="outputs/$(date +%Y-%m-%d)/${SLURM_JOB_ID}"
+CUSTOM_DIR="outputs/$(date +%Y-%m-%d)/${RUN_ID}"
 
 echo "Starting job"
 # Source the setup script to ensure the environment is ready
 source .venv/bin/activate
 echo "venv activated"
 # Now run your Python script with the custom output directory
-python3 scripts/preprocess.py \
-    --config-name preprocess_adata_geo \
+python3 scripts/preprocessing/preprocess.py \
+    --config-name preprocess_adata_cellxgene \
     ++input_file=$INPUT_FILE \
     ++chunk_size=$CHUNK_SIZE \
     ++batch_key=$BATCH_KEY \

@@ -41,7 +41,9 @@ def import_callable(ref: str):
 
 
 @hydra.main(
-    version_base=None, config_path="../conf", config_name="preprocess_adata_cellxgene"
+    version_base=None,
+    config_path="../../conf",
+    config_name="preprocess_adata_cellxgene",
 )
 def main(cfg: DictConfig):
     """
@@ -123,6 +125,7 @@ def main(cfg: DictConfig):
         for name, path_in in subset_files.items():
             out_dir_split = out_dir / name
             logger.info("Preprocessing %s → %s", path_in, out_dir)
+            output_format = cfg.get("output_format", "zarr")
             pp.preprocess_h5ad(
                 path_in,
                 out_dir_split,
@@ -147,8 +150,15 @@ def main(cfg: DictConfig):
                 description_key=cfg.get("description_key", None),
                 bimodal_col=cfg.get("bimodal_col", None),
                 split_bimodal=bool(cfg.get("split_bimodal", False)),
+                output_format=output_format,
             )
-            ad_bk = sc.read_h5ad(out_dir_split / "chunk_0.h5ad", backed="r")
+            if output_format == "h5ad":
+                # If using h5ad, we need to close the file before reading it
+                ad_bk = anndata.read_h5ad(
+                    out_dir_split / f"chunk_0.{output_format}", backed="r"
+                )
+            else:
+                ad_bk = anndata.read_zarr(out_dir_split / f"chunk_0.{output_format}")
             # Plot some quality control plots after processing
             qc_evaluation_plots(
                 ad_bk,

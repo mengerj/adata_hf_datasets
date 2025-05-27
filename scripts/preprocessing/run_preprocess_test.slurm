@@ -21,8 +21,20 @@ SKIP_SRA_FETCH=true
 SRA_CONTINUE_ON_FAIL=false
 SRA_MAX_RETRIES=5
 
+# ─────────────────────────────────────────────────────────────────────────────
+# 0) Define a unified RUN_ID: real array job ID under SLURM, or a timestamp locally
+# ─────────────────────────────────────────────────────────────────────────────
+if [[ -n "${SLURM_JOB_ID:-}" ]]; then
+  RUN_ID="${SLURM_JOB_ID}"
+else
+  # local run: use date+seconds to make it unique
+  RUN_ID="pp_$(date +%Y%m%d_%H%M%S)"
+  # simulate an array task index if unset (so your redirects still work)
+  SLURM_JOB_ID=0
+fi
+
 # Create a custom output directory name with date and SLURM job ID
-CUSTOM_DIR="outputs/$(date +%Y-%m-%d)/${SLURM_JOB_ID}"
+CUSTOM_DIR="outputs/$(date +%Y-%m-%d)/${RUN_ID}"
 
 echo "Starting job"
 # Source the setup script to ensure the environment is ready
