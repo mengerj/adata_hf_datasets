@@ -84,8 +84,8 @@ def build_split_dataset(
     split_dir
         Folder with *.h5ad / *.zarr files.
     share_links
-        Mapping *filename → Nextcloud share link* returned by
-        ``upload_folder_to_nextcloud``.
+        Mapping *filename → Nextcloud share link or local path* returned by
+        ``upload_folder_to_nextcloud`` or created locally.
     sentence_keys, caption_key, batch_key
         Column names to feed into `AnnDataSetConstructor`.
     negatives_per_sample, dataset_format
@@ -122,12 +122,19 @@ def build_split_dataset(
             cs_length=cs_length,
         )
 
+        # Get the share link or local path for this file
+        # The key might be f.name + ".zip" (for Nextcloud) or just the path (for local)
+        file_reference = share_links.get(f.name + ".zip")
+        if file_reference is None:
+            # Fallback: try without .zip suffix or use the file path directly
+            file_reference = share_links.get(f.name, str(f.resolve()))
+
         constructor.add_anndata(
             adata=adata,
             sentence_keys=sentence_keys,
             caption_key=caption_key,
             batch_key=batch_key,
-            share_link=share_links.get(f.name + ".zip"),
+            share_link=file_reference,
         )
 
     return constructor.get_dataset()
@@ -215,8 +222,11 @@ def main(cfg: DictConfig):
     required_obsm_keys: List[str] = cfg.required_obsm_keys
     base_repo_id: str = cfg.base_repo_id
     push_to_hub_flag: bool = cfg.push_to_hub
+    use_nextcloud: bool = cfg.get(
+        "use_nextcloud", True
+    )  # Default to True for backward compatibility
 
-    nextcloud_cfg = dict(cfg.nextcloud_config)
+    nextcloud_cfg = dict(cfg.nextcloud_config) if use_nextcloud else None
 
     # ------------------------------------------------------------------ #
     # detect splits
@@ -246,13 +256,25 @@ def main(cfg: DictConfig):
             del adata_tmp
 
         # ------------------------------------------------------------------ #
-        # 2) upload folder – returns filename → link mapping
+        # 2) upload folder or use local paths
         # ------------------------------------------------------------------ #
-        nextcloud_cfg["remote_path"] = str(split_dir)
-        share_links = upload_folder_to_nextcloud(
-            data_folder=str(split_dir),
-            nextcloud_config=nextcloud_cfg | {"progress": True},
-        )
+        if use_nextcloud and nextcloud_cfg:
+            nextcloud_cfg["remote_path"] = str(split_dir)
+            share_links = upload_folder_to_nextcloud(
+                data_folder=str(split_dir),
+                nextcloud_config=nextcloud_cfg | {"progress": True},
+            )
+            logger.info("Uploaded files to Nextcloud for split '%s'", split)
+        else:
+            # Create a mapping of filename to local path instead of share links
+            share_links = {}
+            for f in sorted(split_dir.glob("*.h5ad")) + sorted(
+                split_dir.glob("*.zarr")
+            ):
+                # Use absolute path for consistency
+                share_links[f.name + ".zip"] = str(f.resolve())
+            logger.info("Using local file paths for split '%s'", split)
+
         share_links_per_split[split] = share_links
 
         # ------------------------------------------------------------------ #
