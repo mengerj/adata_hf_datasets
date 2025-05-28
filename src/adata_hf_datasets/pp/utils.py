@@ -296,7 +296,32 @@ def ensure_raw_counts_layer(
     # 2) Detect if X is raw counts
     elif adata.raw is not None and is_raw_counts(adata.raw.X):
         logger.info("Detected raw counts in adata.raw.X; saving to layer 'counts'")
-        adata.layers["counts"] = adata.raw.X.copy()
+        # Handle case where adata.raw might have more variables than adata
+        if adata.raw.n_vars > adata.n_vars:
+            # Find intersection of variable names between raw and current adata
+            common_vars = adata.var_names.intersection(adata.raw.var_names)
+            if len(common_vars) == 0:
+                logger.warning(
+                    "No common variables found between adata.var_names and adata.raw.var_names. "
+                    "Cannot use adata.raw.X for raw counts."
+                )
+            elif len(common_vars) < adata.n_vars:
+                logger.warning(
+                    f"Only {len(common_vars)} out of {adata.n_vars} variables found in adata.raw. "
+                    "Cannot use adata.raw.X for raw counts due to incomplete overlap."
+                )
+                # Skip using raw data if we don't have all variables
+                # This prevents dimension mismatch errors
+            else:
+                # All current variables are present in raw, subset accordingly
+                raw_var_to_idx = {
+                    var: idx for idx, var in enumerate(adata.raw.var_names)
+                }
+                var_indices = [raw_var_to_idx[var] for var in adata.var_names]
+                adata.layers["counts"] = adata.raw.X[:, var_indices].copy()
+        else:
+            # Standard case: raw has same or fewer variables
+            adata.layers["counts"] = adata.raw.X.copy()
     elif is_raw_counts(adata.X):
         logger.info("Detected raw counts in adata.X; saving to layer 'counts'")
         adata.layers["counts"] = adata.X.copy()
@@ -315,7 +340,7 @@ def ensure_raw_counts_layer(
         return
 
     # 4) Re‑validate that 'counts' really contains integer counts
-    if not is_raw_counts(adata.layers["counts"]):
+    if "counts" in adata.layers and not is_raw_counts(adata.layers["counts"]):
         logger.error(
             "Layer 'counts' does not appear to contain integer raw counts; "
             "downstream steps may fail."
@@ -574,7 +599,7 @@ def is_raw_counts(
       2. The fraction of non-integer entries is below `max_noninteger_fraction`.
       3. (Optional) The data is somewhat sparse (for scRNA-seq, typically many zeros).
 
-    Adjust thresholds according to your dataset’s characteristics.
+    Adjust thresholds according to your dataset's characteristics.
     """
     # Convert to a dense array for checks if it's sparse.
     # For large datasets, you may want to sample cells/genes instead of converting fully!
