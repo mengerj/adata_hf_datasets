@@ -38,14 +38,9 @@ def pp_adata_geneformer(
     # 1. Add ensembl IDs if not present
     if "ensembl_id" not in adata.var.columns:
         logger.info("Adding 'ensembl_id' to adata.var.")
-        add_ensembl_ids(adata)  # user-provided function
-    else:
-        # check that the ensembl ids are valid. If they contain a . ; get everything before the dot
-        if adata.var["ensembl_id"].str.contains(r"\.").any():
-            logger.info(
-                "Ensembl IDs contain a dot. Extracting everything before the dot."
-            )
-            adata.var["ensembl_id"] = adata.var["ensembl_id"].str.split(".").str[0]
+        add_ensembl_ids(
+            adata, ensembl_col="ensembl_id", species="hsapiens"
+        )  # user-provided function
 
     # 2. Add n_counts if not present
     if "n_counts" not in adata.obs.columns:

@@ -59,6 +59,12 @@ def add_ensembl_ids(
         logger.info(
             f"Directly storing Ensembl IDs from row index in adata.var['{ensembl_col}']."
         )
+        # check that the ensembl ids are valid. If they contain a . ; get everything before the dot
+        if adata.var[ensembl_col].str.contains(r"\.").any():
+            logger.info(
+                "Ensembl IDs contain a dot. Extracting everything before the dot."
+            )
+            adata.var[ensembl_col] = adata.var[ensembl_col].str.split(".").str[0]
         return
 
     logger.info("Fetching biomart annotations from Ensembl. This may take a moment...")
