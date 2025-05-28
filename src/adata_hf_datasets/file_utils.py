@@ -379,7 +379,7 @@ def upload_folder_to_nextcloud(
     """
     • Zip every *.zarr directory or *.h5ad file in *data_folder*
     • Create missing parent directories once
-    • Upload each ZIP sequentially (one Session per file)
+    • Upload each ZIP sequentially with robust error handling and retry logic
     • Write/extend share_map.json
     """
     import json
@@ -387,6 +387,7 @@ def upload_folder_to_nextcloud(
     import shutil
     import requests
     from pathlib import Path
+    import time
 
     data_folder = Path(data_folder).resolve()
     mapping_path = data_folder / "share_map.json"
@@ -424,7 +425,7 @@ def upload_folder_to_nextcloud(
     for z in zip_paths:
         rel_key = z.relative_to(data_folder).as_posix()
 
-        # keep original hierarchy after first “data/”
+        # keep original hierarchy after first "data/"
         remote_tail = rel_key if "data/" not in str(z) else str(z).split("data/", 1)[1]
         remote_rel = f"data/{remote_tail}"
         parent = Path(remote_tail).parent
@@ -437,153 +438,179 @@ def upload_folder_to_nextcloud(
         ):
             uploads.append((z, remote_rel))
 
-    # create parent dirs sequentially
-    session = requests.Session()
+    # create parent dirs sequentially with better error handling
     base = f"{nc_url}/remote.php/dav/files/{auth.username}"
     for d in sorted(remote_dirs, key=lambda p: p.count("/")):
-        r = session.request("MKCOL", f"{base}/{d}", auth=auth, timeout=15)
-        if r.status_code not in (201, 405):
-            logger.warning("MKCOL %s → %s", d, r.status_code)
+        max_retries = 3
+        for attempt in range(max_retries):
+            try:
+                with requests.Session() as session:
+                    # Configure session for better reliability
+                    session.mount(
+                        "https://",
+                        requests.adapters.HTTPAdapter(
+                            max_retries=requests.packages.urllib3.util.retry.Retry(
+                                total=3,
+                                backoff_factor=1,
+                                status_forcelist=[500, 502, 503, 504],
+                            )
+                        ),
+                    )
+                    r = session.request("MKCOL", f"{base}/{d}", auth=auth, timeout=30)
+                    if r.status_code not in (201, 405):
+                        logger.warning("MKCOL %s → %s", d, r.status_code)
+                    break
+            except (requests.exceptions.RequestException, TimeoutError) as e:
+                if attempt < max_retries - 1:
+                    logger.warning(
+                        "MKCOL retry %d/%d for %s: %s", attempt + 1, max_retries, d, e
+                    )
+                    time.sleep(2**attempt)  # exponential backoff
+                else:
+                    logger.error(
+                        "MKCOL failed after %d attempts for %s: %s", max_retries, d, e
+                    )
 
-    # ---------- 3) upload each ZIP sequentially ------------------------
+    # ---------- 3) upload each ZIP sequentially with robust error handling ------------------------
+    failed_uploads = []
+
     for local_p, remote_rel in tqdm(uploads, desc="WebDAV upload", unit="file"):
         full_url = f"{base}/{remote_rel}"
         size = os.path.getsize(local_p)
-        with open(local_p, "rb") as fh:
-            r = session.put(
-                full_url,
-                data=fh,
-                headers={"Content-Length": str(size)},
-                auth=auth,
-                timeout=(10, 1200),  # 20 min per large file
-            )
-        if not r.ok:
-            logger.error("Upload failed %s → %s (%s)", local_p, full_url, r.status_code)
-            raise RuntimeError("upload failed")
 
-    # ---------- 4) create / refresh share links ------------------------
+        max_retries = 3
+        upload_success = False
+
+        for attempt in range(max_retries):
+            try:
+                # Create a fresh session for each upload to avoid connection issues
+                with requests.Session() as session:
+                    # Configure session for large file uploads
+                    adapter = requests.adapters.HTTPAdapter(
+                        max_retries=requests.packages.urllib3.util.retry.Retry(
+                            total=0,  # We handle retries manually
+                            backoff_factor=1,
+                            status_forcelist=[500, 502, 503, 504],
+                        )
+                    )
+                    session.mount("https://", adapter)
+                    session.mount("http://", adapter)
+
+                    # Use streaming upload with progress bar
+                    with open(local_p, "rb") as fh:
+                        # Create progress reader
+                        reader = ReadWithProgress(
+                            fh,
+                            size,
+                            chunk_size=nextcloud_config.get("chunk_size", 1024 * 1024),
+                            desc=f"Uploading {local_p.name} (attempt {attempt + 1})",
+                        )
+
+                        # Increased timeouts for large files
+                        # Connect timeout: 30s, Read timeout: 30 minutes
+                        timeout = (30, 1800)
+
+                        r = session.put(
+                            full_url,
+                            data=reader,
+                            headers={"Content-Length": str(size)},
+                            auth=auth,
+                            timeout=timeout,
+                        )
+
+                        if r.ok:
+                            logger.info("✅ Upload successful: %s", local_p.name)
+                            upload_success = True
+
+                            # Save successful upload immediately to share_map
+                            rel_key = local_p.relative_to(data_folder).as_posix()
+                            remote_tail = (
+                                rel_key
+                                if "data/" not in str(local_p)
+                                else str(local_p).split("data/", 1)[1]
+                            )
+                            share_link = get_share_link(
+                                nc_url,
+                                auth.username,
+                                auth.password,
+                                f"data/{remote_tail}",
+                            )
+                            if share_link:
+                                share_map[rel_key] = share_link
+                                # Save progress immediately
+                                mapping_path.write_text(json.dumps(share_map, indent=2))
+                                logger.info(
+                                    "💾 Saved progress: %s → %s", rel_key, share_link
+                                )
+
+                            break
+                        else:
+                            logger.warning(
+                                "Upload failed (HTTP %s) for %s on attempt %d",
+                                r.status_code,
+                                local_p.name,
+                                attempt + 1,
+                            )
+
+            except (requests.exceptions.RequestException, TimeoutError) as e:
+                logger.warning(
+                    "Upload attempt %d/%d failed for %s: %s",
+                    attempt + 1,
+                    max_retries,
+                    local_p.name,
+                    e,
+                )
+                if attempt < max_retries - 1:
+                    # Exponential backoff with jitter
+                    sleep_time = (2**attempt) + random.uniform(0, 1)
+                    logger.info("Retrying in %.1f seconds...", sleep_time)
+                    time.sleep(sleep_time)
+
+        if not upload_success:
+            logger.error(
+                "❌ Upload failed after %d attempts: %s", max_retries, local_p.name
+            )
+            failed_uploads.append(local_p.name)
+
+    # ---------- 4) create / refresh share links for any remaining files ------------------------
     for z in zip_paths:
         rel_key = z.relative_to(data_folder).as_posix()
         if rel_key not in share_map or not verify_share_link(
             share_map[rel_key], ".zip"
         ):
-            remote_tail = (
-                rel_key if "data/" not in str(z) else str(z).split("data/", 1)[1]
-            )
-            share_map[rel_key] = get_share_link(
-                nc_url, auth.username, auth.password, f"data/{remote_tail}"
-            )
+            # Only try to create share links for files that weren't just uploaded
+            # (since we already created them in step 3)
+            if rel_key not in [
+                f.relative_to(data_folder).as_posix() for f, _ in uploads
+            ]:
+                remote_tail = (
+                    rel_key if "data/" not in str(z) else str(z).split("data/", 1)[1]
+                )
+                share_link = get_share_link(
+                    nc_url, auth.username, auth.password, f"data/{remote_tail}"
+                )
+                if share_link:
+                    share_map[rel_key] = share_link
 
+    # Final save of share_map
     mapping_path.write_text(json.dumps(share_map, indent=2))
-    return share_map
 
-
-'''
-# ------------------------------------------------------------------ #
-# main upload function
-# ------------------------------------------------------------------ #
-def upload_folder_to_nextcloud(
-    data_folder: Union[str, Path],
-    nextcloud_config: dict[str, Any],
-    max_workers: int = 6,
-) -> dict[str, str]:
-    """
-    1. Walk *data_folder*, create one zip per Zarr store / h5ad file.
-    2. Upload only those zip files to Nextcloud (parallel PUT).
-    3. Return / update *share_map.json* exactly as before.
-    """
-    data_folder = Path(data_folder).resolve()
-    if not data_folder.is_dir():
-        raise ValueError(f"{data_folder!r} is not a directory")
-
-    # ---------------------------------------------------------------- #
-    # 0) create / update ZIPs
-    # ---------------------------------------------------------------- #
-    zip_targets: list[Path] = []
-    for p in data_folder.iterdir():
-        if p.name == "share_map.json":
-            continue
-        zip_targets.append(_ensure_zip(p))
-
-    # ---------------------------------------------------------------- #
-    # 1) load existing share_map
-    # ---------------------------------------------------------------- #
-    mapping_path = data_folder / "share_map.json"
-    share_map = json.loads(mapping_path.read_text()) if mapping_path.exists() else {}
-
-    auth = HTTPBasicAuth(
-        os.getenv(nextcloud_config["username"]),
-        os.getenv(nextcloud_config["password"]),
-    )
-    nc_url = os.getenv(nextcloud_config["url"]).rstrip("/")
-
-    # ------------------------------------------------------------------ #
-    # inside upload_folder_to_nextcloud AFTER you’ve run _ensure_zip(...)
-    # ------------------------------------------------------------------ #
-
-    uploads: list[tuple[Path, str]] = []
-    remote_dirs: set[str] = set()
-
-    for zip_path in zip_targets:
-        # key that stays in share_map.json (relative to the local split root)
-        rel_key = zip_path.relative_to(data_folder).as_posix()
-        if rel_key in share_map and verify_share_link(share_map[rel_key], ".zip"):
-            continue                                # already uploaded & checked
-
-        # ---------------------------------------------------------------- #
-        # NEW: preserve every component that appears *after* the first
-        #      “data/” in the local path
-        # ---------------------------------------------------------------- #
-        try:
-            remote_tail = str(zip_path).split("data/", 1)[1]          # everything after data/
-        except IndexError:                                            # “data/” not in path
-            remote_tail = rel_key                                     # fall back to old behaviour
-        remote_rel = f"data/{remote_tail}"
-
-        uploads.append((zip_path, remote_rel))
-        parent_chain = Path(remote_tail).parent           # e.g. RNA/processed_with_emb/…/train
-        while parent_chain.as_posix() not in ("", "."):
-            remote_dirs.add(f"data/{parent_chain.as_posix()}")
-            parent_chain = parent_chain.parent
-
-    # create parent directory once
-    if remote_dirs:
-        _mk_remote_dirs(
-            nc_url=nc_url,
-            auth=auth,
-            remote_dirs=remote_dirs,
+    # Report results
+    if failed_uploads:
+        logger.error(
+            "❌ %d files failed to upload: %s", len(failed_uploads), failed_uploads
         )
-    # ---------------------------------------------------------------- #
-    # 3) Upload
-    # ---------------------------------------------------------------- #
-    for local_p, remote_rel in tqdm(uploads, desc="WebDAV upload", unit="file"):
-        with requests.Session() as sess:
-            _upload_one_file(
-                (local_p, remote_rel),
-                nc_url=nc_url,
-                session=sess,
-                auth=auth,
-                chunk=nextcloud_config.get("chunk_size", 1 << 20),
-                timeout=(5, 60),
-            )
+        logger.info(
+            "✅ %d files uploaded successfully and saved to share_map.json",
+            len([k for k in share_map.keys() if k.endswith(".zip")]),
+        )
+        logger.info("🔄 Re-run the script to retry failed uploads")
+        raise RuntimeError(
+            f"Upload failed for {len(failed_uploads)} files: {failed_uploads}"
+        )
 
-    # ---------------------------------------------------------------- #
-    # 4) (re)create share links
-    # ---------------------------------------------------------------- #
-    for z in zip_targets:
-        rel_key = z.relative_to(data_folder).as_posix()
-        if rel_key not in share_map or not verify_share_link(share_map[rel_key], ".zip"):
-            remote_tail = str(z).split("data/", 1)[1] if "data/" in str(z) else rel_key
-            share_map[rel_key] = get_share_link(
-                nc_url,
-                auth.username,
-                auth.password,
-                f"data/{remote_tail}",
-            )
-
-    mapping_path.write_text(json.dumps(share_map, indent=2))
+    logger.info("✅ All uploads completed successfully!")
     return share_map
-'''
 
 
 # ------------------------------------------------------------------ #
@@ -659,22 +686,60 @@ def _upload_one_file(
     session: requests.Session,
     auth: HTTPBasicAuth,
     chunk: int = 1024 * 1024,
-    timeout: tuple[int, int] = (5, 60),
+    timeout: tuple[int, int] = (30, 1800),  # Increased timeouts
+    max_retries: int = 3,
 ):
-    """PUT one file with streaming upload."""
+    """PUT one file with streaming upload and retry logic."""
     local_path, remote_rel = local_remote
     full_url = f"{nc_url.rstrip('/')}/remote.php/dav/files/{auth.username}/{remote_rel}"
     size = os.path.getsize(local_path)
-    with open(local_path, "rb") as fh:
-        headers = {"Content-Length": str(size)}
-        res = session.put(
-            full_url, data=fh, headers=headers, timeout=timeout, auth=auth
-        )
-        if not res.ok:
-            logger.error(
-                "Upload failed %s → %s (%s)", local_path, full_url, res.status_code
+
+    for attempt in range(max_retries):
+        try:
+            with open(local_path, "rb") as fh:
+                # Create progress reader for streaming upload
+                reader = ReadWithProgress(
+                    fh,
+                    size,
+                    chunk_size=chunk,
+                    desc=f"Uploading {local_path.name} (attempt {attempt + 1})",
+                )
+                headers = {"Content-Length": str(size)}
+                res = session.put(
+                    full_url, data=reader, headers=headers, timeout=timeout, auth=auth
+                )
+                if res.ok:
+                    logger.info("✅ Upload successful: %s", local_path.name)
+                    return remote_rel
+                else:
+                    logger.warning(
+                        "Upload failed (HTTP %s) for %s on attempt %d",
+                        res.status_code,
+                        local_path.name,
+                        attempt + 1,
+                    )
+                    if attempt == max_retries - 1:
+                        res.raise_for_status()
+
+        except (requests.exceptions.RequestException, TimeoutError) as e:
+            logger.warning(
+                "Upload attempt %d/%d failed for %s: %s",
+                attempt + 1,
+                max_retries,
+                local_path.name,
+                e,
             )
-            res.raise_for_status()
+            if attempt < max_retries - 1:
+                # Exponential backoff with jitter
+                sleep_time = (2**attempt) + random.uniform(0, 1)
+                logger.info("Retrying in %.1f seconds...", sleep_time)
+                time.sleep(sleep_time)
+            else:
+                logger.error(
+                    "Upload failed after %d attempts: %s", max_retries, local_path
+                )
+                raise
+
     return remote_rel
 
 
@@ -859,11 +924,13 @@ def upload_file_to_nextcloud(
     password: str,
     remote_path: str,
     chunk_size: int = 1024 * 1024,
-    timeout: tuple = (5, 60),
+    timeout: tuple = (30, 1800),  # Increased timeouts: 30s connect, 30min read
+    max_retries: int = 3,
 ) -> requests.Response:
     """
     Upload a file to Nextcloud via WebDAV, showing a tqdm progress bar (with speed),
     while ensuring a proper Content-Length header (no chunked transfer).
+    Includes retry logic for robust uploads.
 
     Parameters
     ----------
@@ -874,6 +941,9 @@ def upload_file_to_nextcloud(
     remote_path : str
     chunk_size : int, optional
     timeout : tuple, optional
+        (connect_timeout, read_timeout) in seconds
+    max_retries : int, optional
+        Number of retry attempts for failed uploads
 
     Returns
     -------
@@ -883,24 +953,62 @@ def upload_file_to_nextcloud(
     total_size = os.path.getsize(file_path)
     filename = os.path.basename(file_path)
 
-    with open(file_path, "rb") as f:
-        reader = ReadWithProgress(
-            f, total_size, chunk_size, desc=f"Uploading {filename}"
-        )
-        # Manually set Content-Length so requests does NOT chunk
-        headers = {"Content-Length": str(total_size)}
-        response = requests.put(
-            full_url,
-            data=reader,
-            auth=HTTPBasicAuth(username, password),
-            headers=headers,
-            timeout=timeout,
-        )
+    for attempt in range(max_retries):
+        try:
+            with open(file_path, "rb") as f:
+                reader = ReadWithProgress(
+                    f,
+                    total_size,
+                    chunk_size,
+                    desc=f"Uploading {filename} (attempt {attempt + 1})",
+                )
+                # Manually set Content-Length so requests does NOT chunk
+                headers = {"Content-Length": str(total_size)}
 
-    if response.ok:
-        tqdm.write(f"✔️  Uploaded {filename}")
-    else:
-        tqdm.write(f"❌  Upload failed ({response.status_code}) for {filename}")
+                # Create session with retry configuration
+                with requests.Session() as session:
+                    adapter = requests.adapters.HTTPAdapter(
+                        max_retries=requests.packages.urllib3.util.retry.Retry(
+                            total=0,  # We handle retries manually
+                            backoff_factor=1,
+                            status_forcelist=[500, 502, 503, 504],
+                        )
+                    )
+                    session.mount("https://", adapter)
+                    session.mount("http://", adapter)
+
+                    response = session.put(
+                        full_url,
+                        data=reader,
+                        auth=HTTPBasicAuth(username, password),
+                        headers=headers,
+                        timeout=timeout,
+                    )
+
+            if response.ok:
+                tqdm.write(f"✔️  Uploaded {filename}")
+                return response
+            else:
+                tqdm.write(
+                    f"❌  Upload failed ({response.status_code}) for {filename} on attempt {attempt + 1}"
+                )
+                if attempt == max_retries - 1:
+                    response.raise_for_status()
+
+        except (requests.exceptions.RequestException, TimeoutError) as e:
+            tqdm.write(
+                f"⚠️  Upload attempt {attempt + 1}/{max_retries} failed for {filename}: {e}"
+            )
+            if attempt < max_retries - 1:
+                # Exponential backoff with jitter
+                sleep_time = (2**attempt) + random.uniform(0, 1)
+                tqdm.write(f"🔄  Retrying in {sleep_time:.1f} seconds...")
+                time.sleep(sleep_time)
+            else:
+                tqdm.write(
+                    f"❌  Upload failed after {max_retries} attempts for {filename}"
+                )
+                raise
 
     return response
 
@@ -1026,57 +1134,6 @@ def get_share_link(
         return None
 
 
-'''
-def get_share_link(nextcloud_url, username, password, remote_path):
-    """
-    Creates a public share link for a file on Nextcloud.
-
-    Parameters:
-        nextcloud_url (str): URL to the Nextcloud server.
-        username (str): Username for Nextcloud authentication.
-        password (str): Password for Nextcloud authentication.
-        remote_path (str): Path in Nextcloud where the file is stored, starting from the root of the user's files directory.
-
-    Returns:
-        str: URL of the shared file if successful, None otherwise.
-    """
-    api_url = f"{nextcloud_url}/ocs/v2.php/apps/files_sharing/api/v1/shares"
-    data = {
-        "shareType": 3,  # This specifies a public link
-        "path": remote_path,
-        "permissions": 1,  # Read-only permissions
-    }
-    headers = {
-        "OCS-APIRequest": "true",
-        "Accept": "application/xml",  # Set header to accept XML
-    }
-
-    response = requests.post(
-        api_url, data=data, headers=headers, auth=HTTPBasicAuth(username, password)
-    )
-
-    if response.status_code == 200:
-        try:
-            # Parse the XML response
-            root = ET.fromstring(response.text)
-            token = root.find(".//token").text
-            share_url = (
-                f"{nextcloud_url}/s/{token}/download"  # Ensure direct file download
-            )
-            return share_url
-        except ET.ParseError:
-            print("Failed to parse the XML data.")
-            return None
-        except AttributeError:
-            print("Failed to find the required elements in the XML.")
-            return None
-    else:
-        print(f"Failed to create share link: {response.status_code}")
-        print("Response details:", response.text)
-        return None
-'''
-
-
 def download_file_from_share_link(share_link, save_path, chunk_size=8192):
     """
     Downloads a file from a Nextcloud share link and validates it based on its suffix.
@@ -1104,7 +1161,6 @@ def download_file_from_share_link(share_link, save_path, chunk_size=8192):
     try:
         with requests.get(share_link, stream=True) as response:
             response.raise_for_status()
-
             with open(save_path, "wb") as file:
                 for chunk in response.iter_content(chunk_size=chunk_size):
                     file.write(chunk)
