@@ -294,6 +294,9 @@ def ensure_raw_counts_layer(
         adata.X = adata.layers[raw_layer_key]
         adata.layers["counts"] = adata.layers[raw_layer_key]
     # 2) Detect if X is raw counts
+    elif adata.raw is not None and is_raw_counts(adata.raw.X):
+        logger.info("Detected raw counts in adata.raw.X; saving to layer 'counts'")
+        adata.layers["counts"] = adata.raw.X.copy()
     elif is_raw_counts(adata.X):
         logger.info("Detected raw counts in adata.X; saving to layer 'counts'")
         adata.layers["counts"] = adata.X.copy()
@@ -304,7 +307,7 @@ def ensure_raw_counts_layer(
     else:
         msg = (
             "Could not find raw counts: "
-            f"no layer '{raw_layer_key}', adata.X not raw, and no valid 'counts' layer."
+            f"no layer '{raw_layer_key}', adata.X and adata.raw.X not raw, and no valid 'counts' layer."
         )
         logger.error(msg)
         if raise_on_missing:
