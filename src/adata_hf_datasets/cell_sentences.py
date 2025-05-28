@@ -2,7 +2,6 @@ import numpy as np
 import anndata
 import scipy.sparse as sp
 import logging
-from adata_hf_datasets.pp.utils import ensure_log_norm
 import random
 
 logger = logging.getLogger(__name__)
@@ -67,7 +66,7 @@ def create_cell_sentences(
         )
     adata_subset = adata[:, adata.var["highly_variable"]].copy()
     # Determine which expression data to use.
-    #ensure_log_norm(adata_subset, var_threshold=0.8) #data was expected to preprocessed with my pipeline..
+    # ensure_log_norm(adata_subset, var_threshold=0.8) #data was expected to preprocessed with my pipeline..
     X = adata_subset.X
 
     # If X is sparse, convert to dense.
