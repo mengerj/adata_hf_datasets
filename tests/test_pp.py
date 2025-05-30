@@ -176,3 +176,76 @@ def test_returned_adata_is_copy_realistic(realistic_adata_general):
     # ensure .X buffers differ
     assert id(qc.X) != original_X_id
     assert id(general.X) != original_X_id
+
+
+def test_add_ensembl_ids_with_versioned_ensembl_index():
+    """
+    Test that add_ensembl_ids correctly handles var index with versioned Ensembl IDs.
+
+    When the var index contains Ensembl IDs with version numbers (e.g., 'ENSG00000268903.1'),
+    the function should create an 'ensembl_id' column with the version numbers stripped off.
+    """
+    from adata_hf_datasets.pp.pybiomart_utils import add_ensembl_ids
+
+    # Create test data with versioned Ensembl IDs in the var index
+    versioned_ensembl_ids = [
+        "ENSG00000268903.1",
+        "ENSG00000241860.6",
+        "ENSG00000228463.10",
+        "ENSG00000237094.12",
+        "ENSG00000225972.1",
+        "ENSG00000225630.1",
+        "ENSG00000237973.1",
+        "ENSG00000229344.1",
+        "ENSG00000248527.1",
+        "ENSG00000198744.5",
+    ]
+
+    # Expected Ensembl IDs without version numbers
+    expected_ensembl_ids = [
+        "ENSG00000268903",
+        "ENSG00000241860",
+        "ENSG00000228463",
+        "ENSG00000237094",
+        "ENSG00000225972",
+        "ENSG00000225630",
+        "ENSG00000237973",
+        "ENSG00000229344",
+        "ENSG00000248527",
+        "ENSG00000198744",
+    ]
+
+    # Create a simple AnnData object with versioned Ensembl IDs as var index
+    n_cells = 10
+    n_genes = len(versioned_ensembl_ids)
+    X = np.random.poisson(lam=2.0, size=(n_cells, n_genes)).astype(int)
+
+    obs = pd.DataFrame({"cell_id": [f"cell_{i}" for i in range(n_cells)]})
+
+    var = pd.DataFrame(
+        index=versioned_ensembl_ids, data={"gene_type": ["protein_coding"] * n_genes}
+    )
+
+    adata = AnnData(X=X, obs=obs, var=var)
+
+    # Verify initial state - no ensembl_id column should exist
+    assert "ensembl_id" not in adata.var.columns
+    assert adata.var_names.tolist() == versioned_ensembl_ids
+
+    # Call add_ensembl_ids - this should detect the versioned Ensembl IDs and strip versions
+    add_ensembl_ids(adata, ensembl_col="ensembl_id")
+
+    # Verify that ensembl_id column was created
+    assert "ensembl_id" in adata.var.columns
+
+    # Verify that the ensembl_id column contains the expected IDs without version numbers
+    actual_ensembl_ids = adata.var["ensembl_id"].tolist()
+    assert actual_ensembl_ids == expected_ensembl_ids
+
+    # Verify that the var index is still the original versioned IDs
+    assert adata.var_names.tolist() == versioned_ensembl_ids
+
+    # Verify that all ensembl_ids start with 'ENS' and don't contain dots
+    for ensembl_id in actual_ensembl_ids:
+        assert ensembl_id.startswith("ENS")
+        assert "." not in ensembl_id

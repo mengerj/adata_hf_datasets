@@ -108,12 +108,19 @@ class BaseEmbedder:
         raise NotImplementedError("Subclasses must implement 'embed'")
 
 
-def _check_load_adata(adata, adata_path):
-    path = Path(adata_path)
-    if path.suffix == ".zarr":
-        adata = ad.read_zarr(path)
-    else:
-        adata = ad.read_h5ad(path)
+def _check_load_adata(
+    adata: anndata.AnnData | None = None, adata_path: str | None = None
+):
+    if adata is None and adata_path is None:
+        raise ValueError("Either adata or adata_path must be provided")
+    if adata is not None and adata_path is not None:
+        raise ValueError("Only one of adata or adata_path must be provided")
+    if adata_path is not None:
+        path = Path(adata_path)
+        if path.suffix == ".zarr":
+            adata = ad.read_zarr(path)
+        else:
+            adata = ad.read_h5ad(path)
     return adata
 
 
@@ -152,11 +159,7 @@ class HighlyVariableGenesEmbedder(BaseEmbedder):
             Additional keyword arguments for `scanpy.pp.highly_variable_genes`.
         """
 
-        logger.info("Normalizing and log-transforming data before HVG selection.")
-        adata = _check_load_adata(adata, adata_path)
-        # check if the data is already normalized
-        if "highly_variable" not in adata.var:
-            ensure_log_norm(adata, var_threshold=1)
+        logger.info("No preperation done for HVG embedder. Done in embed method.")
 
     def embed(
         self,
@@ -191,7 +194,7 @@ class HighlyVariableGenesEmbedder(BaseEmbedder):
         logger.info("Selecting top %d highly variable genes.", self.embedding_dim)
         redo_hvg = True
         # Check if the highly variable genes have already been computed and if there are enough
-        if "highly_variable" not in adata.var:
+        if "highly_variable" in adata.var:
             n_hvg = np.sum(adata.var["highly_variable"])
             if n_hvg >= self.embedding_dim:
                 logger.info(
@@ -201,6 +204,8 @@ class HighlyVariableGenesEmbedder(BaseEmbedder):
                 redo_hvg = False
         # only compute if not already included (from pp)
         if redo_hvg:
+            logger.info("Normalizing and log-transforming data before HVG selection.")
+            ensure_log_norm(adata, var_threshold=1)
             # Convert to dense for checking
             if sp.issparse(adata.X):
                 X_arr = adata.X.toarray()

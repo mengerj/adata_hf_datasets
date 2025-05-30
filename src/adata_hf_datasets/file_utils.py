@@ -375,12 +375,60 @@ def verify_share_link(
 def upload_folder_to_nextcloud(
     data_folder: str | Path,
     nextcloud_config: dict[str, Any],
+    max_workers: int = 4,
 ) -> dict[str, str]:
     """
-    • Zip every *.zarr directory or *.h5ad file in *data_folder*
-    • Create missing parent directories once
-    • Upload each ZIP sequentially with robust error handling and retry logic
-    • Write/extend share_map.json
+    Upload *.zarr directories and *.h5ad files to Nextcloud and create share links.
+
+    This function will:
+    • Convert *.zarr directories and *.h5ad files to ZIP format
+    • Create missing parent directories on Nextcloud
+    • Upload each ZIP file with robust error handling and retry logic
+    • Create public share links for each uploaded file
+    • Write/extend share_map.json with the mapping of local files to share links
+
+    Parameters
+    ----------
+    data_folder : str | Path
+        Local directory containing *.zarr directories and/or *.h5ad files to upload.
+    nextcloud_config : dict[str, Any]
+        Configuration dictionary containing environment variable names (not actual values).
+        Required keys:
+        - "url": Environment variable name containing the Nextcloud base URL
+        - "username": Environment variable name containing the Nextcloud username
+        - "password": Environment variable name containing the Nextcloud password
+        Optional keys:
+        - "chunk_size": Upload chunk size in bytes (default: 1MB)
+    max_workers : int, optional
+        Maximum number of worker threads for parallel uploads (default: 4).
+
+    Returns
+    -------
+    dict[str, str]
+        Mapping of local file paths (relative to data_folder) to public share URLs.
+
+    Notes
+    -----
+    - Environment variables are read using os.getenv() at runtime
+    - Files are converted to ZIP format before upload for better compression
+    - Share links are created as public read-only links
+    - Progress is saved incrementally to share_map.json
+    - Failed uploads will raise RuntimeError with details
+
+    Examples
+    --------
+    >>> # Set environment variables first
+    >>> os.environ["NC_URL"] = "https://cloud.example.com"
+    >>> os.environ["NC_USER"] = "myusername"
+    >>> os.environ["NC_PASS"] = "mypassword"
+    >>>
+    >>> # Then call with env var names in config
+    >>> config = {
+    ...     "url": "NC_URL",
+    ...     "username": "NC_USER",
+    ...     "password": "NC_PASS"
+    ... }
+    >>> share_map = upload_folder_to_nextcloud("/path/to/data", config)
     """
     import json
     import os

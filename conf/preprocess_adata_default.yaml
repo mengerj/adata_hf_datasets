@@ -7,7 +7,7 @@ output_dir: null
 overwrite: true
 
 #pp is done in chunks to avoid memory issues. This is the chunk size.
-chunk_size: 10000
+chunk_size: 200000
 # Train/validation split configuration
 # If false, the script will NOT split into train/val but instead
 # output a single 'all.h5ad' file. This can be used for test data.
