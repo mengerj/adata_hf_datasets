@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #SBATCH --job-name=embed
 #SBATCH --mem=60G
-#SBATCH --time=24:00:00
+#SBATCH --time=3:00:00
 ##SBATCH --array=0-$(($(ls "${INPUT_DIR}"/*.zarr | wc -l)-1))
 set -euo pipefail
 

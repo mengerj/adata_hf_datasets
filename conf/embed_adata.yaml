@@ -1,10 +1,20 @@
 # Input file path (preprocessed data)
+# Support both .h5ad and .zarr formats
 #input_files:
 #  - "data/RNA/processed/train/cellxgene_pseudo_bulk_3_5k/all_train.h5ad"
 #  - "data/RNA/processed/train/cellxgene_pseudo_bulk_3_5k/all_val.h5ad"
 input_files:
   - "data/RNA/processed/train/cellxgene_pseudo_bulk_3_5k/train/chunk_0.zarr"
   - "data/RNA/processed/train/cellxgene_pseudo_bulk_3_5k/val/chunk_0.zarr"
+
+# -----------------------------------------------------------------------------
+# File format configuration
+# input_format: "auto" (detect from extension), "h5ad", or "zarr"
+# output_format: "zarr" (default) or "h5ad"
+# -----------------------------------------------------------------------------
+input_format: auto # Default: auto-detect from file extension
+output_format: zarr # Default: zarr for better performance and streaming
+
 # per default, the output dir is build based on the input file name
 output_dir: null
 # Embedding method to use

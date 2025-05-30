@@ -3,14 +3,14 @@
 Prepare embeddings for preprocessed AnnData files without saving modified AnnData.
 
 This script:
-  1. Reads one or more preprocessed .h5ad files (AnnData objects).
+  1. Reads one or more preprocessed .h5ad or .zarr files (AnnData objects).
   2. For each file, loads it into memory once.
   3. Loops over cfg.methods, calling only `InitialEmbedder.prepare` to do CPU-intensive setup.
   4. Does not write out any AnnData; cached results live internally in your embedder.
 
 Data source
 ----------
-Input .h5ad files are assumed to be preprocessed AnnData objects.
+Input files are assumed to be preprocessed AnnData objects in .h5ad or .zarr format.
 
 """
 
@@ -21,6 +21,7 @@ import hydra
 from omegaconf import DictConfig
 from dotenv import load_dotenv
 from hydra.core.hydra_config import HydraConfig
+import anndata as ad
 
 from adata_hf_datasets.utils import setup_logging
 from adata_hf_datasets.file_utils import safe_read_h5ad
@@ -28,6 +29,44 @@ from adata_hf_datasets.initial_embedder import InitialEmbedder
 from adata_hf_datasets.sys_monitor import SystemMonitor
 
 logger = setup_logging()
+
+
+def load_adata_file(file_path: Path, input_format: str = "auto") -> ad.AnnData:
+    """
+    Load AnnData from file with format detection or explicit format specification.
+
+    Parameters
+    ----------
+    file_path : Path
+        Path to the AnnData file
+    input_format : str
+        Format specification: "auto", "h5ad", or "zarr"
+
+    Returns
+    -------
+    ad.AnnData
+        Loaded AnnData object
+    """
+    if input_format == "auto":
+        if file_path.suffix == ".zarr":
+            format_to_use = "zarr"
+        elif file_path.suffix == ".h5ad":
+            format_to_use = "h5ad"
+        else:
+            raise ValueError(
+                f"Cannot auto-detect format for {file_path}. Please specify input_format."
+            )
+    else:
+        format_to_use = input_format
+
+    if format_to_use == "zarr":
+        return ad.read_zarr(file_path, copy_local=False)
+    elif format_to_use == "h5ad":
+        return safe_read_h5ad(file_path, copy_local=False)
+    else:
+        raise ValueError(
+            f"Unsupported format: {format_to_use}. Must be 'h5ad' or 'zarr'."
+        )
 
 
 @hydra.main(
@@ -40,7 +79,9 @@ def main(cfg: DictConfig):
     Parameters
     ----------
     cfg.input_files : List[str]
-        Paths to preprocessed .h5ad files.
+        Paths to preprocessed files (.h5ad or .zarr).
+    cfg.input_format : str, optional
+        Input file format: "auto", "h5ad", or "zarr". Default is "auto".
     cfg.methods : List[str]
         Embedding methods to prepare (e.g., ['hvg', 'pca', 'scvi_fm']).
     cfg.batch_key : str
@@ -53,6 +94,9 @@ def main(cfg: DictConfig):
     load_dotenv(override=True)
     run_dir = HydraConfig.get().run.dir
 
+    # Get format specifications with defaults
+    input_format = getattr(cfg, "input_format", "auto")
+
     monitor = SystemMonitor(logger=logger)
     monitor.start()
 
@@ -63,8 +107,8 @@ def main(cfg: DictConfig):
             if not infile.exists():
                 raise FileNotFoundError(f"Input file not found: {infile}")
 
-            # Load AnnData
-            adata = safe_read_h5ad(infile, copy_local=False)
+            # Load AnnData with format detection
+            adata = load_adata_file(infile, input_format)
             logger.info(
                 "Loaded AnnData with %d cells, %d vars", adata.n_obs, adata.n_vars
             )

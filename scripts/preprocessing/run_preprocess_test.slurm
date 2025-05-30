@@ -5,12 +5,12 @@
 #SBATCH --mem=100G               # Request memory
 #SBATCH --time=24:00:00         # Max job time
 
-INPUT_FILE="data/RNA/raw/test/tabula_sapiens.h5ad"
+INPUT_FILE="data/RNA/raw/test/human_immune_health_atlas_b-plasma.h5ad"
 OUTPUT_DIR="data/RNA/processed/test"
 SPLIT_DATASET=false
-CHUNK_SIZE=50000
-BATCH_KEY="_scvi_batch"
-COUNT_LAYER_KEY="decontXcounts"
+CHUNK_SIZE=200000
+BATCH_KEY="batch_id"
+COUNT_LAYER_KEY="counts"
 CATEGORY_THRESHOLD=5
 # If false, the script will NOT split into train/val but instead
 # output a single 'all.h5ad' file. This can be used for test data or

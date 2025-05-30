@@ -9,11 +9,17 @@ defaults:
   - _self_
 
 # -----------------------------------------------------------------------------
-# Input files: list of one or more .h5ad paths to process.
-# Use CLI override: ++input_files='["path/to/a.h5ad","path/to/b.h5ad"]'
+# Input files: list of one or more .h5ad or .zarr paths to process.
+# Use CLI override: ++input_files='["path/to/a.h5ad","path/to/b.zarr"]'
 # -----------------------------------------------------------------------------
 input_files:
-  - data/RNA/processed/train/cellxgene_pseudo_bulk_3_5k/train/chunk0.h5ad
+  - data/RNA/processed/train/cellxgene_pseudo_bulk_3_5k/train/chunk0.zarr
+
+# -----------------------------------------------------------------------------
+# File format configuration
+# input_format: "auto" (detect from extension), "h5ad", or "zarr"
+# -----------------------------------------------------------------------------
+input_format: auto # Default: auto-detect from file extension
 
 # -----------------------------------------------------------------------------
 # Which embedding methods to prepare

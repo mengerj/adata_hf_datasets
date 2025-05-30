@@ -3,11 +3,11 @@
 Apply initial embeddings to preprocessed AnnData files.
 
 This script:
-  1. Reads one or more preprocessed .h5ad files.
+  1. Reads one or more preprocessed .h5ad or .zarr files.
   2. For each file, loads it into memory once (or loads an existing combined output).
   3. Loops over cfg.methods, computing any missing embeddings.
   4. Stores each embedding in adata.obsm["X_<method>"].
-  5. Writes out a single .h5ad with all embeddings attached.
+  5. Writes out a single file with all embeddings attached.
 """
 
 import sys
@@ -30,7 +30,45 @@ from hydra.core.hydra_config import HydraConfig
 logger = setup_logging()
 
 
-def check_existing_embeddings(file_path: Path) -> set[str]:
+def load_adata_file(file_path: Path, input_format: str = "auto") -> ad.AnnData:
+    """
+    Load AnnData from file with format detection or explicit format specification.
+
+    Parameters
+    ----------
+    file_path : Path
+        Path to the AnnData file
+    input_format : str
+        Format specification: "auto", "h5ad", or "zarr"
+
+    Returns
+    -------
+    ad.AnnData
+        Loaded AnnData object
+    """
+    if input_format == "auto":
+        if file_path.suffix == ".zarr":
+            format_to_use = "zarr"
+        elif file_path.suffix == ".h5ad":
+            format_to_use = "h5ad"
+        else:
+            raise ValueError(
+                f"Cannot auto-detect format for {file_path}. Please specify input_format."
+            )
+    else:
+        format_to_use = input_format
+
+    if format_to_use == "zarr":
+        return ad.read_zarr(file_path, copy_local=False)
+    elif format_to_use == "h5ad":
+        return safe_read_h5ad(file_path, copy_local=False)
+    else:
+        raise ValueError(
+            f"Unsupported format: {format_to_use}. Must be 'h5ad' or 'zarr'."
+        )
+
+
+def check_existing_embeddings(file_path: Path, input_format: str = "auto") -> set[str]:
     """
     Check which embeddings already exist in the file without loading the entire dataset.
 
@@ -38,13 +76,27 @@ def check_existing_embeddings(file_path: Path) -> set[str]:
     ----------
     file_path : Path
         Path to the AnnData file (.h5ad or .zarr)
+    input_format : str
+        Format specification: "auto", "h5ad", or "zarr"
 
     Returns
     -------
     set[str]
         Set of existing obsm keys
     """
-    if file_path.suffix == ".zarr":
+    if input_format == "auto":
+        if file_path.suffix == ".zarr":
+            format_to_use = "zarr"
+        elif file_path.suffix == ".h5ad":
+            format_to_use = "h5ad"
+        else:
+            raise ValueError(
+                f"Cannot auto-detect format for {file_path}. Please specify input_format."
+            )
+    else:
+        format_to_use = input_format
+
+    if format_to_use == "zarr":
         # For zarr, we can check the obsm group directly
         store = zarr.DirectoryStore(file_path)
         root = zarr.group(store=store)
@@ -55,6 +107,47 @@ def check_existing_embeddings(file_path: Path) -> set[str]:
         # For h5ad, we need to load the file to check obsm
         adata = safe_read_h5ad(file_path, copy_local=False)
         return set(adata.obsm.keys())
+
+
+def get_output_path(
+    input_path: Path, output_format: str = "zarr", output_dir: Path = None
+) -> Path:
+    """
+    Generate output path based on input path and desired output format.
+
+    Parameters
+    ----------
+    input_path : Path
+        Path to input file
+    output_format : str
+        Desired output format: "zarr" or "h5ad"
+    output_dir : Path, optional
+        Custom output directory. If None, creates processed_with_emb directory
+
+    Returns
+    -------
+    Path
+        Output file path
+    """
+    if output_dir is None:
+        # Default behavior: replace "processed" with "processed_with_emb"
+        out_dir = Path(
+            str(input_path.parent).replace("processed", "processed_with_emb")
+        )
+    else:
+        out_dir = Path(output_dir)
+
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    # Set output extension based on format
+    if output_format == "zarr":
+        output_suffix = ".zarr"
+    elif output_format == "h5ad":
+        output_suffix = ".h5ad"
+    else:
+        raise ValueError(f"Unsupported output format: {output_format}")
+
+    return out_dir / f"{input_path.stem}{output_suffix}"
 
 
 def append_embedding(
@@ -192,7 +285,13 @@ def main(cfg: DictConfig):
     Parameters
     ----------
     cfg.input_files : List[str]
-        Paths to preprocessed .h5ad files.
+        Paths to preprocessed files (.h5ad or .zarr).
+    cfg.input_format : str, optional
+        Input file format: "auto", "h5ad", or "zarr". Default is "auto".
+    cfg.output_format : str, optional
+        Output file format: "zarr" or "h5ad". Default is "zarr".
+    cfg.output_dir : str, optional
+        Custom output directory. If None, creates processed_with_emb directory.
     cfg.methods : List[str]
         Embedding methods to apply (e.g., ['hvg','pca','scvi_fm']).
     cfg.batch_key : str
@@ -207,6 +306,11 @@ def main(cfg: DictConfig):
     load_dotenv(override=True)
     hydra_run_dir = HydraConfig.get().run.dir
 
+    # Get format specifications with defaults
+    input_format = getattr(cfg, "input_format", "auto")
+    output_format = getattr(cfg, "output_format", "zarr")
+    output_dir = getattr(cfg, "output_dir", None)
+
     monitor = SystemMonitor(logger=logger)
     monitor.start()
 
@@ -217,21 +321,26 @@ def main(cfg: DictConfig):
             if not infile.exists():
                 raise FileNotFoundError(f"Input file not found: {infile}")
 
-            # Prepare output path
-            out_dir = Path(
-                str(infile.parent).replace("processed", "processed_with_emb")
+            # Generate output path based on configuration
+            outfile = get_output_path(
+                infile, output_format, Path(output_dir) if output_dir else None
             )
-            out_dir.mkdir(parents=True, exist_ok=True)
-            outfile = out_dir / f"{infile.stem}.zarr"
+            logger.info("Output file: %s", outfile)
 
             # Load existing combined file if present (and not overwrite), else raw
             if outfile.exists():
                 logger.info("Loading existing combined file %s", outfile)
-                infile = outfile
+                file_to_check = outfile
+                format_to_check = output_format
+            else:
+                file_to_check = infile
+                format_to_check = input_format
 
             # Determine which methods still need to run
             methods_to_run = []
-            existing_obsm_keys = check_existing_embeddings(infile)
+            existing_obsm_keys = check_existing_embeddings(
+                file_to_check, format_to_check
+            )
 
             for method in cfg.methods:
                 obsm_key = f"X_{method}"
@@ -241,15 +350,11 @@ def main(cfg: DictConfig):
                     methods_to_run.append(method)
 
             if not methods_to_run:
-                logger.info("All embeddings present for %s; skipping write.", infile)
+                logger.info("All embeddings present for %s; skipping.", file_to_check)
                 continue
 
-            # Load the data only if we need to compute new embeddings
-            # logger.info("Loading AnnData from %s", infile)
-            # adata = safe_read_h5ad(infile, copy_local=False)
-            # logger.info(
-            #   "Loaded AnnData with %d cells and %d genes", adata.n_obs, adata.n_vars
-            # )
+            # Use the existing output file as input if it exists, otherwise use original input
+            input_for_processing = outfile if outfile.exists() else infile
 
             # Compute missing embeddings
             for method in methods_to_run:
@@ -259,12 +364,14 @@ def main(cfg: DictConfig):
 
                 monitor.log_event(f"Prepare {method}")
                 embedder = InitialEmbedder(method=method, embedding_dim=emb_dim)
-                embedder.prepare(adata_path=str(infile), batch_key=cfg.batch_key)
+                embedder.prepare(
+                    adata_path=str(input_for_processing), batch_key=cfg.batch_key
+                )
 
                 monitor.log_event(f"Embed {method}")
                 obsm_key = f"X_{method}"
                 emb_matrix = embedder.embed(
-                    adata_path=str(infile),
+                    adata_path=str(input_for_processing),
                     obsm_key=obsm_key,
                     batch_key=cfg.batch_key,
                     batch_size=cfg.batch_size,
@@ -272,7 +379,7 @@ def main(cfg: DictConfig):
                 monitor.log_event(f"Finished {method}")
 
                 append_embedding(
-                    adata_path=str(infile),
+                    adata_path=str(input_for_processing),
                     embedding=emb_matrix,
                     outfile=str(outfile),
                     obsm_key=obsm_key,
