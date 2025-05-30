@@ -29,6 +29,7 @@ import anndata as ad
 from dotenv import load_dotenv
 from omegaconf import DictConfig
 from datasets import Dataset, DatasetDict
+from hydra.core.hydra_config import HydraConfig
 
 from adata_hf_datasets.ds_constructor import AnnDataSetConstructor
 from adata_hf_datasets.utils import annotate_and_push_dataset, setup_logging
@@ -204,7 +205,9 @@ def main(cfg: DictConfig):
     """
     Build a Hugging Face dataset (with optional splits) from a *data directory*.
     """
-    setup_logging()
+    # Get Hydra run directory for logging
+    hydra_run_dir = HydraConfig.get().run.dir
+    setup_logging(log_dir=hydra_run_dir)
     load_dotenv(override=True)
 
     data_dir = Path(to_absolute_path(cfg.data_dir)).expanduser()
@@ -310,8 +313,10 @@ def main(cfg: DictConfig):
     )
     logger.info("Final repo_id would be: %s", repo_id)
 
-    # save dataset locally
-    hf_dataset.save_to_disk(f"{cfg.output_dir} / {data_name}")
+    # save dataset locally to the hydra run directory
+    dataset_save_path = Path(hydra_run_dir) / data_name
+    hf_dataset.save_to_disk(str(dataset_save_path))
+    logger.info("Dataset saved locally to: %s", dataset_save_path)
 
     if push_to_hub_flag:
         push_dataset_to_hub(
