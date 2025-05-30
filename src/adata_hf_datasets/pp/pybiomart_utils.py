@@ -85,7 +85,7 @@ def add_ensembl_ids(
             ensembl_ids.append(biomart_df.loc[symbol, "Gene stable ID"])
         else:
             ensembl_ids.append("")
-    # check that ensembl_ids contain "ENSG" IDs and are of same length adata
+    # check that ensembl_ids contain "ENS" IDs and are of same length adata
     if not check_ensembl_ids(ensembl_ids):
         raise ValueError(
             "Ensembl IDs are not valid. Please check the index column or provide a correct {ensembl_col} column."
@@ -134,7 +134,17 @@ def ensure_ensembl_index(
     # 1) If index is already ENSG…
     first = adata.var_names[0]
     if isinstance(first, str) and first.startswith("ENS"):
-        logger.info("AnnData.var.index already Ensembl IDs; skipping reindex.")
+        logger.info(
+            "AnnData.var.index already Ensembl IDs; checking for version numbers."
+        )
+        # Check if any Ensembl IDs contain version numbers (dots) and remove them
+        names = adata.var_names.astype(str)
+        if pd.Series(names).str.contains(r"\.").any():
+            logger.info(
+                "Ensembl IDs contain version numbers. Removing version suffixes (everything after '.')."
+            )
+            clean_names = pd.Series(names).str.split(".").str[0]
+            adata.var.index = clean_names
     else:
         # 2) Try existing var[ensembl_col]
         if ensembl_col in adata.var.columns:
