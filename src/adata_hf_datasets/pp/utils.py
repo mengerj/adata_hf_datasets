@@ -461,14 +461,6 @@ def ensure_log_norm(
     already_log = is_log_transformed(X_arr)
     already_norm = is_normalized(X_arr, var_threshold=var_threshold)
 
-    if not already_norm:
-        logger.info(
-            "Data does not appear to be normalized. Applying sc.pp.normalize_total() in place."
-        )
-        sc.pp.normalize_total(adata)  # modifies adata.X in place
-    else:
-        logger.info("Data already appears to be normalized.")
-
     if not already_log:
         logger.info(
             "Data does not appear to be log-transformed. Applying sc.pp.log1p() in place."
@@ -476,6 +468,14 @@ def ensure_log_norm(
         sc.pp.log1p(adata)  # modifies adata.X in place
     else:
         logger.info("Data already appears to be log-transformed.")
+
+    if not already_norm:
+        logger.info(
+            "Data does not appear to be normalized. Applying sc.pp.normalize_total() in place."
+        )
+        sc.pp.normalize_total(adata)  # modifies adata.X in place
+    else:
+        logger.info("Data already appears to be normalized.")
 
     if not np.issubdtype(adata.X.dtype, np.floating):
         logger.info("Casting adata.X to float64 to ensure HVG works.")
