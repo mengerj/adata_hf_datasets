@@ -107,15 +107,20 @@ def fix_non_numeric_nans(adata: anndata.AnnData) -> None:
             adata.obs[col] = adata.obs[col].astype(str).fillna("unknown")
 
 
-def setup_logging():
+def setup_logging(log_dir: str = "logs"):
     """Set up logging configuration for the module.
 
     This function configures the root logger to display messages in the console and to write them to a file
     named by the day. The log level is set to INFO.
+
+    Parameters
+    ----------
+    log_dir : str, optional
+        Directory where log files should be written. Defaults to "logs".
     """
 
     # Create the logs directory
-    os.makedirs("logs", exist_ok=True)
+    os.makedirs(log_dir, exist_ok=True)
 
     # Get the root logger
     logger = logging.getLogger()
@@ -125,7 +130,7 @@ def setup_logging():
     if not logger.hasHandlers():
         # Create a file handler
         log_file = logging.FileHandler(
-            f"logs/{datetime.now().strftime('%Y-%m-%d')}.log"
+            f"{log_dir}/{datetime.now().strftime('%Y-%m-%d')}.log"
         )
         log_file.setLevel(logging.INFO)
 
