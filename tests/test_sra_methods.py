@@ -45,8 +45,8 @@ def patch_sraweb(monkeypatch):
 def test_filter_invalid_missing_column():
     ad = AnnData(obs=pd.DataFrame({"foo": ["SRX1"]}))
     # missing srx_column leads to False
-    with pytest.raises(KeyError):
-        filter_invalid_sra_ids(ad, srx_column="missing", srs_column=None)
+    result = filter_invalid_sra_ids(ad, srx_column="missing", srs_column=None)
+    assert result is False
 
 
 def test_filter_invalid_all_invalid():

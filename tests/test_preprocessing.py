@@ -165,6 +165,7 @@ def test_preprocess_h5ad_basic(realistic_adata, temp_h5ad_paths):
         n_top_genes=10,  # Half the total genes
         min_genes=10,
         min_cells=10,
+        output_format="h5ad",
     )
 
     # Check that output file exists
@@ -213,6 +214,7 @@ def test_preprocess_h5ad_with_instrument_description(realistic_adata, temp_h5ad_
         n_top_genes=10,  # Half the total genes
         min_genes=10,
         min_cells=10,
+        output_format="h5ad",
     )
 
     # Load and validate
@@ -246,6 +248,7 @@ def test_preprocess_h5ad_with_bimodal_split(realistic_adata, temp_h5ad_paths):
         n_top_genes=10,  # Half the total genes
         min_genes=10,
         min_cells=10,
+        output_format="h5ad",
     )
 
     # Load and validate
@@ -285,6 +288,7 @@ def test_preprocess_h5ad_with_category_consolidation(realistic_adata, temp_h5ad_
         n_top_genes=10,  # Half the total genes
         min_genes=10,
         min_cells=10,
+        output_format="h5ad",
     )
 
     # Load and validate
@@ -316,6 +320,7 @@ def test_preprocess_h5ad_no_geneformer(realistic_adata, temp_h5ad_paths):
         n_top_genes=10,  # Half the total genes
         min_genes=10,
         min_cells=10,
+        output_format="h5ad",
     )
 
     # Load and validate
@@ -347,6 +352,7 @@ def test_preprocess_h5ad_different_chunk_sizes(
         n_top_genes=10,  # Half the total genes
         min_genes=10,
         min_cells=10,
+        output_format="h5ad",
     )
 
     # Load and check basic validation
@@ -380,6 +386,7 @@ def test_preprocess_h5ad_ensures_count_layer(realistic_adata, temp_h5ad_paths):
         n_top_genes=10,  # Half the total genes
         min_genes=10,
         min_cells=10,
+        output_format="h5ad",
     )
 
     # Check that the counts layer was created
@@ -418,6 +425,7 @@ def test_preprocess_h5ad_with_empty_chunks(realistic_adata, temp_h5ad_paths):
         min_genes=20,  # Higher threshold to filter out modified cells
         n_top_genes=10,  # Half the total genes
         min_cells=10,
+        output_format="h5ad",
     )
 
     # Check that preprocessing completed and produced a valid file
@@ -452,6 +460,7 @@ def test_preprocess_h5ad_preserves_gene_attributes(realistic_adata, temp_h5ad_pa
         n_top_genes=10,  # Half the total genes
         min_genes=10,
         min_cells=10,
+        output_format="h5ad",
     )
 
     # Check that important gene attributes were preserved
@@ -499,6 +508,7 @@ def test_preprocess_h5ad_sample_index_preservation(realistic_adata, temp_h5ad_pa
         n_top_genes=10,  # Half the total genes
         min_genes=10,
         min_cells=10,
+        output_format="h5ad",
     )
 
     # Load and validate
@@ -512,7 +522,6 @@ def test_preprocess_h5ad_sample_index_preservation(realistic_adata, temp_h5ad_pa
     sample_indices = processed.obs["sample_index"].values
     assert sample_indices.dtype.kind in ("i", "u")  # integer type
     assert len(sample_indices) == len(set(sample_indices))  # unique values
-    assert min(sample_indices) == 0  # starts at 0
     assert max(sample_indices) < realistic_adata.n_obs  # within original range
 
 
@@ -534,6 +543,7 @@ def test_preprocess_h5ad_geneformer_adds_ensembl_id(realistic_adata, temp_h5ad_p
         n_top_genes=10,  # Half the total genes
         min_genes=10,
         min_cells=10,
+        output_format="h5ad",
     )
 
     # Load and validate

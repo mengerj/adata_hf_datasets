@@ -30,7 +30,7 @@ def test_preprocess_h5ad_end_to_end(tmp_path, monkeypatch):
     ad = AnnData(X=X, obs=obs)
     ad.var_names = [f"gene{i}" for i in range(n_genes)]
     infile = tmp_path / "in.h5ad"
-    outfile = tmp_path / "out.h5ad"
+    outdir = tmp_path / "out"
     ad.write_h5ad(infile)
 
     # Stub out each processing step
@@ -65,22 +65,23 @@ def test_preprocess_h5ad_end_to_end(tmp_path, monkeypatch):
     # Run with single chunk (chunk_size larger than n_obs)
     preprocess_h5ad(
         infile,
-        outfile,
+        outdir,
         chunk_size=10,
         min_cells=0,
         min_genes=0,
         batch_key="batch",
         count_layer_key="counts",
         n_top_genes=1,
-        call_geneformer=False,
+        geneformer_pp=False,
         sra_chunk_size=1,
-        extra_sra_cols=["foo"],
+        sra_extra_cols=["foo"],
         instrument_key="inst",
         description_key="descr",
+        output_format="h5ad",
     )
 
     # Check that outfile exists and content is as expected
-    result = sc.read_h5ad(outfile)
+    result = sc.read_h5ad(outdir / "chunk_0.h5ad")
     # Original obs keys plus 'foo' and modified 'descr'
     assert "foo" in result.obs.columns
     assert "This measurement was conducted with" in result.obs["descr"].values[0]
