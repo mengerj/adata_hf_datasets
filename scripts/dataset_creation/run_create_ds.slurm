@@ -23,31 +23,33 @@ exec 1>"$BASE_OUT"/create_ds.out
 exec 2>"$BASE_OUT"/create_ds.err
 
 ###
-# 2. Set default overrides:
-#    These match the current YAML defaults in conf/create_dataset.yaml
+# 2. Set dataset configuration:
+#    Use a dataset config file that inherits from dataset_default.yaml
+#    and overrides the necessary parameters for this specific dataset
 ###
-# This is just a selection of settings. All settings are in conf/create_dataset.yaml
-DATA_DIR="data/RNA/processed_with_emb/train/cellxgene_pseudo_bulk_35k"
-BATCH_KEY="dataset_title"
-CAPTION_KEY="natural_language_annotation"
-DATASET_FORMAT="multiplets"
+# Example: Use dataset_cellxgene_pseudo_bulk_3_5k.yaml which should contain:
+# - dataset metadata (name, file_path, etc.)
+# - common keys (batch_key, annotation_key, caption_key, etc.)
+# - dataset_creation overrides if needed
+
+DATASET_CONFIG="dataset_cellxgene_pseudo_bulk_3_5k"
 
 ###
 # 3. Activate environment, etc.
 ###
 echo "Starting job with RUN_ID: $RUN_ID"
 echo "Output directory: $BASE_OUT"
+echo "Using dataset config: $DATASET_CONFIG"
 source cpu_venv/bin/activate
 echo "venv activated"
 
 ###
-# 4. Run your Hydra-powered script with overrides
-#    Note: The syntax create_dataset.split_dataset=... etc. assumes
-#          your config group or config file is "create_dataset".
+# 4. Run your Hydra-powered script with the dataset config
+#    The script will automatically:
+#    - Load the dataset config (which inherits from dataset_default.yaml)
+#    - Apply path transformations to generate data_dir from dataset metadata
+#    - Extract all necessary parameters from the config
 ###
 python3 scripts/dataset_creation/create_dataset.py \
-    ++data_dir=$DATA_DIR \
-    ++caption_key=$CAPTION_KEY \
-    ++dataset_format=$DATASET_FORMAT \
-    ++batch_key=$BATCH_KEY \
+    --config-name=$DATASET_CONFIG \
     ++hydra.run.dir="$BASE_OUT"

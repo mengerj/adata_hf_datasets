@@ -12,8 +12,8 @@ or
 For each split folder we
 
 1. read every file into an AnnData, check embedding keys.
-2. upload the chunks of h5ad or zarr stores to nextcloud
-3. create cell sentences, and add anndata to the dataset constructor
+2. create cell sentences, and add anndata to the dataset constructor
+3. upload the chunks of h5ad or zarr stores to nextcloud (if use_nextcloud is True)
 4. build the Hugging Face dataset split
 5. optionally push the resulting DatasetDict to the HF Hub
 """
@@ -35,6 +35,7 @@ from adata_hf_datasets.ds_constructor import AnnDataSetConstructor
 from adata_hf_datasets.utils import annotate_and_push_dataset, setup_logging
 from adata_hf_datasets.cell_sentences import create_cell_sentences
 from adata_hf_datasets.file_utils import upload_folder_to_nextcloud
+from adata_hf_datasets.config_utils import apply_all_transformations
 from hydra.utils import to_absolute_path
 
 logger = logging.getLogger(__name__)
@@ -200,7 +201,11 @@ def push_dataset_to_hub(
 # -----------------------------------------------------------------------------#
 # main Hydra entry-point
 # -----------------------------------------------------------------------------#
-@hydra.main(version_base=None, config_path="../../conf", config_name="create_dataset")
+@hydra.main(
+    version_base=None,
+    config_path="../../conf",
+    config_name="dataset_cellxgene_pseudo_bulk_3_5k",
+)
 def main(cfg: DictConfig):
     """
     Build a Hugging Face dataset (with optional splits) from a *data directory*.
@@ -210,26 +215,32 @@ def main(cfg: DictConfig):
     setup_logging(log_dir=hydra_run_dir)
     load_dotenv(override=True)
 
-    data_dir = Path(to_absolute_path(cfg.data_dir)).expanduser()
+    # Apply all transformations to the config (paths, common keys, etc.)
+    cfg = apply_all_transformations(cfg)
+
+    # Extract dataset creation specific config
+    dataset_cfg = cfg.dataset_creation
+
+    data_dir = Path(to_absolute_path(dataset_cfg.data_dir)).expanduser()
     data_name = data_dir.name
     if not data_dir.exists():
         raise FileNotFoundError(f"data_dir not found: {data_dir}")
 
-    sentence_keys: List[str] = cfg.sentence_keys
+    sentence_keys: List[str] = dataset_cfg.sentence_keys
     caption_key: str | None = (
-        cfg.caption_key if cfg.dataset_format != "single" else None
+        dataset_cfg.caption_key if dataset_cfg.dataset_format != "single" else None
     )
     batch_key: str = cfg.batch_key
-    negatives_per_sample: int = cfg.negatives_per_sample
-    dataset_format: str = cfg.dataset_format
-    required_obsm_keys: List[str] = cfg.required_obsm_keys
-    base_repo_id: str = cfg.base_repo_id
-    push_to_hub_flag: bool = cfg.push_to_hub
-    use_nextcloud: bool = cfg.get(
+    negatives_per_sample: int = dataset_cfg.negatives_per_sample
+    dataset_format: str = dataset_cfg.dataset_format
+    required_obsm_keys: List[str] = dataset_cfg.required_obsm_keys
+    base_repo_id: str = dataset_cfg.base_repo_id
+    push_to_hub_flag: bool = dataset_cfg.push_to_hub
+    use_nextcloud: bool = dataset_cfg.get(
         "use_nextcloud", True
     )  # Default to True for backward compatibility
 
-    nextcloud_cfg = dict(cfg.nextcloud_config) if use_nextcloud else None
+    nextcloud_cfg = dict(dataset_cfg.nextcloud_config) if use_nextcloud else None
 
     # ------------------------------------------------------------------ #
     # detect splits
@@ -291,9 +302,9 @@ def main(cfg: DictConfig):
             batch_key=batch_key,
             negatives_per_sample=negatives_per_sample,
             dataset_format=dataset_format,
-            gene_name_column=cfg.gene_name_column,
-            annotation_key=cfg.annotation_key,
-            cs_length=cfg.cs_length,
+            gene_name_column=dataset_cfg.gene_name_column,
+            annotation_key=dataset_cfg.annotation_key,
+            cs_length=dataset_cfg.cs_length,
         )
         # if the split is called all, change it to "test" to avoid issue with hf format
         if split == "all":
