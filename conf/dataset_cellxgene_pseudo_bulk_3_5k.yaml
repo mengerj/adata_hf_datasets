@@ -1,0 +1,78 @@
+# Dataset configuration for cellxgene pseudo bulk 3_5k dataset
+# Inherits from dataset_default_train.yaml for training-specific defaults
+defaults:
+  - dataset_default_train.yaml
+  - _self_
+
+# =============================================================================
+# DATASET METADATA
+# =============================================================================
+dataset:
+  name: "cellxgene_pseudo_bulk_3_5k"
+  description: "CellxGene pseudo bulk dataset with 3_5k samples"
+  download_url: "https://medical-epigenomics.org/papers/schaefer2024/data/datasets/cellxgene_census/full_data.h5ad" # Example URL
+  full_name: "cellxgene_pseudo_bulk_full"
+  # file_path will be auto-generated as: data/RNA/raw/train/cellxgene_pseudo_bulk_3_5k.h5ad
+
+# =============================================================================
+# COMMON KEYS (defined once, used across workflows)
+# =============================================================================
+# Batch key for batch-aware processing
+batch_key: "dataset_title"
+
+# Annotation key for cell type/annotation
+annotation_key: "cell_type"
+
+# Caption/description key for natural language descriptions
+caption_key: "natural_language_annotation"
+
+# Instrument key for technical metadata
+instrument_key: "assay"
+
+# Other biological labels for consolidation and plotting
+other_bio_labels: ["tissue"]
+
+# =============================================================================
+# DOWNLOAD OVERRIDES
+# =============================================================================
+download:
+  enabled: true # Enable download for this dataset
+  subset_size: 35000 # Create a subset of 35k cells
+  seed: 42 # Random seed for reproducible subsetting
+  stratify_keys: null # Will be auto-generated as [batch_key, annotation_key]
+  preserve_proportions: true # Preserve proportions when stratifying
+  validate: true # Validate downloaded file format
+  keep_full_file: true # Keep the full downloaded file for future subsetting
+
+# =============================================================================
+# DATASET-SPECIFIC OVERRIDES
+# =============================================================================
+# Override specific preprocessing parameters
+preprocessing:
+  chunk_size: 100000
+  n_top_genes: 512 # Reduced from default 1000
+  category_threshold: 3 # Remove categories with fewer than 3 samples
+  remove_low_frequency: true
+
+# Override embedding methods
+embedding:
+  methods: ["scvi_fm", "pca", "hvg", "geneformer"] # Multiple methods for comparison
+
+# Override dataset creation parameters
+dataset_creation:
+  # Override dataset format for this specific dataset
+  dataset_format: "multiplets"
+
+  # Override required embedding keys if needed
+  required_obsm_keys: ["X_pca", "X_scvi_fm", "X_hvg"]
+
+  # Override sentence keys if needed
+  sentence_keys:
+    - "sample_id_og"
+    - "cell_sentence"
+    - "semantic_true"
+    - "semantic_similar"
+
+  # Override other parameters if needed
+  negatives_per_sample: 2
+  cs_length: 10

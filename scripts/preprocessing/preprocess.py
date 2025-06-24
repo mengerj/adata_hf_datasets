@@ -16,6 +16,7 @@ from adata_hf_datasets.plotting import qc_evaluation_plots
 from adata_hf_datasets.sys_monitor import SystemMonitor
 from adata_hf_datasets.utils import subset_sra_and_plot
 from adata_hf_datasets.file_utils import add_sample_index_to_h5ad
+from adata_hf_datasets.config_utils import apply_all_transformations, validate_config
 
 logger = logging.getLogger(__name__)
 
@@ -43,27 +44,38 @@ def import_callable(ref: str):
 @hydra.main(
     version_base=None,
     config_path="../../conf",
-    config_name="preprocess_adata_cellxgene",
+    config_name="dataset_cellxgene_pseudo_bulk_3_5k",
 )
 def main(cfg: DictConfig):
     """
     Hydra entrypoint to optionally split & preprocess H5AD.
 
-    cfg fields:
-      input_file: str
-      output_dir: str
-      split_dataset: bool
-      train_split: float
-      random_seed: int
-      split_fn: str (module:func)
-      … plus preprocess_h5ad kwargs …
+    Now works with dataset-centric config structure where:
+    - cfg.preprocessing contains all preprocessing parameters
+    - cfg.embedding contains all embedding parameters
+    - cfg.dataset_creation contains all dataset creation parameters
+    - Common keys (batch_key, annotation_key, etc.) are at the top level
+
+    The config is automatically transformed to include:
+    - Generated paths (input_file, output_dir, etc.)
+    - Auto-generated consolidation categories and categories of interest
+    - Propagated common keys to workflow sections
     """
+    # Apply all transformations to the resolved config
+    cfg = apply_all_transformations(cfg)
+
+    # Validate the transformed config
+    validate_config(cfg)
+
+    # Extract preprocessing config from the dataset-centric config
+    preprocess_cfg = cfg.preprocessing
+
     # 1) Prepare paths & logger
-    infile = Path(cfg.input_file)
+    infile = Path(preprocess_cfg.input_file)
     logger.info("Input file: %s", infile)
     # Get the stem of the input file (filename without extension)
     input_stem = infile.stem
-    out_dir = Path(cfg.output_dir) / input_stem
+    out_dir = Path(preprocess_cfg.output_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     run_dir = HydraConfig.get().run.dir
     logger.info("Run dir: %s", run_dir)
@@ -80,20 +92,24 @@ def main(cfg: DictConfig):
         ad_bk = sc.read_h5ad(temp_infile, backed="r")
 
         # Plot some quality control plots prior to processing.
-        subset_sra_and_plot(adata_bk=ad_bk, cfg=cfg, run_dir=run_dir + "/before")
+        subset_sra_and_plot(
+            adata_bk=ad_bk, cfg=preprocess_cfg, run_dir=run_dir + "/before"
+        )
 
         # 3) Decide split function
         split_fn = (
-            import_callable(cfg.split_fn)
-            if cfg.get("split_fn", None)
+            import_callable(preprocess_cfg.split_fn)
+            if preprocess_cfg.get("split_fn", None)
             else default_split_fn
         )
-        logger.info("Split dataset? %s", cfg.split_dataset)
+        logger.info("Split dataset? %s", preprocess_cfg.split_dataset)
 
         subsets = {}
-        if cfg.split_dataset:
+        if preprocess_cfg.split_dataset:
             train_idx, val_idx = split_fn(
-                ad_bk, float(cfg.train_split), int(cfg.random_seed)
+                ad_bk,
+                float(preprocess_cfg.train_split),
+                int(preprocess_cfg.random_seed),
             )
             subsets["train"] = train_idx
             subsets["val"] = val_idx
@@ -125,31 +141,43 @@ def main(cfg: DictConfig):
         for name, path_in in subset_files.items():
             out_dir_split = out_dir / name
             logger.info("Preprocessing %s → %s", path_in, out_dir)
-            output_format = cfg.get("output_format", "zarr")
+            output_format = preprocess_cfg.get("output_format", "zarr")
+
+            # Use batch_key from top level if available, otherwise from preprocessing
+            batch_key = cfg.get("batch_key", preprocess_cfg.get("batch_key"))
+
+            # Use instrument_key from top level if available, otherwise from preprocessing
+            instrument_key = cfg.get(
+                "instrument_key", preprocess_cfg.get("instrument_key")
+            )
+
+            # Use caption_key from top level if available, otherwise from preprocessing
+            caption_key = cfg.get("caption_key", preprocess_cfg.get("description_key"))
+
             pp.preprocess_h5ad(
                 path_in,
                 out_dir_split,
-                chunk_size=int(cfg.chunk_size),
-                min_cells=int(cfg.min_cells),
-                min_genes=int(cfg.min_genes),
-                batch_key=cfg.batch_key,
-                count_layer_key=cfg.count_layer_key,
-                n_top_genes=int(cfg.n_top_genes),
-                consolidation_categories=list(cfg.consolidation_categories)
-                if cfg.consolidation_categories
+                chunk_size=int(preprocess_cfg.chunk_size),
+                min_cells=int(preprocess_cfg.min_cells),
+                min_genes=int(preprocess_cfg.min_genes),
+                batch_key=batch_key,
+                count_layer_key=preprocess_cfg.count_layer_key,
+                n_top_genes=int(preprocess_cfg.n_top_genes),
+                consolidation_categories=list(preprocess_cfg.consolidation_categories)
+                if preprocess_cfg.consolidation_categories
                 else None,
-                category_threshold=cfg.get("category_threshold", 1),
-                remove_low_frequency=cfg.get("remove_low_frequency", False),
-                geneformer_pp=bool(cfg.geneformer_pp),
-                sra_chunk_size=cfg.get("sra_chunk_size", None),
-                sra_extra_cols=cfg.get("sra_extra_cols", None),
-                skip_sra_fetch=cfg.get("skip_sra_fetch", False),
-                sra_max_retries=cfg.get("sra_max_retries", 3),
-                sra_continue_on_fail=cfg.get("sra_continue_on_fail", False),
-                instrument_key=cfg.get("instrument_key", None),
-                description_key=cfg.get("description_key", None),
-                bimodal_col=cfg.get("bimodal_col", None),
-                split_bimodal=bool(cfg.get("split_bimodal", False)),
+                category_threshold=preprocess_cfg.get("category_threshold", 1),
+                remove_low_frequency=preprocess_cfg.get("remove_low_frequency", False),
+                geneformer_pp=bool(preprocess_cfg.geneformer_pp),
+                sra_chunk_size=preprocess_cfg.get("sra_chunk_size", None),
+                sra_extra_cols=preprocess_cfg.get("sra_extra_cols", None),
+                skip_sra_fetch=preprocess_cfg.get("skip_sra_fetch", False),
+                sra_max_retries=preprocess_cfg.get("sra_max_retries", 3),
+                sra_continue_on_fail=preprocess_cfg.get("sra_continue_on_fail", False),
+                instrument_key=instrument_key,
+                description_key=caption_key,
+                bimodal_col=preprocess_cfg.get("bimodal_col", None),
+                split_bimodal=bool(preprocess_cfg.get("split_bimodal", False)),
                 output_format=output_format,
             )
             if output_format == "h5ad":
@@ -164,8 +192,10 @@ def main(cfg: DictConfig):
                 ad_bk,
                 save_plots=True,
                 save_dir=run_dir + "/after",
-                metrics_of_interest=list(cfg.metrics_of_interest),
-                categories_of_interest=list(cfg.categories_of_interest),
+                metrics_of_interest=list(preprocess_cfg.metrics_of_interest),
+                categories_of_interest=list(preprocess_cfg.categories_of_interest)
+                if preprocess_cfg.categories_of_interest
+                else None,
             )
             ad_bk.file.close()
 
