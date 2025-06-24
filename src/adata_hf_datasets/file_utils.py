@@ -266,31 +266,32 @@ def download_from_link(url, save_path):
         True if the download was successful, False otherwise.
     """
     try:
-        response = requests.get(url, stream=True)
-        response.raise_for_status()  # Raise an error for failed requests (e.g., 404, 403)
+        # Use urllib directly to avoid any requests_cache issues
+        import urllib.request
+        import urllib.error
 
-        # Get total file size from headers
-        total_size = int(response.headers.get("content-length", 0))
+        # Download with progress bar using urllib
+        with tqdm(
+            desc=save_path,
+            unit="B",
+            unit_scale=True,
+            unit_divisor=1024,
+        ) as bar:
 
-        # Download with progress bar
-        with (
-            open(save_path, "wb") as file,
-            tqdm(
-                desc=save_path,
-                total=total_size,
-                unit="B",
-                unit_scale=True,
-                unit_divisor=1024,
-            ) as bar,
-        ):
-            for chunk in response.iter_content(chunk_size=8192):
-                file.write(chunk)
-                bar.update(len(chunk))  # Update progress bar
+            def progress_hook(block_num, block_size, total_size):
+                if total_size > 0:
+                    bar.total = total_size
+                bar.update(block_size)
+
+            urllib.request.urlretrieve(url, save_path, progress_hook)
 
         print(f"\nDownload complete: {save_path}")
         return True
-    except requests.exceptions.RequestException as e:
+    except (urllib.error.URLError, urllib.error.HTTPError) as e:
         print(f"\nDownload failed: {e}")
+        return False
+    except Exception as e:
+        print(f"\nDownload failed with unexpected error: {e}")
         return False
 
 
