@@ -1,0 +1,55 @@
+# Dataset configuration for Tabula Sapiens bone marrow test dataset
+# Inherits from dataset_default_test.yaml for test-specific defaults
+defaults:
+  - dataset_default_test.yaml
+  - _self_
+
+# =============================================================================
+# DATASET METADATA
+# =============================================================================
+dataset:
+  name: "tabula_sapiens_bone_marrow_10k"
+  description: "Tabula Sapiens bone marrow dataset for testing"
+  download_url: https://datasets.cellxgene.cziscience.com/bbf12ff4-7f22-4cf5-83cf-9cd37ce4d6f4.h5ad
+  full_name: "tabula_sapiens_bone_marrow_full"
+  # file_path will be auto-generated as: data/RNA/raw/test/tabula_sapiens_bone_marrow_10k.h5ad
+
+# =============================================================================
+# DOWNLOAD OVERRIDES
+# =============================================================================
+download:
+  enabled: true # Enable download for this dataset
+  subset_size: 10000 # Create a subset of 10k cells (different from 3_5k)
+  seed: 42 # Same seed for reproducibility
+  stratify_keys: null # Will be auto-generated as [batch_key, annotation_key]
+  preserve_proportions: true # Preserve proportions when stratifying
+  validate: true # Validate downloaded file format
+  keep_full_file: true # Keep the full downloaded file for future subsetting
+
+# =============================================================================
+# COMMON KEYS
+# =============================================================================
+batch_key: "dataset_title"
+annotation_key: "cell_type"
+caption_key: "cell_type" # Use cell_type as caption for test datasets
+instrument_key: "assay"
+other_bio_labels: ["tissue", "donor"]
+
+# =============================================================================
+# DATASET CREATION OVERRIDES
+# =============================================================================
+dataset_creation:
+  # Test datasets use single format by default (inherited from dataset_default_test.yaml)
+  # Override required embedding keys if needed
+  required_obsm_keys: ["X_pca", "X_scvi_fm"]
+
+  # Override sentence keys if needed
+  sentence_keys:
+    - "sample_id_og"
+    - "cell_sentence"
+    - "semantic_true"
+    - "semantic_similar"
+
+  # Override other parameters if needed
+  negatives_per_sample: 0 # No negatives for test datasets
+  cs_length: 10

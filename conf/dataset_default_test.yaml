@@ -1,0 +1,20 @@
+# Default configuration for test datasets
+# Inherits from dataset_default.yaml and overrides test-specific parameters
+defaults:
+  - dataset_default.yaml
+  - _self_
+
+# =============================================================================
+# TEST-SPECIFIC OVERRIDES
+# =============================================================================
+# Base file path for test datasets
+base_file_path: "data/RNA/raw/test"
+
+# Override preprocessing split_dataset
+preprocessing:
+  split_dataset: false
+
+# Override dataset_creation parameters
+dataset_creation:
+  split_dataset: false
+  dataset_format: "single"
