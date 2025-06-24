@@ -2,12 +2,24 @@
 """
 Apply initial embeddings to preprocessed AnnData files.
 
-This script:
-  1. Reads one or more preprocessed .h5ad or .zarr files.
-  2. For each file, loads it into memory once (or loads an existing combined output).
-  3. Loops over cfg.methods, computing any missing embeddings.
-  4. Stores each embedding in adata.obsm["X_<method>"].
-  5. Writes out a single file with all embeddings attached.
+This script supports two modes of operation:
+
+1. Full Pipeline Mode (prepare_only=False, default):
+   - Reads one or more preprocessed .h5ad or .zarr files.
+   - For each file, loads it into memory once (or loads an existing combined output).
+   - Loops over cfg.methods, computing any missing embeddings.
+   - Stores each embedding in adata.obsm["X_<method>"].
+   - Writes out a single file with all embeddings attached.
+
+2. Prepare-Only Mode (prepare_only=True):
+   - Reads one or more preprocessed .h5ad or .zarr files.
+   - For each file, loads it into memory once.
+   - Loops over cfg.methods, calling only `InitialEmbedder.prepare` to do CPU-intensive setup.
+   - Does not write out any AnnData; cached results live internally in your embedder.
+   - Useful for GPU-dependent embedders where prepare step is more efficient on CPU.
+
+The prepare-only mode is especially useful for embedders that rely on GPU, as their prepare step
+is more efficient on the CPU and would otherwise block the precious GPU for a long time.
 """
 
 import sys
@@ -25,6 +37,7 @@ from adata_hf_datasets.utils import setup_logging
 from adata_hf_datasets.file_utils import safe_read_h5ad
 from adata_hf_datasets.initial_embedder import InitialEmbedder
 from adata_hf_datasets.sys_monitor import SystemMonitor
+from adata_hf_datasets.config_utils import apply_all_transformations, validate_config
 from hydra.core.hydra_config import HydraConfig
 
 logger = setup_logging()
@@ -59,9 +72,9 @@ def load_adata_file(file_path: Path, input_format: str = "auto") -> ad.AnnData:
         format_to_use = input_format
 
     if format_to_use == "zarr":
-        return ad.read_zarr(file_path, copy_local=False)
+        return ad.read_zarr(file_path)
     elif format_to_use == "h5ad":
-        return safe_read_h5ad(file_path, copy_local=False)
+        return safe_read_h5ad(file_path)
     else:
         raise ValueError(
             f"Unsupported format: {format_to_use}. Must be 'h5ad' or 'zarr'."
@@ -105,7 +118,7 @@ def check_existing_embeddings(file_path: Path, input_format: str = "auto") -> se
         return set()
     else:
         # For h5ad, we need to load the file to check obsm
-        adata = safe_read_h5ad(file_path, copy_local=False)
+        adata = safe_read_h5ad(file_path)
         return set(adata.obsm.keys())
 
 
@@ -277,113 +290,208 @@ def append_embedding(
     )
 
 
-@hydra.main(version_base=None, config_path="../../conf", config_name="embed_adata")
+@hydra.main(
+    version_base=None,
+    config_path="../../conf",
+    config_name="dataset_cellxgene_pseudo_bulk_3_5k",
+)
 def main(cfg: DictConfig):
     """
     Apply multiple embedding methods to one or more AnnData files.
 
-    Parameters
-    ----------
-    cfg.input_files : List[str]
-        Paths to preprocessed files (.h5ad or .zarr).
-    cfg.input_format : str, optional
-        Input file format: "auto", "h5ad", or "zarr". Default is "auto".
-    cfg.output_format : str, optional
-        Output file format: "zarr" or "h5ad". Default is "zarr".
-    cfg.output_dir : str, optional
-        Custom output directory. If None, creates processed_with_emb directory.
-    cfg.methods : List[str]
-        Embedding methods to apply (e.g., ['hvg','pca','scvi_fm']).
-    cfg.batch_key : str
-        Column in adata.obs storing batch labels.
-    cfg.batch_size : int
-        Batch size for embedders that use it.
-    cfg.embedding_dim_map : Dict[str,int]
-        Mapping from method name to embedding dimension.
-    cfg.overwrite : bool
-        Whether to recompute and overwrite existing embeddings.
+    This function supports two modes of operation:
+    1. prepare_only=True: Only run the prepare() step for each method without saving embeddings
+    2. prepare_only=False: Run the full pipeline (prepare + embed + save)
+
+    The prepare_only parameter can be set via command line:
+    - ++prepare_only=true  # Run only prepare step
+    - ++prepare_only=false # Run full pipeline (default)
+
+    This function now works with dataset-centric config structure where:
+    - cfg.embedding contains all embedding parameters
+    - Common keys (batch_key, etc.) are at the top level
+    - Paths are auto-generated from dataset metadata
+
+    The config is automatically transformed to include:
+    - Generated paths (input_files, output_dir, etc.)
+    - Propagated common keys to workflow sections
     """
+    # Apply all transformations to the resolved config
+    logger.info("Applying config transformations...")
+    cfg = apply_all_transformations(cfg)
+
+    # Validate the transformed config
+    logger.info("Validating config...")
+    validate_config(cfg)
+
+    # Extract embedding config from the dataset-centric config
+    embedding_cfg = cfg.embedding
+
+    # Get prepare_only from command line override (defaults to False)
+    prepare_only = getattr(cfg, "prepare_only", False)
+
+    # Log the configuration being used
+    logger.info("Dataset: %s", cfg.dataset.name)
+    logger.info(
+        "Operation mode: %s", "prepare_only" if prepare_only else "full_pipeline"
+    )
+    logger.info("Embedding methods: %s", embedding_cfg.methods)
+    logger.info("Input files: %s", embedding_cfg.input_files)
+    logger.info("Output directory: %s", embedding_cfg.output_dir)
+    logger.info("Batch key: %s", embedding_cfg.batch_key)
+
+    # Validate that all required embedding parameters are present
+    required_embedding_params = [
+        "methods",
+        "input_files",
+        "output_dir",
+        "batch_key",
+        "batch_size",
+        "embedding_dim_map",
+    ]
+    missing_params = []
+    for param in required_embedding_params:
+        if not hasattr(embedding_cfg, param) or getattr(embedding_cfg, param) is None:
+            missing_params.append(param)
+
+    if missing_params:
+        raise ValueError(
+            f"Missing required embedding parameters: {missing_params}. "
+            f"These should be defined in the dataset config or inherited from defaults."
+        )
+
+    # Validate that all methods have corresponding embedding dimensions
+    for method in embedding_cfg.methods:
+        if method not in embedding_cfg.embedding_dim_map:
+            raise KeyError(
+                f"Method '{method}' specified in methods but not found in embedding_dim_map. "
+                f"Available methods: {list(embedding_cfg.embedding_dim_map.keys())}"
+            )
+
     load_dotenv(override=True)
     hydra_run_dir = HydraConfig.get().run.dir
 
     # Get format specifications with defaults
-    input_format = getattr(cfg, "input_format", "auto")
-    output_format = getattr(cfg, "output_format", "zarr")
-    output_dir = getattr(cfg, "output_dir", None)
+    input_format = getattr(embedding_cfg, "input_format", "auto")
+    output_format = getattr(embedding_cfg, "output_format", "zarr")
+    output_dir = getattr(embedding_cfg, "output_dir", None)
 
     monitor = SystemMonitor(logger=logger)
     monitor.start()
 
     try:
-        for input_file in cfg.input_files:
+        for input_file in embedding_cfg.input_files:
             infile = Path(input_file)
+
             logger.info("Processing file: %s", infile)
             if not infile.exists():
                 raise FileNotFoundError(f"Input file not found: {infile}")
 
-            # Generate output path based on configuration
-            outfile = get_output_path(
-                infile, output_format, Path(output_dir) if output_dir else None
+            # Load AnnData with format detection
+            adata = load_adata_file(infile, input_format)
+            logger.info(
+                "Loaded AnnData with %d cells, %d vars", adata.n_obs, adata.n_vars
             )
-            logger.info("Output file: %s", outfile)
 
-            # Load existing combined file if present (and not overwrite), else raw
-            if outfile.exists():
-                logger.info("Loading existing combined file %s", outfile)
-                file_to_check = outfile
-                format_to_check = output_format
+            if prepare_only:
+                # PREPARE_ONLY MODE: Only run prepare() step
+                logger.info(
+                    "Running in prepare_only mode - no embeddings will be saved"
+                )
+                for method in embedding_cfg.methods:
+                    if method not in embedding_cfg.embedding_dim_map:
+                        raise KeyError(
+                            f"No embedding_dim for method '{method}' in config"
+                        )
+                    emb_dim = embedding_cfg.embedding_dim_map[method]
+
+                    monitor.log_event(f"Prepare {method}")
+                    embedder = InitialEmbedder(method=method, embedding_dim=emb_dim)
+                    embedder.prepare(
+                        adata_path=str(infile),
+                        batch_key=embedding_cfg.batch_key,
+                    )
+                    logger.info("Prepared embedding resources for '%s'", method)
+                    monitor.log_event(f"Finished prepare {method}")
+
+                logger.info(
+                    "All preparations complete for %s; results cached internally.",
+                    infile,
+                )
+
             else:
-                file_to_check = infile
-                format_to_check = input_format
+                # FULL PIPELINE MODE: Run prepare + embed + save
+                logger.info("Running full embedding pipeline")
 
-            # Determine which methods still need to run
-            methods_to_run = []
-            existing_obsm_keys = check_existing_embeddings(
-                file_to_check, format_to_check
-            )
+                # Generate output path based on configuration
+                # get the split name from the input file and add it to the output file
+                outfile = get_output_path(
+                    infile, output_format, Path(output_dir) if output_dir else None
+                )
+                logger.info("Output file: %s", outfile)
 
-            for method in cfg.methods:
-                obsm_key = f"X_{method}"
-                if obsm_key in existing_obsm_keys and not cfg.overwrite:
-                    logger.info("Skipping existing embedding '%s'", obsm_key)
+                # Load existing combined file if present (and not overwrite), else raw
+                if outfile.exists():
+                    logger.info("Loading existing combined file %s", outfile)
+                    file_to_check = outfile
+                    format_to_check = output_format
                 else:
-                    methods_to_run.append(method)
+                    file_to_check = infile
+                    format_to_check = input_format
 
-            if not methods_to_run:
-                logger.info("All embeddings present for %s; skipping.", file_to_check)
-                continue
-
-            # Use the existing output file as input if it exists, otherwise use original input
-            input_for_processing = outfile if outfile.exists() else infile
-
-            # Compute missing embeddings
-            for method in methods_to_run:
-                if method not in cfg.embedding_dim_map:
-                    raise KeyError(f"No embedding_dim for method '{method}' in config")
-                emb_dim = cfg.embedding_dim_map[method]
-
-                monitor.log_event(f"Prepare {method}")
-                embedder = InitialEmbedder(method=method, embedding_dim=emb_dim)
-                embedder.prepare(
-                    adata_path=str(input_for_processing), batch_key=cfg.batch_key
+                # Determine which methods still need to run
+                methods_to_run = []
+                existing_obsm_keys = check_existing_embeddings(
+                    file_to_check, format_to_check
                 )
 
-                monitor.log_event(f"Embed {method}")
-                obsm_key = f"X_{method}"
-                emb_matrix = embedder.embed(
-                    adata_path=str(input_for_processing),
-                    obsm_key=obsm_key,
-                    batch_key=cfg.batch_key,
-                    batch_size=cfg.batch_size,
-                )
-                monitor.log_event(f"Finished {method}")
+                for method in embedding_cfg.methods:
+                    obsm_key = f"X_{method}"
+                    if obsm_key in existing_obsm_keys and not embedding_cfg.overwrite:
+                        logger.info("Skipping existing embedding '%s'", obsm_key)
+                    else:
+                        methods_to_run.append(method)
 
-                append_embedding(
-                    adata_path=str(input_for_processing),
-                    embedding=emb_matrix,
-                    outfile=str(outfile),
-                    obsm_key=obsm_key,
-                )
+                if not methods_to_run:
+                    logger.info(
+                        "All embeddings present for %s; skipping.", file_to_check
+                    )
+                    continue
+
+                # Use the existing output file as input if it exists, otherwise use original input
+                input_for_processing = outfile if outfile.exists() else infile
+
+                # Compute missing embeddings
+                for method in methods_to_run:
+                    if method not in embedding_cfg.embedding_dim_map:
+                        raise KeyError(
+                            f"No embedding_dim for method '{method}' in config"
+                        )
+                    emb_dim = embedding_cfg.embedding_dim_map[method]
+
+                    monitor.log_event(f"Prepare {method}")
+                    embedder = InitialEmbedder(method=method, embedding_dim=emb_dim)
+                    embedder.prepare(
+                        adata_path=str(input_for_processing),
+                        batch_key=embedding_cfg.batch_key,
+                    )
+
+                    monitor.log_event(f"Embed {method}")
+                    obsm_key = f"X_{method}"
+                    emb_matrix = embedder.embed(
+                        adata_path=str(input_for_processing),
+                        obsm_key=obsm_key,
+                        batch_key=embedding_cfg.batch_key,
+                        batch_size=embedding_cfg.batch_size,
+                    )
+                    monitor.log_event(f"Finished {method}")
+
+                    append_embedding(
+                        adata_path=str(input_for_processing),
+                        embedding=emb_matrix,
+                        outfile=str(outfile),
+                        obsm_key=obsm_key,
+                    )
 
     except Exception as e:
         logger.exception("Embedding pipeline failed, with error: %s", e)

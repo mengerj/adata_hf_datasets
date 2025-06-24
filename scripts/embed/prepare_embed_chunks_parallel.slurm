@@ -55,7 +55,7 @@ else
   LOCAL_CONCURRENCY=1
 fi
 
-SCRIPT="python3 scripts/embed/prepare_embed_adata.py"
+SCRIPT="python3 scripts/embed/embed_adata.py"
 
 # ─────────────────────────────────────────────────────────────────────────────
 # 5) LOCAL MODE with capped parallelism via xargs -P
@@ -76,11 +76,12 @@ if [[ -z "${SLURM_ARRAY_JOB_ID:-}" ]]; then
         OUTDIR="outputs/$(date +%Y-%m-%d)/'"${RUN_ID}"'/local/${idx}"
         mkdir -p "$OUTDIR"
         echo "[LOCAL][${idx}] → $OUTDIR"
-        '"$SCRIPT"' \
-          ++methods="'"$METHODS_JSON"'" \
+        python3 scripts/embed/embed_adata.py \
+          ++prepare_only=true \
+          ++embedding.methods="'"$METHODS_JSON"'" \
           ++batch_key="'"$BATCH_KEY"'" \
           ++batch_size="'"$BATCH_SIZE"'" \
-          ++input_files="[\"$f\"]" \
+          ++embedding.input_files="[\"$f\"]" \
           ++hydra.run.dir="$OUTDIR"
       ' {}
 
@@ -101,11 +102,12 @@ BASE_OUT="outputs/$(date +%Y-%m-%d)/${RUN_ID}/${SLURM_ARRAY_TASK_ID}"
 mkdir -p "$BASE_OUT"
 
 echo "[${RUN_ID}:${SLURM_ARRAY_TASK_ID}] Methods: $METHODS_JSON"
-$SCRIPT \
-  ++methods="$METHODS_JSON" \
-  ++batch_key="$BATCH_KEY" \
-  ++batch_size="$BATCH_SIZE" \
-  ++input_files="[\"$this_file\"]" \
+python3 scripts/embed/embed_adata.py \
+  ++prepare_only=true \
+  ++embedding.methods="'"$METHODS_JSON"'" \
+  ++batch_key="'"$BATCH_KEY"'" \
+  ++batch_size="'"$BATCH_SIZE"'" \
+  ++embedding.input_files="[\"$this_file\"]" \
   ++hydra.run.dir="$BASE_OUT"
 
 echo "[${RUN_ID}:${SLURM_ARRAY_TASK_ID}] Done."

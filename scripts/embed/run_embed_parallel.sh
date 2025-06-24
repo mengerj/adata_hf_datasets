@@ -5,14 +5,14 @@ set -euo pipefail
 # === User‐configurable section ===
 MODE="cpu"         # "cpu" or "gpu"
 GPU_COUNT="1"      # how many GPUs if MODE=gpu
-DATANAME="human_disease"
-BATCH_KEY="sra_study_acc"
+DATANAME="cellxgene_pseudo_bulk_3_5k"
+BATCH_KEY="dataset_title"
 BATCH_SIZE=128
-METHODS="geneformer" #"scvi_fm pca"  # space‐separated list - eg one string with spaces
-#SCRIPT="scripts/embed/embed_chunks_parallel.slurm"
+METHODS="pca" #"scvi_fm pca"  # space‐separated list - eg one string with spaces
+SCRIPT="scripts/embed/embed_chunks_parallel.slurm"
 MAX_PROCS=2
-SCRIPT="scripts/embed/prepare_embed_chunks_parallel.slurm"
-TRAIN_OR_TEST="test"
+#SCRIPT="scripts/embed/prepare_embed_chunks_parallel.slurm"
+TRAIN_OR_TEST="train"
 #DATA_BASE_DIR="/scratch/global/menger/data/RNA/processed"
 DATA_BASE_DIR="data/RNA/processed/"
 # =================================
