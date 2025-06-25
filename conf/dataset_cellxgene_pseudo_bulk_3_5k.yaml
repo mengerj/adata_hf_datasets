@@ -51,6 +51,7 @@ download:
 # Override specific preprocessing parameters
 preprocessing:
   enabled: true # Enable preprocessing for this dataset
+  split_dataset: true
   chunk_size: 100000
   n_top_genes: 512 # Reduced from default 1000
   category_threshold: 3 # Remove categories with fewer than 3 samples
