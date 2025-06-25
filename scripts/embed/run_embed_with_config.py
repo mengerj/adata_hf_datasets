@@ -12,7 +12,6 @@ import subprocess
 import sys
 from pathlib import Path
 
-import hydra
 from omegaconf import DictConfig
 
 from adata_hf_datasets.config_utils import apply_all_transformations
@@ -90,15 +89,30 @@ def run_embedding_script(params: dict) -> None:
         raise
 
 
-@hydra.main(version_base=None, config_path="../../conf", config_name=None)
-def main(cfg: DictConfig):
+def load_config(config_name: str) -> DictConfig:
+    """Load the dataset configuration using Hydra without creating output directories."""
+    # Initialize Hydra without the @hydra.main decorator
+    from hydra import compose, initialize_config_dir
+
+    config_path = Path(__file__).parent.parent.parent / "conf"
+
+    with initialize_config_dir(config_dir=str(config_path), version_base=None):
+        cfg = compose(config_name=config_name)
+
+    # Apply transformations
+    cfg = apply_all_transformations(cfg)
+
+    return cfg
+
+
+def main():
     """Main function to run embedding with config."""
     parser = argparse.ArgumentParser(description="Run embedding with dataset config")
     parser.add_argument("--config-name", required=True, help="Dataset config name")
-    _args = parser.parse_args()
+    args = parser.parse_args()
 
-    # Apply transformations to the config
-    cfg = apply_all_transformations(cfg)
+    # Load the config without Hydra's automatic output directory creation
+    cfg = load_config(args.config_name)
 
     logger.info(f"Running embedding for dataset: {cfg.dataset.name}")
 

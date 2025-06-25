@@ -84,7 +84,7 @@ if [[ -z "${SLURM_ARRAY_JOB_ID:-}" ]]; then
     | xargs -n1 -P"$MAX_PROCS" -I{} bash -c '
         f="$0"
         idx=$(basename "$f" .zarr)
-        OUTDIR="outputs/$(date +%Y-%m-%d)/'"${RUN_ID}"'/local/${idx}"
+        OUTDIR="outputs/$(date +%Y-%m-%d)/embed/'"${RUN_ID}"'/local/${idx}"
         mkdir -p "$OUTDIR"
         echo "[LOCAL][${idx}] → $OUTDIR"
         python3 scripts/embed/embed_adata.py \
@@ -114,7 +114,7 @@ else
 fi
 echo "[${RUN_ID}:${SLURM_ARRAY_TASK_ID}] Processing $this_file ($MODE_STR)"
 
-BASE_OUT="outputs/$(date +%Y-%m-%d)/${RUN_ID}/${SLURM_ARRAY_TASK_ID}"
+BASE_OUT="outputs/$(date +%Y-%m-%d)/embed/${RUN_ID}/${SLURM_ARRAY_TASK_ID}"
 mkdir -p "$BASE_OUT"
 
 echo "[${RUN_ID}:${SLURM_ARRAY_TASK_ID}] Running methods: $METHODS_JSON"
