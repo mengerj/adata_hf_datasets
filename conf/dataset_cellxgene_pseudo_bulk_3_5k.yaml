@@ -37,7 +37,7 @@ other_bio_labels: ["tissue"]
 # DOWNLOAD OVERRIDES
 # =============================================================================
 download:
-  enabled: true # Enable download for this dataset
+  enabled: false # Enable download for this dataset
   subset_size: 3500 # Create a subset of 3,5k cells
   seed: 42 # Random seed for reproducible subsetting
   stratify_keys: null # Will be auto-generated as [batch_key, annotation_key]
@@ -50,7 +50,7 @@ download:
 # =============================================================================
 # Override specific preprocessing parameters
 preprocessing:
-  enabled: true # Enable preprocessing for this dataset
+  enabled: false # Enable preprocessing for this dataset
   split_dataset: true
   chunk_size: 100000
   n_top_genes: 512 # Reduced from default 1000
@@ -59,8 +59,12 @@ preprocessing:
 
 # Override embedding methods
 embedding:
-  enabled: false # Disable embedding for testing
+  enabled: true # Enable embedding for testing
   methods: ["hvg", "pca"] # Multiple methods for comparison
+  mode: "gpu" # Use GPU mode
+  gpu_count: "1" # Use 1 GPU
+  batch_size: 128 # Batch size for embedding
+  prepare_only: false # Run full embedding pipeline
 
 # Override dataset creation parameters
 dataset_creation:

@@ -24,6 +24,11 @@ def extract_embedding_params(config: DictConfig) -> dict:
     """Extract embedding parameters from dataset config."""
     embedding_config = config.embedding
 
+    logger.info("Extracting embedding parameters from config:")
+    logger.info(f"  Config methods: {embedding_config.methods}")
+    logger.info(f"  Config mode: {getattr(embedding_config, 'mode', 'gpu')}")
+    logger.info(f"  Config batch_size: {getattr(embedding_config, 'batch_size', 128)}")
+
     # Extract parameters with defaults
     params = {
         "MODE": getattr(embedding_config, "mode", "gpu"),
@@ -38,6 +43,10 @@ def extract_embedding_params(config: DictConfig) -> dict:
         else "test",
         "DATA_BASE_DIR": "data/RNA/processed/",
     }
+
+    logger.info("Extracted parameters:")
+    for key, value in params.items():
+        logger.info(f"  {key}={value}")
 
     return params
 

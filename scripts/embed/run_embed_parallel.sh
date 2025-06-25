@@ -3,18 +3,19 @@ set -euo pipefail
 
 
 # === User‐configurable section ===
-MODE="cpu"         # "cpu" or "gpu"
-GPU_COUNT="1"      # how many GPUs if MODE=gpu
-DATANAME="cellxgene_pseudo_bulk_3_5k"
-BATCH_KEY="dataset_title"
-BATCH_SIZE=128
-METHODS="geneformer scvi_fm pca hvg" #"scvi_fm pca"  # space‐separated list - eg one string with spaces
+# Use environment variables if provided, otherwise use defaults
+MODE="${MODE:-cpu}"         # "cpu" or "gpu"
+GPU_COUNT="${GPU_COUNT:-1}"      # how many GPUs if MODE=gpu
+DATANAME="${DATANAME:-cellxgene_pseudo_bulk_3_5k}"
+BATCH_KEY="${BATCH_KEY:-dataset_title}"
+BATCH_SIZE="${BATCH_SIZE:-128}"
+METHODS="${METHODS:-geneformer scvi_fm pca hvg}" # space‐separated list - eg one string with spaces
 SCRIPT="scripts/embed/embed_chunks_parallel.slurm"
-MAX_PROCS=2
-PREPARE_ONLY="false"  # Set to "true" for prepare-only mode, "false" for full pipeline
-TRAIN_OR_TEST="train"
+MAX_PROCS="${MAX_PROCS:-2}"
+PREPARE_ONLY="${PREPARE_ONLY:-false}"  # Set to "true" for prepare-only mode, "false" for full pipeline
+TRAIN_OR_TEST="${TRAIN_OR_TEST:-train}"
 #DATA_BASE_DIR="/scratch/global/menger/data/RNA/processed"
-DATA_BASE_DIR="data/RNA/processed/"
+DATA_BASE_DIR="${DATA_BASE_DIR:-data/RNA/processed/}"
 # =================================
 # build extra sbatch flags based on MODE
 SBATCH_EXTRA=()
