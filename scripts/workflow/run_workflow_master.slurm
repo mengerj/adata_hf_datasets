@@ -17,8 +17,7 @@ echo "Dataset config: $DATASET_CONFIG"
 cd /home/menger/git/adata_hf_datasets
 
 # Activate conda environment
-source ~/miniconda3/etc/profile.d/conda.sh
-conda activate adata_hf_datasets
+source .venv/bin/activate
 
 # Import the orchestrator and run the workflow
 python -c "
