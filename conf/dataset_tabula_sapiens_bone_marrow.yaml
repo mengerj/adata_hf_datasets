@@ -36,9 +36,17 @@ instrument_key: "assay"
 other_bio_labels: ["tissue", "donor"]
 
 # =============================================================================
+# EMBEDDING OVERRIDES
+# =============================================================================
+embedding:
+  enabled: false # Disable embedding for testing
+  methods: ["hvg", "pca"]
+
+# =============================================================================
 # DATASET CREATION OVERRIDES
 # =============================================================================
 dataset_creation:
+  enabled: false # Enable dataset creation for testing
   # Test datasets use single format by default (inherited from dataset_default_test.yaml)
   # Override required embedding keys if needed
   required_obsm_keys: ["X_pca", "X_scvi_fm"]

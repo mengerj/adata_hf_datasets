@@ -2,6 +2,7 @@
 # Inherits from dataset_default_train.yaml for training-specific defaults
 defaults:
   - dataset_default_train.yaml
+  - workflow_default.yaml
   - _self_
 
 # =============================================================================
@@ -37,7 +38,7 @@ other_bio_labels: ["tissue"]
 # =============================================================================
 download:
   enabled: true # Enable download for this dataset
-  subset_size: 35000 # Create a subset of 35k cells
+  subset_size: 3500 # Create a subset of 3,5k cells
   seed: 42 # Random seed for reproducible subsetting
   stratify_keys: null # Will be auto-generated as [batch_key, annotation_key]
   preserve_proportions: true # Preserve proportions when stratifying
@@ -49,6 +50,7 @@ download:
 # =============================================================================
 # Override specific preprocessing parameters
 preprocessing:
+  enabled: true # Enable preprocessing for this dataset
   chunk_size: 100000
   n_top_genes: 512 # Reduced from default 1000
   category_threshold: 3 # Remove categories with fewer than 3 samples
@@ -56,10 +58,12 @@ preprocessing:
 
 # Override embedding methods
 embedding:
-  methods: ["scvi_fm", "pca", "hvg", "geneformer"] # Multiple methods for comparison
+  enabled: false # Disable embedding for testing
+  methods: ["hvg", "pca"] # Multiple methods for comparison
 
 # Override dataset creation parameters
 dataset_creation:
+  enabled: false # Disable dataset creation for testing
   # Override dataset format for this specific dataset
   dataset_format: "multiplets"
 
