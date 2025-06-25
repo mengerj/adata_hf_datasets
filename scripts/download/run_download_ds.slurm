@@ -27,12 +27,9 @@ exec 2>"$BASE_OUT"/download_ds.err
 #    Use a dataset config file that inherits from dataset_default.yaml
 #    and overrides the necessary parameters for this specific dataset
 ###
-# Example: Use dataset_cellxgene_pseudo_bulk_3_5k.yaml which should contain:
-# - dataset metadata (name, download_url, file_path, etc.)
-# - common keys (batch_key, annotation_key, etc.)
-# - download overrides if needed (subset_size, stratify_keys, etc.)
-
-DATASET_CONFIG="dataset_cellxgene_pseudo_bulk_3_5k"
+# The config name is passed via environment variable DATASET_CONFIG
+# If not set, use a default
+DATASET_CONFIG="${DATASET_CONFIG:-dataset_cellxgene_pseudo_bulk_3_5k}"
 
 ###
 # 3. Activate environment, etc.
