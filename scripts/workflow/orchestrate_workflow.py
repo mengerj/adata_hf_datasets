@@ -283,6 +283,123 @@ class WorkflowOrchestrator:
             "You can monitor progress using 'squeue' on the respective clusters."
         )
 
+    def run_workflow_local(
+        self, dataset_config_name: str, workflow_config: DictConfig, force: bool = False
+    ) -> None:
+        """Run the complete workflow locally on the cluster, waiting for each step to complete."""
+        logger.info(
+            f"Starting local workflow for dataset config: {dataset_config_name}"
+        )
+
+        # Validate config synchronization unless forced
+        self.validate_config_sync(dataset_config_name, force=force)
+
+        # Load the dataset config to check enabled flags
+        dataset_config = self._load_dataset_config(dataset_config_name)
+        logger.info(f"Dataset name: {dataset_config.dataset.name}")
+
+        # Step 1: Download (if enabled)
+        download_job_id = None
+        download_enabled = getattr(dataset_config.download, "enabled", True)
+        if download_enabled:
+            logger.info("=== Starting Download Step ===")
+            download_job_id = self.run_download_step(
+                dataset_config_name, workflow_config
+            )
+            logger.info(
+                f"✓ Download job {download_job_id} submitted to cluster ({self.cpu_login['host']})"
+            )
+
+            # Wait for download job to complete
+            self._wait_for_job_completion(
+                self.cpu_login["host"], download_job_id, "Download"
+            )
+        else:
+            logger.info("=== Download Step Skipped (disabled) ===")
+
+        # Step 2: Preprocessing (depends on download if download was enabled)
+        preprocessing_job_id = None
+        preprocessing_enabled = getattr(dataset_config.preprocessing, "enabled", True)
+        if preprocessing_enabled:
+            logger.info("=== Starting Preprocessing Step ===")
+            preprocessing_job_id = self.run_preprocessing_step(
+                dataset_config_name, workflow_config, dependency_job_id=download_job_id
+            )
+            logger.info(
+                f"✓ Preprocessing job {preprocessing_job_id} submitted to cluster ({self.cpu_login['host']})"
+            )
+
+            # Wait for preprocessing job to complete
+            self._wait_for_job_completion(
+                self.cpu_login["host"], preprocessing_job_id, "Preprocessing"
+            )
+        else:
+            logger.info("=== Preprocessing Step Skipped (disabled) ===")
+
+        # Step 3: Embedding (depends on preprocessing)
+        embedding_job_id = None
+        embedding_enabled = getattr(dataset_config.embedding, "enabled", True)
+        if embedding_enabled:
+            logger.info("=== Starting Embedding Step ===")
+            embedding_job_id = self.run_embedding_step(
+                dataset_config_name,
+                workflow_config,
+                dependency_job_id=preprocessing_job_id,
+            )
+            logger.info(
+                f"✓ Embedding job {embedding_job_id} submitted to cluster ({self.gpu_login['host']})"
+            )
+
+            # Wait for embedding job to complete
+            self._wait_for_job_completion(
+                self.gpu_login["host"], embedding_job_id, "Embedding"
+            )
+        else:
+            logger.info("=== Embedding Step Skipped (disabled) ===")
+
+        # Step 4: Dataset Creation (depends on embedding)
+        dataset_creation_enabled = getattr(
+            dataset_config.dataset_creation, "enabled", True
+        )
+        if dataset_creation_enabled:
+            logger.info("=== Starting Dataset Creation Step ===")
+            dataset_job_id = self.run_dataset_creation_step(
+                dataset_config_name, workflow_config, dependency_job_id=embedding_job_id
+            )
+            logger.info(
+                f"✓ Dataset creation job {dataset_job_id} submitted to cluster ({self.cpu_login['host']})"
+            )
+
+            # Wait for dataset creation job to complete
+            self._wait_for_job_completion(
+                self.cpu_login["host"], dataset_job_id, "Dataset Creation"
+            )
+        else:
+            logger.info("=== Dataset Creation Step Skipped (disabled) ===")
+
+        logger.info("=== Workflow Complete ===")
+        logger.info("All steps have been completed successfully.")
+
+    def _wait_for_job_completion(self, host: str, job_id: int, step_name: str) -> None:
+        """Wait for a SLURM job to complete."""
+        logger.info(f"Waiting for {step_name} job {job_id} to complete...")
+
+        while True:
+            # Check job status
+            cmd = ["ssh", host, f"squeue -j {job_id} --noheader"]
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+
+            if result.returncode != 0 or not result.stdout.strip():
+                # Job is no longer in queue (completed, failed, or cancelled)
+                logger.info(f"✓ {step_name} job {job_id} completed")
+                break
+
+            # Job is still running, wait a bit
+            logger.info(f"  {step_name} job {job_id} still running...")
+            import time
+
+            time.sleep(60)  # Wait 1 minute before checking again
+
     def _load_dataset_config(self, dataset_config_name: str) -> DictConfig:
         """Load the dataset configuration."""
         # Load the dataset config using Hydra's config store

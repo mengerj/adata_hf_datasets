@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Dict, Any, List
 from omegaconf import DictConfig, OmegaConf
 import logging
+import subprocess
 
 logger = logging.getLogger(__name__)
 
@@ -468,3 +469,140 @@ def save_workflow_configs(cfg_path: str, output_dir: str):
         output_file = output_path / f"{workflow}_{dataset_name}.yaml"
         OmegaConf.save(config, output_file)
         logger.info(f"Saved {workflow} config to {output_file}")
+
+
+def validate_remote_config_sync(
+    config_name: str,
+    remote_host: str,
+    remote_project_dir: str = "/home/menger/git/adata_hf_datasets",
+) -> bool:
+    """
+    Validate that the remote config file matches the local one.
+
+    This function compares the local config file with the remote one to ensure
+    they are in sync, preventing workflow runs with outdated configurations.
+
+    Parameters
+    ----------
+    config_name : str
+        Name of the config file (without .yaml extension)
+    remote_host : str
+        SSH hostname for the remote server
+    remote_project_dir : str
+        Path to the project directory on the remote server
+
+    Returns
+    -------
+    bool
+        True if configs match, False otherwise
+
+    Raises
+    ------
+    RuntimeError
+        If unable to read local or remote config files
+    """
+    # Local config path
+    local_config_path = Path("conf") / f"{config_name}.yaml"
+    if not local_config_path.exists():
+        raise RuntimeError(f"Local config file not found: {local_config_path}")
+
+    # Read local config content
+    with open(local_config_path, "r") as f:
+        local_content = f.read()
+
+    # Read remote config content
+    remote_config_path = f"{remote_project_dir}/conf/{config_name}.yaml"
+    cmd = ["ssh", remote_host, f"cat {remote_config_path}"]
+
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+        if result.returncode != 0:
+            raise RuntimeError(f"Failed to read remote config: {result.stderr}")
+        remote_content = result.stdout
+    except subprocess.TimeoutExpired:
+        raise RuntimeError(f"Timeout reading remote config from {remote_host}")
+
+    # Compare contents
+    if local_content.strip() == remote_content.strip():
+        return True
+    else:
+        return False
+
+
+def ensure_config_sync(
+    config_name: str,
+    remote_host: str,
+    remote_project_dir: str = "/home/menger/git/adata_hf_datasets",
+    force: bool = False,
+) -> None:
+    """
+    Ensure that the remote config file matches the local one.
+
+    This function validates config synchronization and provides helpful error messages
+    if the configs don't match.
+
+    Parameters
+    ----------
+    config_name : str
+        Name of the config file (without .yaml extension)
+    remote_host : str
+        SSH hostname for the remote server
+    remote_project_dir : str
+        Path to the project directory on the remote server
+    force : bool
+        If True, skip the validation check
+
+    Raises
+    ------
+    RuntimeError
+        If configs don't match and force=False
+    """
+    if force:
+        logger.warning("Skipping config synchronization check (force=True)")
+        return
+
+    logger.info(f"Validating config synchronization for {config_name}...")
+
+    try:
+        if validate_remote_config_sync(config_name, remote_host, remote_project_dir):
+            logger.info(
+                f"✓ Config {config_name} is synchronized between local and remote"
+            )
+        else:
+            error_msg = f"""
+Config synchronization failed for {config_name}!
+
+The local config file differs from the remote one. This could cause the workflow
+to run with outdated configuration.
+
+To fix this:
+1. Commit and push your local changes: git add conf/{config_name}.yaml && git commit -m "Update {config_name} config" && git push
+2. Pull the changes on the remote server: ssh {remote_host} "cd {remote_project_dir} && git pull"
+3. Or run with --force to skip this check (not recommended)
+
+Local config: conf/{config_name}.yaml
+Remote config: {remote_project_dir}/conf/{config_name}.yaml
+"""
+            raise RuntimeError(error_msg)
+    except Exception as e:
+        if "Failed to read remote config" in str(e):
+            error_msg = f"""
+Remote config file not found or inaccessible!
+
+The remote config file could not be read from {remote_host}.
+This might indicate:
+1. The config file doesn't exist on the remote server
+2. SSH connection issues
+3. Incorrect remote project directory
+
+Remote path: {remote_project_dir}/conf/{config_name}.yaml
+SSH host: {remote_host}
+
+To fix this:
+1. Ensure your code is synced to the remote server
+2. Check the remote project directory path
+3. Verify SSH connectivity
+"""
+            raise RuntimeError(error_msg)
+        else:
+            raise
