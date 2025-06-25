@@ -15,7 +15,13 @@ fi
 # ─────────────────────────────────────────────────────────────────────────────
 # 1) Prepare output directory and log redirects
 # ─────────────────────────────────────────────────────────────────────────────
-BASE_OUT="outputs/$(date +%Y-%m-%d)/create_ds/${RUN_ID}"
+# If WORKFLOW_DIR is set (from master job), use it; otherwise use old structure
+if [[ -n "${WORKFLOW_DIR:-}" ]]; then
+  BASE_OUT="${WORKFLOW_DIR}/dataset_creation/job_${RUN_ID}"
+else
+  BASE_OUT="outputs/$(date +%Y-%m-%d)/create_ds/${RUN_ID}"
+fi
+
 mkdir -p "$BASE_OUT"
 
 # Redirect logs to the output directory
@@ -27,12 +33,9 @@ exec 2>"$BASE_OUT"/create_ds.err
 #    Use a dataset config file that inherits from dataset_default.yaml
 #    and overrides the necessary parameters for this specific dataset
 ###
-# Example: Use dataset_cellxgene_pseudo_bulk_3_5k.yaml which should contain:
-# - dataset metadata (name, file_path, etc.)
-# - common keys (batch_key, annotation_key, caption_key, etc.)
-# - dataset_creation overrides if needed
-
-DATASET_CONFIG="dataset_cellxgene_pseudo_bulk_3_5k"
+# The config name is passed via environment variable DATASET_CONFIG
+# If not set, use a default
+DATASET_CONFIG="${DATASET_CONFIG:-dataset_cellxgene_pseudo_bulk_3_5k}"
 
 ###
 # 3. Activate environment, etc.

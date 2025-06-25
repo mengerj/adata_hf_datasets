@@ -1,7 +1,5 @@
 #!/bin/bash
 #SBATCH --job-name=pp
-#SBATCH --output=logs/pp/pp_%j.out
-#SBATCH --error=logs/pp/pp_%j.err
 #SBATCH --mem=35G               # Request memory
 #SBATCH --time=24:00:00         # Max job time
 
@@ -17,8 +15,21 @@ else
   SLURM_JOB_ID=0
 fi
 
-# Create a custom output directory name with date and SLURM job ID
-CUSTOM_DIR="outputs/$(date +%Y-%m-%d)/preprocessing/${RUN_ID}"
+# ─────────────────────────────────────────────────────────────────────────────
+# 1) Prepare output directory and log redirects
+# ─────────────────────────────────────────────────────────────────────────────
+# If WORKFLOW_DIR is set (from master job), use it; otherwise use old structure
+if [[ -n "${WORKFLOW_DIR:-}" ]]; then
+  BASE_OUT="${WORKFLOW_DIR}/preprocessing/job_${RUN_ID}"
+else
+  BASE_OUT="outputs/$(date +%Y-%m-%d)/preprocessing/${RUN_ID}"
+fi
+
+mkdir -p "$BASE_OUT"
+
+# Redirect logs to the output directory
+exec 1>"$BASE_OUT"/preprocessing.out
+exec 2>"$BASE_OUT"/preprocessing.err
 
 # The config name is passed via environment variable DATASET_CONFIG
 # If not set, use a default
@@ -26,10 +37,11 @@ DATASET_CONFIG="${DATASET_CONFIG:-dataset_cellxgene_pseudo_bulk_3_5k}"
 
 echo "Starting job"
 echo "Using dataset config: $DATASET_CONFIG"
+echo "Output directory: $BASE_OUT"
 # Source the setup script to ensure the environment is ready
 source .venv/bin/activate
 echo "venv activated"
 # Now run your Python script with the dataset config
 python3 scripts/preprocessing/preprocess.py \
     --config-name=$DATASET_CONFIG \
-    ++hydra.run.dir=$CUSTOM_DIR
+    ++hydra.run.dir="$BASE_OUT"

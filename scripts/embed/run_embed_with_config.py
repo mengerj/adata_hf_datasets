@@ -11,12 +11,25 @@ import logging
 import subprocess
 import sys
 from pathlib import Path
+import os
 
 from omegaconf import DictConfig
 
 from adata_hf_datasets.config_utils import apply_all_transformations
 
 logger = logging.getLogger(__name__)
+
+# Add error handler for central error log if WORKFLOW_DIR is set
+WORKFLOW_DIR = os.environ.get("WORKFLOW_DIR")
+if WORKFLOW_DIR:
+    error_log_path = os.path.join(WORKFLOW_DIR, "logs", "errors_consolidated.log")
+    error_handler = logging.FileHandler(error_log_path, mode="a")
+    error_handler.setLevel(logging.ERROR)
+    formatter = logging.Formatter(
+        "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+    )
+    error_handler.setFormatter(formatter)
+    logging.getLogger().addHandler(error_handler)
 
 
 def extract_embedding_params(config: DictConfig) -> dict:

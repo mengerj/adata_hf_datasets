@@ -10,6 +10,7 @@ import sys
 import hydra
 from omegaconf import DictConfig
 from hydra.core.hydra_config import HydraConfig
+import os
 
 import adata_hf_datasets.pp as pp
 from adata_hf_datasets.plotting import qc_evaluation_plots
@@ -19,6 +20,18 @@ from adata_hf_datasets.file_utils import add_sample_index_to_h5ad
 from adata_hf_datasets.config_utils import apply_all_transformations, validate_config
 
 logger = logging.getLogger(__name__)
+
+# Add error handler for central error log if WORKFLOW_DIR is set
+WORKFLOW_DIR = os.environ.get("WORKFLOW_DIR")
+if WORKFLOW_DIR:
+    error_log_path = os.path.join(WORKFLOW_DIR, "logs", "errors_consolidated.log")
+    error_handler = logging.FileHandler(error_log_path, mode="a")
+    error_handler.setLevel(logging.ERROR)
+    formatter = logging.Formatter(
+        "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+    )
+    error_handler.setFormatter(formatter)
+    logging.getLogger().addHandler(error_handler)
 
 
 def default_split_fn(

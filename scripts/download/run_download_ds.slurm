@@ -15,7 +15,13 @@ fi
 # ─────────────────────────────────────────────────────────────────────────────
 # 1) Prepare output directory and log redirects
 # ─────────────────────────────────────────────────────────────────────────────
-BASE_OUT="outputs/$(date +%Y-%m-%d)/download_ds/${RUN_ID}"
+# If WORKFLOW_DIR is set (from master job), use it; otherwise use old structure
+if [[ -n "${WORKFLOW_DIR:-}" ]]; then
+  BASE_OUT="${WORKFLOW_DIR}/download/job_${RUN_ID}"
+else
+  BASE_OUT="outputs/$(date +%Y-%m-%d)/download_ds/${RUN_ID}"
+fi
+
 mkdir -p "$BASE_OUT"
 
 # Redirect logs to the output directory
