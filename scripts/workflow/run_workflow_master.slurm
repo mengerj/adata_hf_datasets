@@ -25,13 +25,17 @@ import sys
 from pathlib import Path
 sys.path.insert(0, str(Path.cwd() / 'src'))
 
-from omegaconf import OmegaConf
+from hydra import compose, initialize_config_dir
 from adata_hf_datasets.config_utils import apply_all_transformations
 from scripts.workflow.orchestrate_workflow import WorkflowOrchestrator
 
-# Load the dataset config
-config_path = Path('conf') / f'{sys.argv[1]}.yaml'
-config = OmegaConf.load(config_path)
+# Load the dataset config with proper Hydra inheritance
+config_path = Path('conf')
+
+with initialize_config_dir(config_dir=str(config_path), version_base=None):
+    config = compose(config_name=sys.argv[1])
+
+# Apply transformations
 config = apply_all_transformations(config)
 
 # Create orchestrator with SSH connections
