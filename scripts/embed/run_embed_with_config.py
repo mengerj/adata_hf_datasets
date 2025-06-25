@@ -41,6 +41,15 @@ def extract_embedding_params(config: DictConfig) -> dict:
     logger.info(f"  Config mode: {getattr(embedding_config, 'mode', 'gpu')}")
     logger.info(f"  Config batch_size: {getattr(embedding_config, 'batch_size', 128)}")
 
+    # Check for PREPARE_ONLY environment variable override
+    prepare_only_env = os.environ.get("PREPARE_ONLY")
+    if prepare_only_env is not None:
+        prepare_only = prepare_only_env.lower() == "true"
+        logger.info(f"  Using PREPARE_ONLY from environment: {prepare_only}")
+    else:
+        prepare_only = getattr(embedding_config, "prepare_only", False)
+        logger.info(f"  Using PREPARE_ONLY from config: {prepare_only}")
+
     # Extract parameters with defaults
     params = {
         "MODE": getattr(embedding_config, "mode", "gpu"),
@@ -49,7 +58,7 @@ def extract_embedding_params(config: DictConfig) -> dict:
         "BATCH_KEY": config.get("batch_key", "batch"),
         "BATCH_SIZE": getattr(embedding_config, "batch_size", 128),
         "METHODS": " ".join(getattr(embedding_config, "methods", ["pca", "hvg"])),
-        "PREPARE_ONLY": str(getattr(embedding_config, "prepare_only", False)).lower(),
+        "PREPARE_ONLY": str(prepare_only).lower(),
         "TRAIN_OR_TEST": "train"
         if config.preprocessing.get("split_dataset", True)
         else "test",
