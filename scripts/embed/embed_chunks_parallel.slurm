@@ -4,12 +4,16 @@
 #SBATCH --time=3:00:00
 ##SBATCH --array=0-$(($(ls "${INPUT_DIR}"/*.zarr | wc -l)-1))
 set -euo pipefail
-
 # ─────────────────────────────────────────────────────────────────────────────
 # 0) Define a unified RUN_ID: real array job ID under SLURM, or a timestamp locally
 # ─────────────────────────────────────────────────────────────────────────────
 if [[ -n "${SLURM_ARRAY_JOB_ID:-}" ]]; then
   RUN_ID="${SLURM_ARRAY_JOB_ID}"
+  # Only redirect output when running under SLURM
+  LOG_DIR="logs/embed/${RUN_ID}"
+  mkdir -p "$LOG_DIR"
+  exec 1>logs/embed/"${RUN_ID}"/"${SLURM_ARRAY_TASK_ID}".out
+  exec 2>logs/embed/"${RUN_ID}"/"${SLURM_ARRAY_TASK_ID}".err
 else
   # local run: use date+seconds to make it unique
   RUN_ID="embed_$(date +%Y%m%d_%H%M%S)"
@@ -19,11 +23,9 @@ fi
 # ─────────────────────────────────────────────────────────────────────────────
 # 1) Prepare log directory and redirect
 # ─────────────────────────────────────────────────────────────────────────────
-LOG_DIR="logs/embed/${RUN_ID}"
-mkdir -p "$LOG_DIR"
 # now redirect stdout+stderr into per-task files
-exec 1>logs/embed/"${RUN_ID}"/"${SLURM_ARRAY_TASK_ID}".out
-exec 2>logs/embed/"${RUN_ID}"/"${SLURM_ARRAY_TASK_ID}".err
+#exec 1>logs/embed/"${RUN_ID}"/"${SLURM_ARRAY_TASK_ID}".out
+#exec 2>logs/embed/"${RUN_ID}"/"${SLURM_ARRAY_TASK_ID}".err
 
 # record start time
 start_ts=$(date +%s)
@@ -39,6 +41,7 @@ METHODS="${METHODS:-hvg pca scvi_fm}"
 BATCH_KEY="${BATCH_KEY:-dataset_title}"
 BATCH_SIZE="${BATCH_SIZE:-32}"
 MAX_PROCS="${MAX_PROCS:-8}"
+PREPARE_ONLY="${PREPARE_ONLY:-false}"  # New parameter to control mode
 # ─────────────────────────────────────────────────────────────────────────────
 # 3) Build a Hydra‐style list literal from our space‑separated METHODS
 # e.g. "hvg pca" → ["hvg","pca"]
@@ -60,8 +63,16 @@ fi
 # ─────────────────────────────────────────────────────────────────────────────
 # LOCAL MODE with capped parallelism via xargs -P
 # ─────────────────────────────────────────────────────────────────────────────
+echo "About to check SLURM_ARRAY_JOB_ID: '${SLURM_ARRAY_JOB_ID:-}'"
+echo "Is SLURM_ARRAY_JOB_ID empty? $([[ -z "${SLURM_ARRAY_JOB_ID:-}" ]] && echo "YES" || echo "NO")"
+
 if [[ -z "${SLURM_ARRAY_JOB_ID:-}" ]]; then
-  echo "[LOCAL MODE] Running all files with up to ${MAX_PROCS:-auto} parallel jobs"
+  if [[ "$PREPARE_ONLY" == "true" ]]; then
+    MODE_STR="prepare-only"
+  else
+    MODE_STR="full-pipeline"
+  fi
+  echo "[LOCAL MODE] Running $MODE_STR on all files with up to ${MAX_PROCS:-auto} parallel jobs"
 
   # 1) Detect total CPUs and set MAX_PROCS if unset
   LOCAL_CPUS=$(nproc 2>/dev/null || getconf _NPROCESSORS_ONLN 2>/dev/null || echo 1)
@@ -77,6 +88,7 @@ if [[ -z "${SLURM_ARRAY_JOB_ID:-}" ]]; then
         mkdir -p "$OUTDIR"
         echo "[LOCAL][${idx}] → $OUTDIR"
         python3 scripts/embed/embed_adata.py \
+          ++prepare_only='"$PREPARE_ONLY"' \
           ++embedding.methods="'"$METHODS_JSON"'" \
           ++batch_key="'"$BATCH_KEY"'" \
           ++batch_size="'"$BATCH_SIZE"'" \
@@ -95,13 +107,19 @@ source .venv/bin/activate
 
 files=( "${INPUT_DIR}"/*.zarr )
 this_file="${files[$SLURM_ARRAY_TASK_ID]}"
-echo "[${RUN_ID}:${SLURM_ARRAY_TASK_ID}] Processing $this_file"
+if [[ "$PREPARE_ONLY" == "true" ]]; then
+  MODE_STR="prepare-only"
+else
+  MODE_STR="full-pipeline"
+fi
+echo "[${RUN_ID}:${SLURM_ARRAY_TASK_ID}] Processing $this_file ($MODE_STR)"
 
 BASE_OUT="outputs/$(date +%Y-%m-%d)/${RUN_ID}/${SLURM_ARRAY_TASK_ID}"
 mkdir -p "$BASE_OUT"
 
 echo "[${RUN_ID}:${SLURM_ARRAY_TASK_ID}] Running methods: $METHODS_JSON"
 python3 scripts/embed/embed_adata.py \
+    ++prepare_only="$PREPARE_ONLY" \
     ++embedding.methods="$METHODS_JSON" \
     ++batch_key="$BATCH_KEY" \
     ++batch_size="$BATCH_SIZE" \

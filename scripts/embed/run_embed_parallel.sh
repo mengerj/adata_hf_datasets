@@ -8,10 +8,10 @@ GPU_COUNT="1"      # how many GPUs if MODE=gpu
 DATANAME="cellxgene_pseudo_bulk_3_5k"
 BATCH_KEY="dataset_title"
 BATCH_SIZE=128
-METHODS="pca" #"scvi_fm pca"  # space‐separated list - eg one string with spaces
+METHODS="geneformer scvi_fm pca hvg" #"scvi_fm pca"  # space‐separated list - eg one string with spaces
 SCRIPT="scripts/embed/embed_chunks_parallel.slurm"
 MAX_PROCS=2
-#SCRIPT="scripts/embed/prepare_embed_chunks_parallel.slurm"
+PREPARE_ONLY="false"  # Set to "true" for prepare-only mode, "false" for full pipeline
 TRAIN_OR_TEST="train"
 #DATA_BASE_DIR="/scratch/global/menger/data/RNA/processed"
 DATA_BASE_DIR="data/RNA/processed/"
@@ -47,6 +47,7 @@ submit_array() {
 METHODS="${METHODS}",\
 BATCH_KEY="${BATCH_KEY}",\
 BATCH_SIZE="${BATCH_SIZE}",\
+PREPARE_ONLY="${PREPARE_ONLY}",\
 TRAIN_OR_TEST="${TRAIN_OR_TEST}" \
           "$SCRIPT"
     else
@@ -54,17 +55,20 @@ TRAIN_OR_TEST="${TRAIN_OR_TEST}" \
         echo "[LOCAL] Running all $n chunks for '$label' in parallel"
         INPUT_DIR="$dir" METHODS="$METHODS" MAX_PROCS="$MAX_PROCS" \
 BATCH_KEY="$BATCH_KEY" BATCH_SIZE="$BATCH_SIZE" \
-TRAIN_OR_TEST="$TRAIN_OR_TEST" \
-bash "$SCRIPT"
+PREPARE_ONLY="$PREPARE_ONLY" TRAIN_OR_TEST="$TRAIN_OR_TEST" \
+source "$SCRIPT"
     fi
 }
 
 if [[ "$TRAIN_OR_TEST" == "test" ]]; then
     DATA_DIR="${DATA_BASE_DIR}/test/${DATANAME}/all"
+    echo "Processing test data: $DATA_DIR"
     submit_array test "$DATA_DIR"
 else
     TRAIN_DIR="${DATA_BASE_DIR}/train/${DATANAME}/train"
     VAL_DIR="${DATA_BASE_DIR}/train/${DATANAME}/val"
+    echo "Processing train data: $TRAIN_DIR"
     submit_array train "$TRAIN_DIR"
+    echo "Processing val data: $VAL_DIR"
     submit_array val   "$VAL_DIR"
 fi

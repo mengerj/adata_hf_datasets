@@ -374,7 +374,7 @@ def main(cfg: DictConfig):
     # Get format specifications with defaults
     input_format = getattr(embedding_cfg, "input_format", "auto")
     output_format = getattr(embedding_cfg, "output_format", "zarr")
-    output_dir = getattr(embedding_cfg, "output_dir", None)
+    output_dir_base = getattr(embedding_cfg, "output_dir", None)
 
     monitor = SystemMonitor(logger=logger)
     monitor.start()
@@ -424,7 +424,9 @@ def main(cfg: DictConfig):
                 logger.info("Running full embedding pipeline")
 
                 # Generate output path based on configuration
-                # get the split name from the input file and add it to the output file
+                # get the split name from the input file and add it to the output dir
+                split_name = infile.parent.name
+                output_dir = Path(output_dir_base) / split_name
                 outfile = get_output_path(
                     infile, output_format, Path(output_dir) if output_dir else None
                 )
