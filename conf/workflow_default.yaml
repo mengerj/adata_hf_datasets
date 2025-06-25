@@ -21,7 +21,7 @@ workflow:
     user: "menger" # Use the user from SSH config
 
   # SLURM partition names (from actual cluster configuration)
-  cpu_partition: "imbiPCompute" # CPU partition on imbi13
+  cpu_partition: "slurm" # CPU partition on imbi13
   gpu_partition: "gpu" # GPU partition on imbi_gpu_H100
 
   # Job polling interval (seconds)
