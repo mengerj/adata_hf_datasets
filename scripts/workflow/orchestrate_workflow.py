@@ -70,7 +70,13 @@ class WorkflowLogger:
         (workflow_dir / "logs").mkdir(parents=True, exist_ok=True)
 
         # Create step directories
-        for step in ["download", "preprocessing", "embedding", "dataset_creation"]:
+        for step in [
+            "download",
+            "preprocessing",
+            "embedding_preparation",
+            "embedding",
+            "dataset_creation",
+        ]:
             (workflow_dir / step).mkdir(parents=True, exist_ok=True)
 
         logger.info(f"Created workflow directory: {workflow_dir}")
@@ -315,6 +321,38 @@ class WorkflowOrchestrator:
         )
         return job_id
 
+    def run_embedding_prepare_step(
+        self,
+        dataset_config_name: str,
+        workflow_config: DictConfig,
+        dependency_job_id: Optional[int] = None,
+    ) -> Optional[int]:
+        """Run the embedding preparation step on CPU and return job ID."""
+        logger.info("=== Starting Embedding Preparation Step ===")
+        script_path = Path("scripts/embed/run_embed_parallel.slurm")
+        dependencies = [dependency_job_id] if dependency_job_id else None
+
+        logger.info(f"Using dataset config: {dataset_config_name}")
+
+        # Pass the dataset config name, workflow directory, and prepare_only flag as environment variables
+        env_vars = {
+            "DATASET_CONFIG": dataset_config_name,
+            "WORKFLOW_DIR": str(self.workflow_logger.workflow_dir)
+            if self.workflow_logger
+            else "",
+            "PREPARE_ONLY": "true",  # Force prepare_only mode
+        }
+
+        job_id = self._submit_slurm_job(
+            self.cpu_login["host"],  # Use CPU cluster for preparation
+            script_path,
+            partition=workflow_config.cpu_partition,  # Use CPU partition
+            dependencies=dependencies,
+            env_vars=env_vars,
+            step_name="Embedding Preparation",
+        )
+        return job_id
+
     def run_embedding_step(
         self,
         dataset_config_name: str,
@@ -413,20 +451,33 @@ class WorkflowOrchestrator:
                 f"✓ Preprocessing job {preprocessing_job_id} submitted to cluster ({self.cpu_login['host']})"
             )
 
-        # Step 3: Embedding (depends on preprocessing)
+        # Step 3: Embedding Preparation (depends on preprocessing)
+        embedding_prepare_job_id = None
+        embedding_prepare_enabled = getattr(dataset_config.embedding, "enabled", True)
+        if embedding_prepare_enabled:
+            embedding_prepare_job_id = self.run_embedding_prepare_step(
+                dataset_config_name,
+                workflow_config,
+                dependency_job_id=preprocessing_job_id,
+            )
+            logger.info(
+                f"✓ Embedding preparation job {embedding_prepare_job_id} submitted to cluster ({self.cpu_login['host']})"
+            )
+
+        # Step 4: Embedding (depends on embedding preparation)
         embedding_job_id = None
         embedding_enabled = getattr(dataset_config.embedding, "enabled", True)
         if embedding_enabled:
             embedding_job_id = self.run_embedding_step(
                 dataset_config_name,
                 workflow_config,
-                dependency_job_id=preprocessing_job_id,
+                dependency_job_id=embedding_prepare_job_id,
             )
             logger.info(
                 f"✓ Embedding job {embedding_job_id} submitted to cluster ({self.gpu_login['host']})"
             )
 
-        # Step 4: Dataset Creation (depends on embedding)
+        # Step 5: Dataset Creation (depends on embedding)
         dataset_creation_enabled = getattr(
             dataset_config.dataset_creation, "enabled", True
         )
@@ -517,7 +568,36 @@ class WorkflowOrchestrator:
             logger.info("=== Preprocessing Step Skipped (disabled) ===")
             self.workflow_logger.log_step_skipped("Preprocessing", "disabled in config")
 
-        # Step 3: Embedding (depends on preprocessing)
+        # Step 3: Embedding Preparation (depends on preprocessing)
+        embedding_prepare_job_id = None
+        embedding_prepare_enabled = getattr(dataset_config.embedding, "enabled", True)
+        if embedding_prepare_enabled:
+            logger.info("=== Starting Embedding Preparation Step ===")
+            embedding_prepare_job_id = self.run_embedding_prepare_step(
+                dataset_config_name,
+                workflow_config,
+                dependency_job_id=preprocessing_job_id,
+            )
+            logger.info(
+                f"✓ Embedding preparation job {embedding_prepare_job_id} submitted to cluster ({self.cpu_login['host']})"
+            )
+
+            # Wait for embedding preparation job to complete
+            self._wait_for_job_completion(
+                self.cpu_login["host"],
+                embedding_prepare_job_id,
+                "Embedding Preparation",
+            )
+            self.workflow_logger.log_step_complete(
+                "Embedding Preparation", embedding_prepare_job_id
+            )
+        else:
+            logger.info("=== Embedding Preparation Step Skipped (disabled) ===")
+            self.workflow_logger.log_step_skipped(
+                "Embedding Preparation", "disabled in config"
+            )
+
+        # Step 4: Embedding (depends on embedding preparation)
         embedding_job_id = None
         embedding_enabled = getattr(dataset_config.embedding, "enabled", True)
         if embedding_enabled:
@@ -525,7 +605,7 @@ class WorkflowOrchestrator:
             embedding_job_id = self.run_embedding_step(
                 dataset_config_name,
                 workflow_config,
-                dependency_job_id=preprocessing_job_id,
+                dependency_job_id=embedding_prepare_job_id,
             )
             logger.info(
                 f"✓ Embedding job {embedding_job_id} submitted to cluster ({self.gpu_login['host']})"
@@ -540,7 +620,7 @@ class WorkflowOrchestrator:
             logger.info("=== Embedding Step Skipped (disabled) ===")
             self.workflow_logger.log_step_skipped("Embedding", "disabled in config")
 
-        # Step 4: Dataset Creation (depends on embedding)
+        # Step 5: Dataset Creation (depends on embedding)
         dataset_creation_enabled = getattr(
             dataset_config.dataset_creation, "enabled", True
         )
