@@ -59,7 +59,7 @@ preprocessing:
 
 # Override embedding methods
 embedding:
-  enabled: false # Enable embedding for testing
+  enabled: true # Enable embedding for testing
   methods: ["hvg", "pca"] # Multiple methods for comparison
   mode: "gpu" # Use GPU mode
   gpu_count: "1" # Use 1 GPU
