@@ -59,7 +59,7 @@ preprocessing:
 
 # Override embedding methods
 embedding:
-  enabled: true # Enable embedding for testing
+  enabled: false # Enable embedding for testing
   methods: ["hvg", "pca"] # Multiple methods for comparison
   mode: "gpu" # Use GPU mode
   gpu_count: "1" # Use 1 GPU
@@ -68,20 +68,17 @@ embedding:
 
 # Override dataset creation parameters
 dataset_creation:
-  enabled: false # Disable dataset creation for testing
+  enabled: true # Disable dataset creation for testing
   # Override dataset format for this specific dataset
-  dataset_format: "multiplets"
-
+  dataset_format: "pairs"
   # Override required embedding keys if needed
   required_obsm_keys: ["X_pca", "X_scvi_fm", "X_hvg"]
-
   # Override sentence keys if needed
   sentence_keys:
     - "sample_id_og"
     - "cell_sentence"
     - "semantic_true"
     - "semantic_similar"
-
   # Override other parameters if needed
   negatives_per_sample: 2
   cs_length: 10
