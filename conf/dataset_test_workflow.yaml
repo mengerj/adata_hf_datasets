@@ -45,8 +45,21 @@ download:
 # PREPROCESSING OVERRIDES
 # =============================================================================
 preprocessing:
+  enabled: true # Enable preprocessing for testing
   split_dataset: false # No split for test
   chunk_size: 50000 # Small chunks for testing
+
+# =============================================================================
+# EMBEDDING OVERRIDES
+# =============================================================================
+embedding:
+  enabled: false # Disable embedding for testing
+
+# =============================================================================
+# DATASET CREATION OVERRIDES
+# =============================================================================
+dataset_creation:
+  enabled: false # Disable dataset creation for testing
 
 # =============================================================================
 # WORKFLOW OVERRIDES
