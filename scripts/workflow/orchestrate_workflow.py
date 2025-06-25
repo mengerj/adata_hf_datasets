@@ -173,7 +173,7 @@ class WorkflowOrchestrator:
     ) -> Optional[int]:
         """Run the embedding step and return job ID."""
         logger.info("=== Starting Embedding Step ===")
-        script_path = Path("scripts/embed/run_embed_parallel.sh")
+        script_path = Path("scripts/embed/run_embed_parallel.slurm")
         dependencies = [dependency_job_id] if dependency_job_id else None
 
         logger.info(f"Using dataset config: {dataset_config_name}")
