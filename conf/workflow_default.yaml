@@ -1,0 +1,31 @@
+# Default workflow configuration
+# This config contains settings for the workflow orchestrator
+
+# =============================================================================
+# WORKFLOW MODE CONFIGURATION
+# =============================================================================
+workflow:
+  # Set to true to run locally instead of via SSH
+  local_mode: false
+
+  # SSH connection settings for CPU cluster
+  # Using SSH aliases from ~/.ssh/config (handles ProxyJump automatically)
+  cpu_login:
+    host: "imbi13" # SSH alias that resolves through biom5
+    user: "menger" # Use the user from SSH config
+
+  # SSH connection settings for GPU cluster
+  # Using SSH aliases from ~/.ssh/config (handles ProxyJump automatically)
+  gpu_login:
+    host: "imbi_gpu_H100" # SSH alias that resolves through biom5
+    user: "menger" # Use the user from SSH config
+
+  # SLURM partition names (from actual cluster configuration)
+  cpu_partition: "imbiPCompute" # CPU partition on imbi13
+  gpu_partition: "gpu" # GPU partition on imbi_gpu_H100
+
+  # Job polling interval (seconds)
+  poll_interval: 60
+
+  # Timeout for job completion (seconds, 0 = no timeout)
+  job_timeout: 0
