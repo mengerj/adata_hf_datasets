@@ -86,6 +86,7 @@ if [[ -z "${SLURM_ARRAY_JOB_ID:-}" ]]; then
         mkdir -p "$OUTDIR"
         echo "[LOCAL][${idx}] → $OUTDIR"
         python3 scripts/embed/embed_adata.py \
+          --config-name="${DATASET_CONFIG:-dataset_cellxgene_pseudo_bulk_3_5k}" \
           ++prepare_only=true \
           ++embedding.methods="'"$METHODS_JSON"'" \
           ++batch_key="'"$BATCH_KEY"'" \
@@ -110,6 +111,7 @@ echo "[${RUN_ID}:${SLURM_ARRAY_TASK_ID}] Preparing $this_file"
 
 echo "[${RUN_ID}:${SLURM_ARRAY_TASK_ID}] Methods: $METHODS_JSON"
 python3 scripts/embed/embed_adata.py \
+  --config-name="${DATASET_CONFIG:-dataset_cellxgene_pseudo_bulk_3_5k}" \
   ++prepare_only=true \
   ++embedding.methods="'"$METHODS_JSON"'" \
   ++batch_key="'"$BATCH_KEY"'" \
