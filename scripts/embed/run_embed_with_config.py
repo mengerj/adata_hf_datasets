@@ -61,7 +61,7 @@ def extract_embedding_params(
 
     # Determine mode - force CPU if requested
     if force_cpu_only:
-        mode = "cpu"
+        mode = "slurm"
         logger.info(f"  Using MODE from CPU-only command line: {mode}")
     else:
         mode = getattr(embedding_config, "mode", "gpu")
