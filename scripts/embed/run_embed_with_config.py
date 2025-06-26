@@ -32,7 +32,9 @@ if WORKFLOW_DIR:
     logging.getLogger().addHandler(error_handler)
 
 
-def extract_embedding_params(config: DictConfig) -> dict:
+def extract_embedding_params(
+    config: DictConfig, force_prepare_only: bool = False, force_cpu_only: bool = False
+) -> dict:
     """Extract embedding parameters from dataset config."""
     embedding_config = config.embedding
 
@@ -41,18 +43,33 @@ def extract_embedding_params(config: DictConfig) -> dict:
     logger.info(f"  Config mode: {getattr(embedding_config, 'mode', 'gpu')}")
     logger.info(f"  Config batch_size: {getattr(embedding_config, 'batch_size', 128)}")
 
-    # Check for PREPARE_ONLY environment variable override
-    prepare_only_env = os.environ.get("PREPARE_ONLY")
-    if prepare_only_env is not None:
-        prepare_only = prepare_only_env.lower() == "true"
-        logger.info(f"  Using PREPARE_ONLY from environment: {prepare_only}")
+    # Check for command-line overrides first, then environment variables, then config
+    if force_prepare_only:
+        prepare_only = True
+        logger.info(f"  Using PREPARE_ONLY from command line: {prepare_only}")
+    elif force_cpu_only:
+        prepare_only = True
+        logger.info(f"  Using PREPARE_ONLY from CPU-only mode: {prepare_only}")
     else:
-        prepare_only = getattr(embedding_config, "prepare_only", False)
-        logger.info(f"  Using PREPARE_ONLY from config: {prepare_only}")
+        prepare_only_env = os.environ.get("PREPARE_ONLY")
+        if prepare_only_env is not None:
+            prepare_only = prepare_only_env.lower() == "true"
+            logger.info(f"  Using PREPARE_ONLY from environment: {prepare_only}")
+        else:
+            prepare_only = getattr(embedding_config, "prepare_only", False)
+            logger.info(f"  Using PREPARE_ONLY from config: {prepare_only}")
+
+    # Determine mode - force CPU if requested
+    if force_cpu_only:
+        mode = "cpu"
+        logger.info(f"  Using MODE from CPU-only command line: {mode}")
+    else:
+        mode = getattr(embedding_config, "mode", "gpu")
+        logger.info(f"  Using MODE from config: {mode}")
 
     # Extract parameters with defaults
     params = {
-        "MODE": getattr(embedding_config, "mode", "gpu"),
+        "MODE": mode,
         "GPU_COUNT": getattr(embedding_config, "gpu_count", "1"),
         "DATANAME": config.dataset.name,
         "BATCH_KEY": config.get("batch_key", "batch"),
@@ -131,6 +148,10 @@ def main():
     """Main function to run embedding with config."""
     parser = argparse.ArgumentParser(description="Run embedding with dataset config")
     parser.add_argument("--config-name", required=True, help="Dataset config name")
+    parser.add_argument(
+        "--prepare-only", action="store_true", help="Force prepare only mode"
+    )
+    parser.add_argument("--cpu-only", action="store_true", help="Force CPU-only mode")
     args = parser.parse_args()
 
     # Load the config without Hydra's automatic output directory creation
@@ -139,7 +160,7 @@ def main():
     logger.info(f"Running embedding for dataset: {cfg.dataset.name}")
 
     # Extract embedding parameters
-    params = extract_embedding_params(cfg)
+    params = extract_embedding_params(cfg, args.prepare_only, args.cpu_only)
 
     # Run the embedding script
     run_embedding_script(params)

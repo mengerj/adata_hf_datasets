@@ -73,7 +73,7 @@ class WorkflowLogger:
         for step in [
             "download",
             "preprocessing",
-            "embedding_preparation",
+            "embedding_prepare",
             "embedding",
             "dataset_creation",
         ]:
@@ -423,19 +423,17 @@ class WorkflowOrchestrator:
     ) -> Optional[int]:
         """Run the embedding preparation step on CPU and return job ID."""
         logger.info("=== Starting Embedding Preparation Step ===")
-        script_path = Path("scripts/embed/run_embed_parallel.slurm")
+        script_path = Path("scripts/embed/run_embed_prepare.slurm")
         dependencies = [dependency_job_id] if dependency_job_id else None
 
         logger.info(f"Using dataset config: {dataset_config_name}")
 
-        # Pass the dataset config name, workflow directory, prepare_only flag, and SLURM partition as environment variables
+        # Pass the dataset config name and workflow directory as environment variables
         env_vars = {
             "DATASET_CONFIG": dataset_config_name,
             "WORKFLOW_DIR": str(self.workflow_logger.workflow_dir)
             if self.workflow_logger
             else "",
-            "PREPARE_ONLY": "true",  # Force prepare_only mode
-            "SLURM_PARTITION": workflow_config.cpu_partition,  # Pass the CPU partition
         }
 
         job_id = self._submit_slurm_job(
