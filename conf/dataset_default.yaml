@@ -37,6 +37,8 @@ download:
   seed: 42 # Random seed for reproducible subsetting
   stratify_keys: null # List of column names to stratify by (will be auto-generated from common keys)
   preserve_proportions: true # Whether to preserve proportions when stratifying
+  validate: true # Validate downloaded file format
+  keep_full_file: true # Keep the full downloaded file for future subsetting
 
 # =============================================================================
 # PREPROCESSING CONFIGURATION (dataset-specific overrides)
