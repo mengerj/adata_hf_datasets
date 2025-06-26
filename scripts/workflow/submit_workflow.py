@@ -77,7 +77,7 @@ def submit_master_job(
     # Get CPU host and partition from workflow config
     workflow_section = workflow_config.get("workflow", {})
     cpu_login = workflow_section.get("cpu_login")
-    cpu_partition = workflow_section.get("cpu_partition", "cpu")
+    cpu_partition = workflow_section.get("cpu_partition", "slurm")
 
     if not cpu_login:
         raise ValueError(

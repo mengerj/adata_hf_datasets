@@ -259,7 +259,7 @@ class WorkflowOrchestrator:
         self,
         host: str,
         script_path: Path,
-        partition: str = "cpu",
+        partition: str = "slurm",
         dependencies: Optional[List[int]] = None,
         env_vars: Optional[Dict[str, str]] = None,
         step_name: str = "unknown",
