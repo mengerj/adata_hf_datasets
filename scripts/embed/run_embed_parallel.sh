@@ -46,16 +46,34 @@ submit_array() {
     echo "Submitting $n chunks for '$label' in parallel"
     if command -v sbatch &>/dev/null; then
         # — under SLURM, submit an array job —
-        sbatch \
+        # Add dependency on the current job if we're running under SLURM
+        DEPENDENCY_FLAG=""
+        if [[ -n "${SLURM_JOB_ID:-}" ]]; then
+            DEPENDENCY_FLAG="--dependency=afterok:${SLURM_JOB_ID}"
+        fi
+
+        # Submit the job and capture the job ID
+        job_output=$(sbatch \
           --array=0-$((n-1)) \
           "${SBATCH_EXTRA[@]}" \
+          $DEPENDENCY_FLAG \
           --export=ALL,INPUT_DIR="${dir}",\
 METHODS="${METHODS}",\
 BATCH_KEY="${BATCH_KEY}",\
 BATCH_SIZE="${BATCH_SIZE}",\
 PREPARE_ONLY="${PREPARE_ONLY}",\
-TRAIN_OR_TEST="${TRAIN_OR_TEST}" \
-          "$SCRIPT"
+TRAIN_OR_TEST="${TRAIN_OR_TEST}",\
+WORKFLOW_DIR="${WORKFLOW_DIR:-}" \
+          "$SCRIPT")
+
+        # Extract job ID from output
+        job_id=$(echo "$job_output" | grep -o "Submitted batch job [0-9]*" | grep -o "[0-9]*")
+        echo "Submitted batch job $job_id"
+
+        # Store job ID in a file for the main script to read
+        if [[ -n "$job_id" ]]; then
+            echo "$job_id" >> /tmp/embedding_array_jobs_${SLURM_JOB_ID:-$$}.txt
+        fi
     else
         # — locally, just run the script (it will detect LOCAL MODE) —
         echo "[LOCAL] Running all $n chunks for '$label' in parallel"

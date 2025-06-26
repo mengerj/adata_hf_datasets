@@ -50,4 +50,28 @@ source .venv/bin/activate
 # Force CPU mode and prepare_only=true for this step
 python scripts/embed/run_embed_with_config.py --config-name "$DATASET_CONFIG" --prepare-only --cpu-only
 
+# Wait for array jobs to complete if we're running under SLURM
+if [[ -n "${SLURM_JOB_ID:-}" ]]; then
+    echo "Waiting for preparation array jobs to complete..."
+
+    # Read array job IDs from the temporary file
+    job_file="/tmp/embedding_array_jobs_${SLURM_JOB_ID}.txt"
+    if [[ -f "$job_file" ]]; then
+        while IFS= read -r array_job_id; do
+            if [[ -n "$array_job_id" ]]; then
+                echo "Waiting for preparation array job $array_job_id to complete..."
+                while squeue -j "$array_job_id" &>/dev/null; do
+                    sleep 30
+                done
+                echo "Preparation array job $array_job_id completed"
+            fi
+        done < "$job_file"
+
+        # Clean up the temporary file
+        rm -f "$job_file"
+    else
+        echo "No preparation array job file found, assuming no array jobs were submitted"
+    fi
+fi
+
 echo "=== Embedding Preparation Job Completed ==="

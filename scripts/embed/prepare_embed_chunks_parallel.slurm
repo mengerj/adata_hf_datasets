@@ -9,6 +9,19 @@ set -euo pipefail
 # ─────────────────────────────────────────────────────────────────────────────
 if [[ -n "${SLURM_ARRAY_JOB_ID:-}" ]]; then
   RUN_ID="${SLURM_ARRAY_JOB_ID}"
+  # Use workflow directory if set, otherwise use default logs directory
+  if [[ -n "${WORKFLOW_DIR:-}" ]]; then
+    LOG_DIR="${WORKFLOW_DIR}/embedding_prepare/array_${RUN_ID}"
+    BASE_OUT="${WORKFLOW_DIR}/embedding_prepare/array_${RUN_ID}/${SLURM_ARRAY_TASK_ID}"
+  else
+    LOG_DIR="logs/embed/${RUN_ID}"
+    BASE_OUT="outputs/$(date +%Y-%m-%d)/${RUN_ID}/${SLURM_ARRAY_TASK_ID}"
+  fi
+  mkdir -p "$LOG_DIR"
+  mkdir -p "$BASE_OUT"
+  # Redirect logs to the log directory
+  exec 1>"${LOG_DIR}/${SLURM_ARRAY_TASK_ID}.out"
+  exec 2>"${LOG_DIR}/${SLURM_ARRAY_TASK_ID}.err"
 else
   # local run: use date+seconds to make it unique
   RUN_ID="prepare_$(date +%Y%m%d_%H%M%S)"
@@ -19,11 +32,7 @@ fi
 # ─────────────────────────────────────────────────────────────────────────────
 # 1) Prepare log directory and redirect
 # ─────────────────────────────────────────────────────────────────────────────
-LOG_DIR="logs/embed/${RUN_ID}"
-mkdir -p "$LOG_DIR"
-# now redirect stdout+stderr into per-task files
-exec 1>logs/embed/"${RUN_ID}"/"${SLURM_ARRAY_TASK_ID}".out
-exec 2>logs/embed/"${RUN_ID}"/"${SLURM_ARRAY_TASK_ID}".err
+# Log redirection is now handled above
 
 # ─────────────────────────────────────────────────────────────────────────────
 # 2) CONFIGURATION (override via sbatch --export or ENV)
@@ -98,8 +107,6 @@ files=( "${INPUT_DIR}"/*.zarr )
 this_file="${files[$SLURM_ARRAY_TASK_ID]}"
 
 echo "[${RUN_ID}:${SLURM_ARRAY_TASK_ID}] Preparing $this_file"
-BASE_OUT="outputs/$(date +%Y-%m-%d)/${RUN_ID}/${SLURM_ARRAY_TASK_ID}"
-mkdir -p "$BASE_OUT"
 
 echo "[${RUN_ID}:${SLURM_ARRAY_TASK_ID}] Methods: $METHODS_JSON"
 python3 scripts/embed/embed_adata.py \
