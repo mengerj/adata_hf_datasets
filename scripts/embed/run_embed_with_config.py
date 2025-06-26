@@ -12,10 +12,15 @@ import subprocess
 import sys
 from pathlib import Path
 import os
-
 from omegaconf import DictConfig
 
 from adata_hf_datasets.config_utils import apply_all_transformations
+
+# Add src directory to Python path for imports
+project_root = Path(__file__).parent.parent.parent
+src_path = project_root / "src"
+if str(src_path) not in sys.path:
+    sys.path.insert(0, str(src_path))
 
 logger = logging.getLogger(__name__)
 
@@ -97,20 +102,24 @@ def run_embedding_script(params: dict) -> None:
         raise FileNotFoundError(f"Embedding script not found: {script_path}")
 
     # Build environment variables for the bash script
-    env = {
-        "MODE": params["MODE"],
-        "GPU_COUNT": params["GPU_COUNT"],
-        "DATANAME": params["DATANAME"],
-        "BATCH_KEY": params["BATCH_KEY"],
-        "BATCH_SIZE": str(params["BATCH_SIZE"]),
-        "METHODS": params["METHODS"],
-        "PREPARE_ONLY": params["PREPARE_ONLY"],
-        "TRAIN_OR_TEST": params["TRAIN_OR_TEST"],
-        "DATA_BASE_DIR": params["DATA_BASE_DIR"],
-    }
+    # Start with the current environment and add our variables
+    env = os.environ.copy()
+    env.update(
+        {
+            "MODE": params["MODE"],
+            "GPU_COUNT": params["GPU_COUNT"],
+            "DATANAME": params["DATANAME"],
+            "BATCH_KEY": params["BATCH_KEY"],
+            "BATCH_SIZE": str(params["BATCH_SIZE"]),
+            "METHODS": params["METHODS"],
+            "PREPARE_ONLY": params["PREPARE_ONLY"],
+            "TRAIN_OR_TEST": params["TRAIN_OR_TEST"],
+            "DATA_BASE_DIR": params["DATA_BASE_DIR"],
+        }
+    )
 
     logger.info("Running embedding script with parameters:")
-    for key, value in env.items():
+    for key, value in params.items():
         logger.info(f"  {key}={value}")
 
     # Run the bash script
