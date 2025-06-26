@@ -44,21 +44,21 @@ def generate_paths_from_config(cfg: DictConfig) -> Dict[str, str]:
 
     # Base directories for processed and embedded data
     if is_training:
-        raw_base = "data/RNA/raw/train"
+        raw_base = f"{base_file_path}/train"
         processed_base = "data/RNA/processed/train"
         embed_base = "data/RNA/processed_with_emb/train"
     else:
-        raw_base = "data/RNA/raw/test"
+        raw_base = f"{base_file_path}/test"
         processed_base = "data/RNA/processed/test"
         embed_base = "data/RNA/processed_with_emb/test"
 
     # Generate paths
     paths = {
         # Download paths - use full_name if specified, otherwise auto-generate
-        "download.full_file_path": f"{base_file_path}/{full_name}.h5ad"
+        "download.full_file_path": f"{raw_base}/{full_name}.h5ad"
         if full_name
         else f"{raw_base}/{dataset_name}_full.h5ad",
-        "download.output_path": f"{base_file_path}/{dataset_name}.h5ad",
+        "download.output_path": f"{raw_base}/{dataset_name}.h5ad",
         # Dataset file path - auto-generated from base_file_path and name
         "dataset.file_path": f"{raw_base}/{dataset_name}.h5ad",
         # Preprocessing paths
