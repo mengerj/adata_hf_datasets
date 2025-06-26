@@ -11,11 +11,23 @@ if [[ -n "${SLURM_ARRAY_JOB_ID:-}" ]]; then
   RUN_ID="${SLURM_ARRAY_JOB_ID}"
   # Use workflow directory if set, otherwise use default logs directory
   if [[ -n "${WORKFLOW_DIR:-}" ]]; then
-    LOG_DIR="${WORKFLOW_DIR}/embedding/array_${RUN_ID}"
-    BASE_OUT="${WORKFLOW_DIR}/embedding/array_${RUN_ID}/${SLURM_ARRAY_TASK_ID}"
+    # Determine output directory based on PREPARE_ONLY parameter
+    if [[ "$PREPARE_ONLY" == "true" ]]; then
+      LOG_DIR="${WORKFLOW_DIR}/embedding_prepare/array_${RUN_ID}"
+      BASE_OUT="${WORKFLOW_DIR}/embedding_prepare/array_${RUN_ID}/${SLURM_ARRAY_TASK_ID}"
+    else
+      LOG_DIR="${WORKFLOW_DIR}/embedding/array_${RUN_ID}"
+      BASE_OUT="${WORKFLOW_DIR}/embedding/array_${RUN_ID}/${SLURM_ARRAY_TASK_ID}"
+    fi
   else
-    LOG_DIR="logs/embed/${RUN_ID}"
-    BASE_OUT="outputs/$(date +%Y-%m-%d)/embed/${RUN_ID}/${SLURM_ARRAY_TASK_ID}"
+    # Determine output directory based on PREPARE_ONLY parameter
+    if [[ "$PREPARE_ONLY" == "true" ]]; then
+      LOG_DIR="logs/embed_prepare/${RUN_ID}"
+      BASE_OUT="outputs/$(date +%Y-%m-%d)/embedding_prepare/${RUN_ID}/${SLURM_ARRAY_TASK_ID}"
+    else
+      LOG_DIR="logs/embed/${RUN_ID}"
+      BASE_OUT="outputs/$(date +%Y-%m-%d)/embed/${RUN_ID}/${SLURM_ARRAY_TASK_ID}"
+    fi
   fi
   mkdir -p "$LOG_DIR"
   mkdir -p "$BASE_OUT"
@@ -24,7 +36,11 @@ if [[ -n "${SLURM_ARRAY_JOB_ID:-}" ]]; then
   exec 2>"${LOG_DIR}/${SLURM_ARRAY_TASK_ID}.err"
 else
   # local run: use date+seconds to make it unique
-  RUN_ID="embed_$(date +%Y%m%d_%H%M%S)"
+  if [[ "$PREPARE_ONLY" == "true" ]]; then
+    RUN_ID="prepare_$(date +%Y%m%d_%H%M%S)"
+  else
+    RUN_ID="embed_$(date +%Y%m%d_%H%M%S)"
+  fi
   # simulate an array task index if unset (so your redirects still work)
   SLURM_ARRAY_TASK_ID=0
 fi
@@ -103,7 +119,11 @@ if [[ -z "${SLURM_ARRAY_JOB_ID:-}" ]]; then
     | xargs -n1 -P"$MAX_PROCS" -I{} bash -c '
         f="$0"
         idx=$(basename "$f" .zarr)
-        OUTDIR="outputs/$(date +%Y-%m-%d)/embed/'"${RUN_ID}"'/local/${idx}"
+        if [[ "'"$PREPARE_ONLY"'" == "true" ]]; then
+          OUTDIR="outputs/$(date +%Y-%m-%d)/embedding_prepare/'"${RUN_ID}"'/local/${idx}"
+        else
+          OUTDIR="outputs/$(date +%Y-%m-%d)/embed/'"${RUN_ID}"'/local/${idx}"
+        fi
         mkdir -p "$OUTDIR"
         echo "[LOCAL][${idx}] → $OUTDIR"
         python3 scripts/embed/embed_adata.py \
