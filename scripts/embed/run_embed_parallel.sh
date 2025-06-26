@@ -26,7 +26,7 @@ if [[ "$MODE" == "gpu" ]]; then
     JOB_SUFFIX="gpu"
 else
     # Use SLURM_PARTITION from environment if available, otherwise use default
-    PARTITION="${SLURM_PARTITION:-cpu}"
+    PARTITION="${SLURM_PARTITION:-slurm}"
     SBATCH_EXTRA+=( --partition="$PARTITION" )
     JOB_SUFFIX="cpu"
 fi
