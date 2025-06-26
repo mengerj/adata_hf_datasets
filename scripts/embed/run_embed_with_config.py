@@ -165,15 +165,29 @@ def load_config(config_name: str) -> DictConfig:
 def main():
     """Main function to run embedding with config."""
     parser = argparse.ArgumentParser(description="Run embedding with dataset config")
-    parser.add_argument("config_name", help="Dataset config name")
+    parser.add_argument(
+        "--config-name",
+        dest="config_name_flag",
+        help="Dataset config name (alternative to positional argument)",
+    )
+    parser.add_argument(
+        "config_name", nargs="?", help="Dataset config name (positional argument)"
+    )
     parser.add_argument(
         "--prepare-only", action="store_true", help="Force prepare only mode"
     )
     parser.add_argument("--cpu-only", action="store_true", help="Force CPU-only mode")
     args = parser.parse_args()
 
+    # Determine which config name to use
+    config_name = args.config_name_flag or args.config_name
+    if not config_name:
+        parser.error(
+            "Either --config-name or positional config_name argument is required"
+        )
+
     # Load the config without Hydra's automatic output directory creation
-    cfg = load_config(args.config_name)
+    cfg = load_config(config_name)
 
     logger.info(f"Running embedding for dataset: {cfg.dataset.name}")
 
