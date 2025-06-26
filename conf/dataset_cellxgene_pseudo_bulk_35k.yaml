@@ -27,18 +27,20 @@ other_bio_labels: ["tissue", "disease"]
 # =============================================================================
 # Download configuration
 download:
-  enabled: true
+  enabled: false
   subset_size: 35000
 
 # Preprocessing overrides (both dataset-specific and execution parameters)
 preprocessing:
   # Dataset-specific parameters
+  enabled: false
   chunk_size: 7000 #small to test many chunks
   split_dataset: true # Important for training datasets. Set to false for test datasets. (Similar parameters in dataset_creation)
   count_layer_key: "counts" # Key in adata.layers with raw counts. If not present, adata.raw.X is checked.
 
 # Embedding overrides (both dataset-specific and execution parameters)
 embedding:
+  enabled: false
   # Dataset-specific parameters
   methods: ["hvg", "pca", "scvi_fm", "geneformer"]
   embedding_dim_map:
@@ -49,6 +51,7 @@ embedding:
 
 # Dataset creation overrides
 dataset_creation:
+  enabled: false
   # Dataset-specific parameters
   required_obsm_keys: ["X_pca", "X_scvi_fm", "X_hvg", "X_geneformer"]
   cs_length: 20
