@@ -15,7 +15,7 @@ import sys
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 from adata_hf_datasets.config_utils import validate_config
-from scripts.workflow.orchestrate_workflow import WorkflowOrchestrator, WorkflowLogger
+from adata_hf_datasets.workflow_orchestrator import WorkflowOrchestrator, WorkflowLogger
 
 
 class TestConfigurationErrors:

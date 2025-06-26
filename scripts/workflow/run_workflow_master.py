@@ -10,7 +10,7 @@ from pathlib import Path
 from omegaconf import OmegaConf
 
 from hydra import compose, initialize_config_dir
-from scripts.workflow.orchestrate_workflow import WorkflowOrchestrator
+from adata_hf_datasets.workflow_orchestrator import WorkflowOrchestrator
 
 # Set up logging
 logging.basicConfig(
@@ -18,6 +18,7 @@ logging.basicConfig(
 )
 
 print("Setting up Python environment...")
+# Add src to path for adata_hf_datasets imports
 sys.path.insert(0, str(Path.cwd() / "src"))
 
 if len(sys.argv) < 2:
