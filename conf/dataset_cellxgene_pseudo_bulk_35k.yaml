@@ -40,11 +40,11 @@ preprocessing:
 
 # Embedding preparation overrides
 embedding_preparation:
-  enabled: true # Set to false to skip embedding preparation
+  enabled: false # Set to false to skip embedding preparation
 
 # Embedding overrides (both dataset-specific and execution parameters)
 embedding:
-  enabled: false
+  enabled: true
   # Dataset-specific parameters
   methods: ["hvg", "pca", "scvi_fm", "geneformer"]
   embedding_dim_map:
