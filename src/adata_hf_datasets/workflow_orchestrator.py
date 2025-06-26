@@ -267,24 +267,30 @@ class WorkflowOrchestrator:
         """Submit a SLURM job using ssh command."""
         project_dir = "/home/menger/git/adata_hf_datasets"
 
-        # Build the sbatch command
-        cmd = ["ssh", host, f"cd {project_dir} && sbatch"]
+        # Build the sbatch command with proper environment setup
+        # Start with the base command
+        sbatch_cmd = ["sbatch"]
 
         # Add partition
-        cmd.extend(["--partition", partition])
+        sbatch_cmd.extend(["--partition", partition])
 
         # Add dependencies if specified
         if dependencies:
             deps_str = ":".join(map(str, dependencies))
-            cmd.extend(["--dependency", f"afterok:{deps_str}"])
+            sbatch_cmd.extend(["--dependency", f"afterok:{deps_str}"])
 
         # Add environment variables if specified
         if env_vars:
             env_str = ",".join([f"{k}={v}" for k, v in env_vars.items()])
-            cmd.extend(["--export", f"ALL,{env_str}"])
+            sbatch_cmd.extend(["--export", f"ALL,{env_str}"])
 
         # Add the script path
-        cmd.append(str(script_path))
+        sbatch_cmd.append(str(script_path))
+
+        # Construct the full SSH command
+        # Use bash -l to load login shell environment (includes PATH)
+        ssh_cmd = f"bash -l -c 'cd {project_dir} && {' '.join(sbatch_cmd)}'"
+        cmd = ["ssh", host, ssh_cmd]
 
         logger.info(f"Submitting {script_path.name} ➜ {' '.join(cmd)}")
 
