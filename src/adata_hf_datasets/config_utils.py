@@ -113,7 +113,14 @@ def apply_path_transformations(cfg: DictConfig) -> DictConfig:
     # Handle top-level input_files override (for backward compatibility with SLURM scripts)
     if hasattr(cfg, "input_files") and cfg.input_files is not None:
         logger.debug(f"Found top-level input_files override: {cfg.input_files}")
-        updated_cfg.embedding.input_files = cfg.input_files
+        # Apply to both embedding sections if they exist
+        if hasattr(updated_cfg, "embedding_cpu"):
+            updated_cfg.embedding_cpu.input_files = cfg.input_files
+        if hasattr(updated_cfg, "embedding_gpu"):
+            updated_cfg.embedding_gpu.input_files = cfg.input_files
+        # Fallback to old structure for backward compatibility
+        if hasattr(updated_cfg, "embedding"):
+            updated_cfg.embedding.input_files = cfg.input_files
 
     # Update paths in the config, but respect command-line overrides
     for path_key, path_value in paths.items():
@@ -211,7 +218,14 @@ def apply_common_key_transformations(cfg: DictConfig) -> DictConfig:
 
     # Update batch_key in embedding config
     if updated_cfg.get("batch_key") is not None:
-        updated_cfg.embedding.batch_key = updated_cfg.batch_key
+        # Apply to both embedding sections if they exist
+        if hasattr(updated_cfg, "embedding_cpu"):
+            updated_cfg.embedding_cpu.batch_key = updated_cfg.batch_key
+        if hasattr(updated_cfg, "embedding_gpu"):
+            updated_cfg.embedding_gpu.batch_key = updated_cfg.batch_key
+        # Fallback to old structure for backward compatibility
+        if hasattr(updated_cfg, "embedding"):
+            updated_cfg.embedding.batch_key = updated_cfg.batch_key
 
     # Update annotation_key in dataset_creation config
     if updated_cfg.get("annotation_key") is not None:
@@ -325,37 +339,54 @@ def validate_parameter_values(cfg: DictConfig) -> None:
                 raise ValueError(f"train_split must be between 0 and 1, got {split}")
 
     # Validate embedding parameters
+    # Handle new structure (embedding_cpu and embedding_gpu)
+    if hasattr(cfg, "embedding_cpu") and cfg.embedding_cpu is not None:
+        _validate_embedding_section(cfg.embedding_cpu, "embedding_cpu")
+
+    if hasattr(cfg, "embedding_gpu") and cfg.embedding_gpu is not None:
+        _validate_embedding_section(cfg.embedding_gpu, "embedding_gpu")
+
+    # Handle old structure for backward compatibility
     if hasattr(cfg, "embedding") and cfg.embedding is not None:
-        # Validate embedding methods
-        if hasattr(cfg.embedding, "methods"):
-            valid_methods = ["hvg", "scvi_fm", "geneformer", "pca"]
-            invalid_methods = [
-                method
-                for method in cfg.embedding.methods
-                if method not in valid_methods
-            ]
-            if invalid_methods:
+        _validate_embedding_section(cfg.embedding, "embedding")
+
+
+def _validate_embedding_section(embedding_cfg: DictConfig, section_name: str) -> None:
+    """
+    Validate a single embedding configuration section.
+
+    Parameters
+    ----------
+    embedding_cfg : DictConfig
+        The embedding configuration section to validate
+    section_name : str
+        Name of the section for error messages
+    """
+    # Validate embedding methods
+    if hasattr(embedding_cfg, "methods"):
+        valid_methods = ["hvg", "scvi_fm", "geneformer", "pca"]
+        invalid_methods = [
+            method for method in embedding_cfg.methods if method not in valid_methods
+        ]
+        if invalid_methods:
+            raise ValueError(
+                f"Invalid embedding methods in {section_name}: {invalid_methods}. Valid methods: {valid_methods}"
+            )
+
+    # Validate embedding dimensions
+    if hasattr(embedding_cfg, "embedding_dim_map"):
+        for method, dim in embedding_cfg.embedding_dim_map.items():
+            if dim <= 0:
                 raise ValueError(
-                    f"Invalid embedding methods: {invalid_methods}. Valid methods: {valid_methods}"
+                    f"Embedding dimension for {method} in {section_name} must be positive, got {dim}"
                 )
 
-        # Validate embedding dimensions
-        if hasattr(cfg.embedding, "embedding_dim_map"):
-            for method, dim in cfg.embedding.embedding_dim_map.items():
-                if dim <= 0:
-                    raise ValueError(
-                        f"Embedding dimension for {method} must be positive, got {dim}"
-                    )
-
-        # Validate batch size
-        if (
-            hasattr(cfg.embedding, "batch_size")
-            and cfg.embedding.batch_size is not None
-        ):
-            if cfg.embedding.batch_size <= 0:
-                raise ValueError(
-                    f"batch_size must be positive, got {cfg.embedding.batch_size}"
-                )
+    # Validate batch size
+    if hasattr(embedding_cfg, "batch_size") and embedding_cfg.batch_size is not None:
+        if embedding_cfg.batch_size <= 0:
+            raise ValueError(
+                f"batch_size in {section_name} must be positive, got {embedding_cfg.batch_size}"
+            )
 
 
 def validate_config(cfg: DictConfig) -> bool:
@@ -375,9 +406,39 @@ def validate_config(cfg: DictConfig) -> bool:
     required_fields = {
         "dataset": ["name"],
         "preprocessing": ["input_file", "output_dir"],
-        "embedding": ["input_files", "output_dir", "methods"],
         "dataset_creation": ["data_dir", "sentence_keys", "required_obsm_keys"],
     }
+
+    # Handle embedding validation for both new and old structures
+    has_embedding_config = False
+
+    # Check new structure
+    if hasattr(cfg, "embedding_cpu") and cfg.embedding_cpu is not None:
+        has_embedding_config = True
+        if (
+            not hasattr(cfg.embedding_cpu, "methods")
+            or cfg.embedding_cpu.methods is None
+        ):
+            raise ValueError("Missing required field: embedding_cpu.methods")
+
+    if hasattr(cfg, "embedding_gpu") and cfg.embedding_gpu is not None:
+        has_embedding_config = True
+        if (
+            not hasattr(cfg.embedding_gpu, "methods")
+            or cfg.embedding_gpu.methods is None
+        ):
+            raise ValueError("Missing required field: embedding_gpu.methods")
+
+    # Check old structure for backward compatibility
+    if hasattr(cfg, "embedding") and cfg.embedding is not None:
+        has_embedding_config = True
+        required_fields["embedding"] = ["input_files", "output_dir", "methods"]
+
+    # Validate that at least one embedding configuration exists
+    if not has_embedding_config:
+        raise ValueError(
+            "Missing embedding configuration. Must have either 'embedding_cpu', 'embedding_gpu', or 'embedding' section."
+        )
 
     for section, fields in required_fields.items():
         if section not in cfg:
@@ -407,13 +468,34 @@ def get_dataset_info(cfg: DictConfig) -> Dict[str, Any]:
     Dict[str, Any]
         Dictionary with dataset information
     """
+    # Collect embedding methods from both new and old structures
+    embedding_methods = []
+
+    # Check new structure first
+    if hasattr(cfg, "embedding_cpu") and cfg.embedding_cpu is not None:
+        if hasattr(cfg.embedding_cpu, "methods"):
+            embedding_methods.extend(cfg.embedding_cpu.methods)
+
+    if hasattr(cfg, "embedding_gpu") and cfg.embedding_gpu is not None:
+        if hasattr(cfg.embedding_gpu, "methods"):
+            embedding_methods.extend(cfg.embedding_gpu.methods)
+
+    # Fallback to old structure
+    if (
+        not embedding_methods
+        and hasattr(cfg, "embedding")
+        and cfg.embedding is not None
+    ):
+        if hasattr(cfg.embedding, "methods"):
+            embedding_methods = cfg.embedding.methods
+
     return {
         "name": cfg.dataset.name,
         "description": cfg.dataset.description,
         "download_url": cfg.dataset.download_url,
         "file_path": cfg.dataset.file_path,
         "is_training": cfg.preprocessing.split_dataset,
-        "embedding_methods": cfg.embedding.methods,
+        "embedding_methods": embedding_methods,
         "dataset_format": cfg.dataset_creation.dataset_format,
         "batch_key": cfg.get("batch_key"),
         "annotation_key": cfg.get("annotation_key"),
