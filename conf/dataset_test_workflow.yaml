@@ -2,7 +2,7 @@
 # Inherits from dataset_default_test.yaml for test-specific defaults
 defaults:
   - dataset_default_test.yaml
-  - workflow_default.yaml
+  - workflow_orchestrator.yaml
   - _self_
 
 # =============================================================================

@@ -1,5 +1,5 @@
-# Main default configuration for all datasets
-# This config contains all common parameters needed for preprocessing, embedding, and dataset creation
+# Clean default configuration for all datasets
+# This config contains dataset-specific parameters and execution parameters
 
 # =============================================================================
 # DATASET METADATA
@@ -8,29 +8,7 @@ dataset:
   name: null # e.g., "cellxgene_pseudo_bulk_35k"
   description: null # Human-readable description
   download_url: null # URL to download the raw data
-  file_path: null # Path to the raw data file (will be auto-generated from base_file_path and name)
   full_name: null # Name for the full downloaded file (e.g., "cellxgene_pseudo_bulk_full")
-
-# =============================================================================
-# DOWNLOAD CONFIGURATION
-# =============================================================================
-download:
-  # Download parameters
-  enabled: false # Whether to download the dataset (set to true if download_url is provided)
-  subset_size: null # Number of observations to include in subset (null = no subsetting)
-  seed: 42 # Random seed for reproducible subsetting
-
-  # Stratification parameters
-  stratify_keys: null # List of column names to stratify by (defaults to [batch_key, annotation_key])
-  preserve_proportions: true # Whether to preserve proportions when stratifying
-
-  # Processing options
-  validate: true # Validate downloaded file format
-  keep_full_file: true # Keep the full downloaded file for future subsetting
-
-  # Paths (auto-generated from dataset metadata)
-  full_file_path: null # Path for the complete downloaded file (will be auto-generated)
-  output_path: null # Path for the final output (subset or full file, will be auto-generated)
 
 # =============================================================================
 # COMMON KEYS (defined once, used across workflows)
@@ -51,110 +29,89 @@ instrument_key: null # e.g., "assay", "instrument", null if not available
 other_bio_labels: [] # e.g., ["tissue", "disease", "age", "sex"]
 
 # =============================================================================
-# PREPROCESSING CONFIGURATION
+# DOWNLOAD CONFIGURATION (dataset-specific)
+# =============================================================================
+download:
+  enabled: false # Whether to download the dataset (set to true if download_url is provided)
+  subset_size: null # Number of observations to include in subset (null = no subsetting)
+  seed: 42 # Random seed for reproducible subsetting
+  stratify_keys: null # List of column names to stratify by (will be auto-generated from common keys)
+  preserve_proportions: true # Whether to preserve proportions when stratifying
+
+# =============================================================================
+# PREPROCESSING CONFIGURATION (dataset-specific overrides)
 # =============================================================================
 preprocessing:
-  # Input/Output paths (auto-generated)
-  input_file: null # Will be auto-generated from dataset.file_path
-  output_dir: null # Will be auto-generated from dataset.name
-
-  # Processing parameters
-  overwrite: true
-  chunk_size: 200000 # Process in chunks to avoid memory issues
-
-  # Train/validation split configuration
-  split_dataset: false # Default: false (test datasets), overridden to true for training
-  train_split: 0.9
-  random_seed: 42
-
-  # Data filtering
+  # Dataset-specific processing parameters
   min_cells: 20 # Minimum number of cells a gene should be expressed in
   min_genes: 200 # Minimum number of genes a cell should express
+  n_top_genes: 1000 # Number of top genes to select
+  count_layer_key: null # Key in adata.layers with raw counts. If not present, adata.raw.X is checked.
 
-  # Gene selection
-  n_top_genes: 1000
-  count_layer_key: null # Key in adata.raw.X that contains raw counts
+  # Category consolidation parameters
+  category_threshold: 5 # Remove categories with fewer than this many samples
+  remove_low_frequency: false # Whether to remove low frequency categories
 
-  # Geneformer preprocessing
-  geneformer_pp: true
+  # Bimodal splitting (for specific datasets)
+  split_bimodal: false
+  bimodal_col: null
 
-  # SRA metadata fetching
+  # SRA metadata fetching (dataset-specific)
   skip_sra_fetch: false
   sra_max_retries: 3
   sra_continue_on_fail: true
   sra_chunk_size: null
   sra_extra_cols: [null]
 
-  # Category consolidation (auto-generated from common keys)
-  consolidation_categories: null # Will be auto-generated: [batch_key, annotation_key]
-  category_threshold: 10 # Remove categories with fewer than this many samples
-  remove_low_frequency: false
-
-  # Bimodal splitting (for specific datasets)
-  split_bimodal: false
-  bimodal_col: null
-
-  # Output format
-  output_format: "zarr" # zarr for better performance
-
-  # Quality control plotting (auto-generated from common keys)
-  metrics_of_interest:
+  # Execution parameters (accessed by preprocessing script)
+  chunk_size: 200000 # Processing chunk size
+  output_format: "zarr" # Output format preference
+  geneformer_pp: true # Geneformer preprocessing
+  train_split: 0.9 # Train/validation split ratio
+  random_seed: 42 # Random seed for splits
+  metrics_of_interest: # Quality control metrics
     - "n_genes_by_counts"
     - "total_counts"
     - "pct_counts_mt"
-  categories_of_interest: null # Will be auto-generated: [batch_key, annotation_key, instrument_key, other_bio_labels]
 
 # =============================================================================
-# EMBEDDING CONFIGURATION
+# EMBEDDING CONFIGURATION (dataset-specific overrides)
 # =============================================================================
 embedding:
-  # Input files (auto-generated from preprocessing output)
-  input_files: null # Will be auto-generated
-
-  # File format
-  input_format: "auto" # Auto-detect from extension
-  output_format: "zarr" # Default: zarr for better performance
-
-  # Output directory (auto-generated)
-  output_dir: null # Will be auto-generated
-
-  # Embedding methods
+  # Embedding methods to apply
   methods: ["hvg"] # Options: ["scvi_fm", "geneformer", "pca", "hvg"]
 
   # Method-specific parameters
-  batch_size: 16 # Used by geneformer
+  batch_size: 128 # Used by geneformer
 
-  # Processing
-  overwrite: false
-
-  # Embedding dimensions
+  # Embedding dimensions (dataset-specific)
   embedding_dim_map:
-    scvi_fm: 50
+    scvi_fm: 50 # Can't be changed as the pretrained scvi model is fixed.
     geneformer: 512
     pca: 50
     hvg: 512
 
+  # Execution parameters (accessed by embedding script)
+  input_format: "auto" # Input format detection
+  output_format: "zarr" # Output format preference
+  overwrite: false # Whether to overwrite existing embeddings
+  chunk_rows: 16384 # Number of cells written per chunk when streaming into Zarr
+
 # =============================================================================
-# DATASET CREATION CONFIGURATION
+# DATASET CREATION CONFIGURATION (dataset-specific overrides)
 # =============================================================================
 dataset_creation:
-  # Data directory (auto-generated from embedding output)
-  data_dir: null # Will be auto-generated
-
-  # Split configuration
-  split_dataset: false # Default: false (test datasets), overridden to true for training
-
-  # Sentence generation
+  # Sentence generation parameters
   sentence_keys:
     - "sample_id_og" # Will be added to obs within the script
     - "cell_sentence"
     - "semantic_true"
     - "semantic_similar"
 
-  # Required embeddings
+  # Required embeddings (dataset-specific)
   required_obsm_keys: ["X_pca", "X_scvi_fm"]
 
-  # Cell sentence generation
+  # Cell sentence generation parameters
   gene_name_column: "gene_name" # Column in .var containing gene names
   include_label_prob: 0
   cs_length: 10
@@ -162,15 +119,12 @@ dataset_creation:
   # Caption and negative sampling
   negatives_per_sample: 2
 
-  # Dataset format
-  dataset_format: "single" # Default: single (test datasets), overridden to pairs for training
-
   # Output configuration
   output_dir: "data/hf_datasets"
   push_to_hub: true
   base_repo_id: "jo-mengr"
 
-  # Nextcloud upload
+  # Nextcloud upload (dataset-specific)
   use_nextcloud: false
   nextcloud_config:
     url: "NEXTCLOUD_URL"

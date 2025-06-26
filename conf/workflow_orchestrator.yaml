@@ -26,7 +26,7 @@ workflow:
   gpu_partition: "gpu" # GPU partition on imbi_gpu_H100
 
   # Job polling interval (seconds)
-  poll_interval: 60
+  poll_interval: 3600
 
   # Timeout for job completion (seconds, 0 = no timeout)
   job_timeout: 0
@@ -38,4 +38,4 @@ workflow:
 force: false
 
 # Dataset config name to use (will be overridden by command line)
-dataset_config_name: "dataset_cellxgene_pseudo_bulk_3_5k"
+dataset_config_name: "dataset_cellxgene_pseudo_bulk_35k"

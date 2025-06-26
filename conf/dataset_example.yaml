@@ -1,0 +1,80 @@
+# Example dataset configuration demonstrating all possible parameters
+# Inherits directly from dataset_default.yaml
+defaults:
+  - dataset_default.yaml
+  - _self_
+
+# =============================================================================
+# DATASET METADATA
+# =============================================================================
+dataset:
+  name: "example_dataset"
+  description: "Example dataset for demonstration"
+  download_url: "https://example.com/data.h5ad"
+  full_name: "example_dataset_full"
+
+# =============================================================================
+# COMMON KEYS (dataset-specific)
+# =============================================================================
+batch_key: "dataset_title"
+annotation_key: "cell_type"
+caption_key: "natural_language_annotation"
+instrument_key: "assay"
+other_bio_labels: ["tissue", "disease"]
+
+# =============================================================================
+# DATASET-SPECIFIC OVERRIDES
+# =============================================================================
+# Download configuration
+download:
+  enabled: true
+  subset_size: 5000
+  seed: 42
+
+# Preprocessing overrides (both dataset-specific and execution parameters)
+preprocessing:
+  # Dataset-specific parameters
+  min_cells: 15
+  min_genes: 150
+  n_top_genes: 512
+  category_threshold: 5
+  remove_low_frequency: true
+  split_dataset: true # Set directly here instead of using intermediate defaults
+  count_layer_key: "counts" # Key in adata.layers with raw counts. If not present, adata.raw.X is checked.
+
+  # Execution parameters (can be overridden if needed)
+  chunk_size: 100000 # Smaller chunks for this dataset
+  output_format: "zarr"
+  geneformer_pp: true
+  train_split: 0.8 # Different train/val split
+  random_seed: 123 # Different random seed
+  metrics_of_interest:
+    - "n_genes_by_counts"
+    - "total_counts"
+    - "pct_counts_mt"
+
+# Embedding overrides (both dataset-specific and execution parameters)
+embedding:
+  # Dataset-specific parameters
+  methods: ["hvg", "pca", "scvi_fm"]
+  batch_size: 32
+  embedding_dim_map:
+    scvi_fm: 64
+    geneformer: 512
+    pca: 64
+    hvg: 512
+
+  # Execution parameters (can be overridden if needed)
+  input_format: "auto"
+  output_format: "zarr"
+  overwrite: false
+  chunk_rows: 8192 # Smaller chunks for memory efficiency
+
+# Dataset creation overrides
+dataset_creation:
+  # Dataset-specific parameters
+  required_obsm_keys: ["X_pca", "X_scvi_fm", "X_hvg"]
+  cs_length: 15
+  negatives_per_sample: 3
+  split_dataset: true # Set directly here instead of using intermediate defaults
+  dataset_format: "pairs" # Set directly here instead of using intermediate defaults

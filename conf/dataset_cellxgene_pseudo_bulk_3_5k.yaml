@@ -2,7 +2,7 @@
 # Inherits from dataset_default_train.yaml for training-specific defaults
 defaults:
   - dataset_default_train.yaml
-  - workflow_default.yaml
+  - workflow_orchestrator.yaml
   - _self_
 
 # =============================================================================
