@@ -20,11 +20,22 @@ fi
 # ─────────────────────────────────────────────────────────────────────────────
 # 1) Prepare output directory and log redirects
 # ─────────────────────────────────────────────────────────────────────────────
+# Check if this is prepare-only mode
+PREPARE_ONLY="${PREPARE_ONLY:-false}"
+
 # If WORKFLOW_DIR is set (from master job), use it; otherwise use old structure
 if [[ -n "${WORKFLOW_DIR:-}" ]]; then
-  BASE_OUT="${WORKFLOW_DIR}/embedding/job_${RUN_ID}"
+  if [[ "$PREPARE_ONLY" == "true" ]]; then
+    BASE_OUT="${WORKFLOW_DIR}/embedding_prepare/job_${RUN_ID}"
+  else
+    BASE_OUT="${WORKFLOW_DIR}/embedding/job_${RUN_ID}"
+  fi
 else
-  BASE_OUT="outputs/$(date +%Y-%m-%d)/embedding/${RUN_ID}"
+  if [[ "$PREPARE_ONLY" == "true" ]]; then
+    BASE_OUT="outputs/$(date +%Y-%m-%d)/embedding_prepare/${RUN_ID}"
+  else
+    BASE_OUT="outputs/$(date +%Y-%m-%d)/embedding/${RUN_ID}"
+  fi
 fi
 
 mkdir -p "$BASE_OUT"
@@ -39,6 +50,7 @@ echo "=== Embedding Job Started ==="
 echo "Dataset config: $DATASET_CONFIG"
 echo "Job ID: $SLURM_JOB_ID"
 echo "Output directory: $BASE_OUT"
+echo "Prepare only mode: $PREPARE_ONLY"
 
 # Load the dataset config to get embedding parameters
 cd /home/menger/git/adata_hf_datasets

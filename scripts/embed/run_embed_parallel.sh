@@ -20,9 +20,14 @@ DATA_BASE_DIR="${DATA_BASE_DIR:-data/RNA/processed/}"
 # build extra sbatch flags based on MODE
 SBATCH_EXTRA=()
 if [[ "$MODE" == "gpu" ]]; then
-    SBATCH_EXTRA+=( --partition=gpu --gres=gpu:"$GPU_COUNT" )
+    # Use SLURM_PARTITION from environment if available, otherwise use default
+    PARTITION="${SLURM_PARTITION:-gpu}"
+    SBATCH_EXTRA+=( --partition="$PARTITION" --gres=gpu:"$GPU_COUNT" )
     JOB_SUFFIX="gpu"
 else
+    # Use SLURM_PARTITION from environment if available, otherwise use default
+    PARTITION="${SLURM_PARTITION:-cpu}"
+    SBATCH_EXTRA+=( --partition="$PARTITION" )
     JOB_SUFFIX="cpu"
 fi
 
