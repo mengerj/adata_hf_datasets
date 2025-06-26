@@ -41,8 +41,13 @@ def extract_embedding_params(
     config: DictConfig, force_prepare_only: bool = False, force_cpu_only: bool = False
 ) -> dict:
     """Extract embedding parameters from dataset config."""
-    # Determine which embedding config to use based on MODE environment variable
-    mode = os.environ.get("MODE", "gpu")
+    # Determine which embedding config to use based on command-line flags and MODE environment variable
+    if force_cpu_only:
+        mode = "cpu"
+        logger.info("Forcing CPU mode due to --cpu-only flag")
+    else:
+        mode = os.environ.get("MODE", "gpu")
+        logger.info(f"Using MODE from environment: {mode}")
 
     if mode == "cpu":
         embedding_config = config.embedding_cpu
