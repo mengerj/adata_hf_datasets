@@ -15,6 +15,7 @@ import logging
 import subprocess
 import sys
 from pathlib import Path
+from datetime import datetime
 
 from omegaconf import DictConfig
 
@@ -144,6 +145,20 @@ def submit_master_job(
     logger.info(f"✓ Master workflow job submitted successfully (Job ID: {job_id})")
     logger.info(f"Job will run on {cpu_host} in partition {cpu_partition}")
     logger.info(f"You can monitor progress with: ssh {cpu_host} 'squeue -j {job_id}'")
+
+    # Get output directory from config to show where logs will be
+    try:
+        workflow_config = load_workflow_config()
+        output_dir = workflow_config.workflow.get(
+            "output_directory", "/home/menger/git/adata_hf_datasets/outputs"
+        )
+        date_str = datetime.now().strftime("%Y-%m-%d")
+        logger.info(
+            f"Logs will be gathered at: {output_dir}/{date_str}/workflow_{job_id}/"
+        )
+    except Exception as e:
+        logger.warning(f"Could not determine output directory from config: {e}")
+        logger.info("Logs will be gathered in the outputs/ directory on the cluster")
 
 
 def main():

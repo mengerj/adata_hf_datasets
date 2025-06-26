@@ -603,7 +603,14 @@ class WorkflowOrchestrator:
         master_job_id = os.environ.get(
             "SLURM_JOB_ID", f"local_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
         )
-        base_dir = Path("/home/menger/git/adata_hf_datasets/outputs")
+
+        # Get output directory from config, with fallback to default
+        base_dir = Path(
+            workflow_config.get(
+                "output_directory", "/home/menger/git/adata_hf_datasets/outputs"
+            )
+        )
+
         self.workflow_logger = WorkflowLogger(
             base_dir, master_job_id, dataset_config_name
         )
@@ -611,6 +618,7 @@ class WorkflowOrchestrator:
         logger.info(
             f"Starting local workflow for dataset config: {dataset_config_name}"
         )
+        logger.info(f"Output directory: {base_dir}")
 
         # Validate config synchronization unless forced
         self.validate_config_sync(dataset_config_name, force=force)

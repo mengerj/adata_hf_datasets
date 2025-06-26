@@ -31,6 +31,11 @@ workflow:
   # Timeout for job completion (seconds, 0 = no timeout)
   job_timeout: 0
 
+  # Output directory configuration
+  # This is the base directory where all workflow outputs and logs will be stored
+  # The actual workflow directory will be: {output_directory}/{date}/workflow_{job_id}/
+  output_directory: "/home/menger/git/adata_hf_datasets/outputs"
+
 # =============================================================================
 # ORCHESTRATOR SETTINGS
 # =============================================================================
