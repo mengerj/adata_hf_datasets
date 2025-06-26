@@ -185,6 +185,27 @@ class WorkflowOrchestrator:
         gpu_login : Optional[Tuple[str, str]]
             (host, user) for GPU cluster SSH connection
         """
+        # Validate SSH connection parameters
+        if cpu_login is None:
+            raise ValueError("CPU login configuration is required")
+
+        if not isinstance(cpu_login, dict):
+            raise ValueError(
+                "CPU login must be a dictionary with 'host' and 'user' keys"
+            )
+
+        if "host" not in cpu_login or "user" not in cpu_login:
+            raise ValueError("CPU login must contain 'host' and 'user' keys")
+
+        if gpu_login is not None:
+            if not isinstance(gpu_login, dict):
+                raise ValueError(
+                    "GPU login must be a dictionary with 'host' and 'user' keys"
+                )
+
+            if "host" not in gpu_login or "user" not in gpu_login:
+                raise ValueError("GPU login must contain 'host' and 'user' keys")
+
         self.cpu_login = cpu_login
         self.gpu_login = gpu_login
         self.workflow_logger = None
@@ -193,23 +214,46 @@ class WorkflowOrchestrator:
         try:
             subprocess.run(["ssh", "-V"], capture_output=True, check=True)
         except (subprocess.CalledProcessError, FileNotFoundError):
-            raise RuntimeError("SSH command not available")
+            raise RuntimeError(
+                "SSH command not available. Please ensure SSH is installed and available in PATH. "
+                "On Windows, you may need to install OpenSSH or use WSL."
+            )
+
+        # Test basic SSH connectivity to CPU host
+        try:
+            test_cmd = [
+                "ssh",
+                "-o",
+                "ConnectTimeout=5",
+                f"{cpu_login['user']}@{cpu_login['host']}",
+                "echo 'SSH test successful'",
+            ]
+            result = subprocess.run(
+                test_cmd, capture_output=True, text=True, timeout=10
+            )
+            if result.returncode != 0:
+                logger.warning(
+                    f"SSH connection test to CPU host {cpu_login['host']} failed: {result.stderr}"
+                )
+        except (subprocess.TimeoutExpired, subprocess.CalledProcessError) as e:
+            logger.warning(
+                f"SSH connection test to CPU host {cpu_login['host']} failed: {e}"
+            )
+        except Exception as e:
+            logger.warning(f"Unexpected error during SSH connection test: {e}")
 
     def validate_config_sync(
         self, dataset_config_name: str, force: bool = False
     ) -> None:
         """Validate that the remote config matches the local one."""
-        if not force:
-            logger.info(
-                f"Validating config synchronization for {dataset_config_name}..."
-            )
+        logger.info(f"Validating config synchronization for {dataset_config_name}...")
 
-            ensure_config_sync(
-                config_name=dataset_config_name,
-                remote_host=self.cpu_login["host"],
-                remote_project_dir="/home/menger/git/adata_hf_datasets",
-                force=force,
-            )
+        ensure_config_sync(
+            config_name=dataset_config_name,
+            remote_host=self.cpu_login["host"],
+            remote_project_dir="/home/menger/git/adata_hf_datasets",
+            force=force,
+        )
 
     def _submit_slurm_job(
         self,
@@ -245,16 +289,66 @@ class WorkflowOrchestrator:
         logger.info(f"Submitting {script_path.name} ➜ {' '.join(cmd)}")
 
         # Execute the command
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+        try:
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+        except subprocess.TimeoutExpired:
+            error_msg = f"SLURM job submission timed out for {step_name} step on {host}"
+            logger.error(error_msg)
+            raise RuntimeError(error_msg)
+        except FileNotFoundError:
+            error_msg = "SSH command not found. Please ensure SSH is installed and available in PATH."
+            logger.error(error_msg)
+            raise RuntimeError(error_msg)
+        except subprocess.CalledProcessError as e:
+            error_msg = f"SLURM job submission failed for {step_name} step on {host} (subprocess error)"
+            logger.error(error_msg)
+            logger.error(f"Command: {' '.join(cmd)}")
+            logger.error(f"Exit code: {e.returncode}")
+            logger.error(f"Error: {e.stderr}")
+            if e.stderr and "Invalid partition" in e.stderr:
+                error_msg += f"\n\nPartition '{partition}' does not exist on {host}. "
+                error_msg += (
+                    "Please check available partitions with 'sinfo' on the target host."
+                )
+            elif e.stderr and "Connection refused" in e.stderr:
+                error_msg += f"\n\nSSH connection to {host} failed. "
+                error_msg += (
+                    "Please check your SSH configuration and network connectivity."
+                )
+            elif e.stderr and "Permission denied" in e.stderr:
+                error_msg += "\n\nPermission denied. Please check your SSH key configuration and user permissions."
+            raise RuntimeError(error_msg)
 
         if result.returncode != 0:
-            raise RuntimeError(f"Failed to submit job: {result.stderr}")
+            error_msg = f"SLURM job submission failed for {step_name} step on {host}"
+            logger.error(error_msg)
+            logger.error(f"Command: {' '.join(cmd)}")
+            logger.error(f"Exit code: {result.returncode}")
+            logger.error(f"Error: {result.stderr}")
+
+            # Provide helpful error messages based on common issues
+            if "Invalid partition" in result.stderr:
+                error_msg += f"\n\nPartition '{partition}' does not exist on {host}. "
+                error_msg += (
+                    "Please check available partitions with 'sinfo' on the target host."
+                )
+            elif "Connection refused" in result.stderr:
+                error_msg += f"\n\nSSH connection to {host} failed. "
+                error_msg += (
+                    "Please check your SSH configuration and network connectivity."
+                )
+            elif "Permission denied" in result.stderr:
+                error_msg += "\n\nPermission denied. Please check your SSH key configuration and user permissions."
+
+            raise RuntimeError(error_msg)
 
         # Parse job ID from output
         output = result.stdout.strip()
         job_id_match = re.search(r"Submitted batch job (\d+)", output)
         if not job_id_match:
-            raise RuntimeError(f"Could not parse job ID from output: {output}")
+            error_msg = f"Could not parse job ID from SLURM output: {output}"
+            logger.error(error_msg)
+            raise RuntimeError(error_msg)
 
         job_id = int(job_id_match.group(1))
 
@@ -334,13 +428,14 @@ class WorkflowOrchestrator:
 
         logger.info(f"Using dataset config: {dataset_config_name}")
 
-        # Pass the dataset config name, workflow directory, and prepare_only flag as environment variables
+        # Pass the dataset config name, workflow directory, prepare_only flag, and SLURM partition as environment variables
         env_vars = {
             "DATASET_CONFIG": dataset_config_name,
             "WORKFLOW_DIR": str(self.workflow_logger.workflow_dir)
             if self.workflow_logger
             else "",
             "PREPARE_ONLY": "true",  # Force prepare_only mode
+            "SLURM_PARTITION": workflow_config.cpu_partition,  # Pass the CPU partition
         }
 
         job_id = self._submit_slurm_job(
@@ -366,12 +461,13 @@ class WorkflowOrchestrator:
 
         logger.info(f"Using dataset config: {dataset_config_name}")
 
-        # Pass the dataset config name and workflow directory as environment variables
+        # Pass the dataset config name, workflow directory, and SLURM partition as environment variables
         env_vars = {
             "DATASET_CONFIG": dataset_config_name,
             "WORKFLOW_DIR": str(self.workflow_logger.workflow_dir)
             if self.workflow_logger
             else "",
+            "SLURM_PARTITION": workflow_config.gpu_partition,  # Pass the GPU partition
         }
 
         job_id = self._submit_slurm_job(
@@ -494,6 +590,9 @@ class WorkflowOrchestrator:
         logger.info("Jobs will run with dependencies managed by SLURM.")
         logger.info(
             "You can monitor progress using 'squeue' on the respective clusters."
+        )
+        logger.info(
+            "Check the logs in outputs/ (on the cluster) to see the progress of the jobs and intermediate results."
         )
 
     def run_workflow_local(

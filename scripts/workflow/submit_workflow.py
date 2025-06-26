@@ -1,6 +1,10 @@
 #!/usr/bin/env python3
 """
-Script to submit the master workflow job to the CPU cluster.
+Script to submit workflow jobs with pre-validation.
+
+This script submits a master SLURM job that runs the workflow orchestrator.
+The orchestrator uses the workflow_orchestrator.yaml config for SSH parameters
+and the specified dataset config for processing parameters.
 
 Usage:
     python scripts/workflow/submit_workflow.py --config-name dataset_cellxgene_pseudo_bulk_3_5k
@@ -10,68 +14,189 @@ import argparse
 import logging
 import subprocess
 import sys
+from pathlib import Path
+
+from omegaconf import DictConfig
+
+from adata_hf_datasets.config_utils import ensure_config_sync
 
 logger = logging.getLogger(__name__)
 
 
-def submit_master_workflow(dataset_config_name: str, cpu_host: str = "imbi13") -> int:
-    """Submit the master workflow job to the CPU cluster."""
-    project_dir = "/home/menger/git/adata_hf_datasets"
-    script_path = "scripts/workflow/run_workflow_master.slurm"
+def load_workflow_config() -> DictConfig:
+    """Load the workflow orchestrator configuration."""
+    from hydra import compose, initialize_config_dir
+
+    config_path = Path(__file__).parent.parent.parent / "conf"
+
+    with initialize_config_dir(config_dir=str(config_path), version_base=None):
+        cfg = compose(config_name="workflow_orchestrator")
+
+    return cfg
+
+
+def validate_config_sync_before_submission(
+    dataset_config_name: str, workflow_config: DictConfig, force: bool = False
+) -> None:
+    """Validate config synchronization before submitting the master job."""
+    if force:
+        logger.warning("Skipping config synchronization check (force=True)")
+        return
+
+    logger.info(f"Validating config synchronization for {dataset_config_name}...")
+
+    # Get CPU host from workflow config
+    cpu_login = workflow_config.get("workflow", {}).get("cpu_login")
+    if not cpu_login:
+        raise ValueError(
+            "CPU login configuration required in workflow_orchestrator config"
+        )
+
+    cpu_host = cpu_login.get("host")
+    if not cpu_host:
+        raise ValueError("CPU host not found in workflow config")
+
+    # Validate config sync
+    ensure_config_sync(
+        config_name=dataset_config_name,
+        remote_host=cpu_host,
+        remote_project_dir="/home/menger/git/adata_hf_datasets",
+        force=force,
+    )
+
+    logger.info("✓ Config synchronization validation passed")
+
+
+def submit_master_job(
+    dataset_config_name: str, workflow_config: DictConfig, force: bool = False
+) -> None:
+    """Submit the master SLURM job."""
+    logger.info(f"Submitting master workflow job for dataset: {dataset_config_name}")
+
+    # Get CPU host and partition from workflow config
+    workflow_section = workflow_config.get("workflow", {})
+    cpu_login = workflow_section.get("cpu_login")
+    cpu_partition = workflow_section.get("cpu_partition", "cpu")
+
+    if not cpu_login:
+        raise ValueError(
+            "CPU login configuration required in workflow_orchestrator config"
+        )
+
+    cpu_host = cpu_login.get("host")
+    if not cpu_host:
+        raise ValueError("CPU host not found in workflow config")
 
     # Build the sbatch command
-    cmd = [
-        "ssh",
-        cpu_host,
-        f"cd {project_dir} && sbatch",
-        "--partition",
-        "slurm",
-        "--export",
-        f"ALL,DATASET_CONFIG={dataset_config_name}",
-        script_path,
-    ]
+    script_path = Path("scripts/workflow/run_workflow_master.slurm")
+    project_dir = "/home/menger/git/adata_hf_datasets"
 
-    logger.info(f"Submitting master workflow job ➜ {' '.join(cmd)}")
+    cmd = ["ssh", cpu_host, f"cd {project_dir} && sbatch"]
+
+    # Add partition
+    cmd.extend(["--partition", cpu_partition])
+
+    # Add environment variables
+    env_vars = {
+        "DATASET_CONFIG": dataset_config_name,
+    }
+    env_str = ",".join([f"{k}={v}" for k, v in env_vars.items()])
+    cmd.extend(["--export", f"ALL,{env_str}"])
+
+    # Add the script path
+    cmd.append(str(script_path))
+
+    logger.info(f"Submitting master job: {' '.join(cmd)}")
 
     # Execute the command
-    result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+    except subprocess.TimeoutExpired:
+        error_msg = (
+            f"SLURM job submission timed out for master workflow job on {cpu_host}"
+        )
+        logger.error(error_msg)
+        raise RuntimeError(error_msg)
+    except FileNotFoundError:
+        error_msg = "SSH command not found. Please ensure SSH is installed and available in PATH."
+        logger.error(error_msg)
+        raise RuntimeError(error_msg)
 
     if result.returncode != 0:
-        raise RuntimeError(f"Failed to submit master workflow job: {result.stderr}")
+        error_msg = f"SLURM job submission failed for master workflow job on {cpu_host}"
+        logger.error(error_msg)
+        logger.error(f"Command: {' '.join(cmd)}")
+        logger.error(f"Exit code: {result.returncode}")
+        logger.error(f"Error: {result.stderr}")
+        raise RuntimeError(error_msg)
 
     # Parse job ID from output
+    output = result.stdout.strip()
     import re
 
-    output = result.stdout.strip()
     job_id_match = re.search(r"Submitted batch job (\d+)", output)
     if not job_id_match:
-        raise RuntimeError(f"Could not parse job ID from output: {output}")
+        error_msg = f"Could not parse job ID from SLURM output: {output}"
+        logger.error(error_msg)
+        raise RuntimeError(error_msg)
 
     job_id = int(job_id_match.group(1))
-    return job_id
+    logger.info(f"✓ Master workflow job submitted successfully (Job ID: {job_id})")
+    logger.info(f"Job will run on {cpu_host} in partition {cpu_partition}")
+    logger.info(f"You can monitor progress with: ssh {cpu_host} 'squeue -j {job_id}'")
 
 
 def main():
-    """Main function."""
-    parser = argparse.ArgumentParser(description="Submit master workflow job")
-    parser.add_argument("--config-name", required=True, help="Dataset config name")
-    parser.add_argument("--cpu-host", default="imbi13", help="CPU cluster host")
+    """Main function to submit workflow with pre-validation."""
+    parser = argparse.ArgumentParser(
+        description="Submit workflow with config validation"
+    )
+    parser.add_argument(
+        "--config-name",
+        required=True,
+        help="Dataset config name (without .yaml extension)",
+    )
+    parser.add_argument(
+        "--force", action="store_true", help="Skip config synchronization check"
+    )
     args = parser.parse_args()
 
+    # Set up logging
+    logging.basicConfig(
+        level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"
+    )
+
     try:
-        job_id = submit_master_workflow(args.config_name, args.cpu_host)
-        logger.info(
-            f"✓ Master workflow job {job_id} submitted to cluster ({args.cpu_host})"
+        logger.info("=" * 80)
+        logger.info("WORKFLOW SUBMISSION WITH PRE-VALIDATION")
+        logger.info("=" * 80)
+        logger.info(f"Dataset config: {args.config_name}")
+        logger.info(f"Force mode: {args.force}")
+
+        # Load workflow configuration
+        logger.info("Loading workflow configuration...")
+        workflow_config = load_workflow_config()
+        logger.info("✓ Workflow configuration loaded")
+
+        # Validate config synchronization
+        validate_config_sync_before_submission(
+            args.config_name, workflow_config, force=args.force
         )
-        logger.info("The workflow will run automatically on the cluster.")
-        logger.info("You can monitor progress using 'squeue' on the CPU cluster.")
+
+        # Submit the master job
+        submit_master_job(args.config_name, workflow_config, force=args.force)
+
+        logger.info("=" * 80)
+        logger.info("WORKFLOW SUBMISSION COMPLETED SUCCESSFULLY")
+        logger.info("=" * 80)
+
     except Exception as e:
-        logger.error(f"Failed to submit master workflow job: {e}")
+        logger.error("=" * 80)
+        logger.error("WORKFLOW SUBMISSION FAILED")
+        logger.error("=" * 80)
+        logger.error(f"Error: {e}")
         sys.exit(1)
 
 
 if __name__ == "__main__":
-    logging.basicConfig(
-        level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"
-    )
     main()

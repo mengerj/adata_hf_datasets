@@ -33,11 +33,12 @@ def generate_paths_from_config(cfg: DictConfig) -> Dict[str, str]:
         Dictionary mapping path keys to generated paths
     """
     dataset_name = cfg.dataset.name
-    full_name = cfg.dataset.full_name
+    # Handle missing full_name gracefully
+    full_name = cfg.dataset.get("full_name", None)
     base_file_path = cfg.get("base_file_path", "data/RNA/raw")
 
     # Determine if this is a training or test dataset
-    is_training = cfg.preprocessing.split_dataset
+    is_training = cfg.preprocessing.get("split_dataset", True)
 
     # Get the output format from preprocessing config
     output_format = cfg.preprocessing.get("output_format", "zarr")
@@ -279,6 +280,84 @@ def extract_workflow_config(cfg: DictConfig, workflow: str) -> DictConfig:
     return workflow_cfg
 
 
+def validate_parameter_values(cfg: DictConfig) -> None:
+    """
+    Validate parameter values are within acceptable ranges.
+
+    Parameters
+    ----------
+    cfg : DictConfig
+        The dataset configuration to validate
+
+    Raises
+    ------
+    ValueError
+        If any parameter values are invalid
+    """
+    # Validate download parameters
+    if hasattr(cfg, "download") and cfg.download is not None:
+        if (
+            hasattr(cfg.download, "subset_size")
+            and cfg.download.subset_size is not None
+        ):
+            if cfg.download.subset_size <= 0:
+                raise ValueError(
+                    f"subset_size must be positive, got {cfg.download.subset_size}"
+                )
+
+        if hasattr(cfg.download, "seed") and cfg.download.seed is not None:
+            if not isinstance(cfg.download.seed, int):
+                raise ValueError(
+                    f"seed must be an integer, got {type(cfg.download.seed)}"
+                )
+
+    # Validate preprocessing parameters
+    if hasattr(cfg, "preprocessing") and cfg.preprocessing is not None:
+        for param_name in ["min_cells", "min_genes", "n_top_genes"]:
+            if hasattr(cfg.preprocessing, param_name):
+                value = getattr(cfg.preprocessing, param_name)
+                if value is not None and value <= 0:
+                    raise ValueError(f"{param_name} must be positive, got {value}")
+
+        if hasattr(cfg.preprocessing, "train_split"):
+            split = cfg.preprocessing.train_split
+            if split is not None and (split <= 0 or split >= 1):
+                raise ValueError(f"train_split must be between 0 and 1, got {split}")
+
+    # Validate embedding parameters
+    if hasattr(cfg, "embedding") and cfg.embedding is not None:
+        # Validate embedding methods
+        if hasattr(cfg.embedding, "methods"):
+            valid_methods = ["hvg", "scvi_fm", "geneformer", "pca"]
+            invalid_methods = [
+                method
+                for method in cfg.embedding.methods
+                if method not in valid_methods
+            ]
+            if invalid_methods:
+                raise ValueError(
+                    f"Invalid embedding methods: {invalid_methods}. Valid methods: {valid_methods}"
+                )
+
+        # Validate embedding dimensions
+        if hasattr(cfg.embedding, "embedding_dim_map"):
+            for method, dim in cfg.embedding.embedding_dim_map.items():
+                if dim <= 0:
+                    raise ValueError(
+                        f"Embedding dimension for {method} must be positive, got {dim}"
+                    )
+
+        # Validate batch size
+        if (
+            hasattr(cfg.embedding, "batch_size")
+            and cfg.embedding.batch_size is not None
+        ):
+            if cfg.embedding.batch_size <= 0:
+                raise ValueError(
+                    f"batch_size must be positive, got {cfg.embedding.batch_size}"
+                )
+
+
 def validate_config(cfg: DictConfig) -> bool:
     """
     Validate that the configuration has all required fields.
@@ -294,7 +373,7 @@ def validate_config(cfg: DictConfig) -> bool:
         True if valid, raises ValueError if invalid
     """
     required_fields = {
-        "dataset": ["name", "file_path"],
+        "dataset": ["name"],
         "preprocessing": ["input_file", "output_dir"],
         "embedding": ["input_files", "output_dir", "methods"],
         "dataset_creation": ["data_dir", "sentence_keys", "required_obsm_keys"],
@@ -305,8 +384,11 @@ def validate_config(cfg: DictConfig) -> bool:
             raise ValueError(f"Missing required section: {section}")
 
         for field in fields:
-            if field not in cfg[section]:
+            if field not in cfg[section] or cfg[section][field] is None:
                 raise ValueError(f"Missing required field: {section}.{field}")
+
+    # Validate parameter values
+    validate_parameter_values(cfg)
 
     return True
 
