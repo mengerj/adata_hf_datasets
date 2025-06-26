@@ -56,30 +56,43 @@ from hydra import compose, initialize_config_dir
 from adata_hf_datasets.config_utils import apply_all_transformations
 from scripts.workflow.orchestrate_workflow import WorkflowOrchestrator
 
-print('Loading config...')
+print('Loading configs...')
 # Use absolute path for config directory
 config_path = str(Path.cwd() / 'conf')
 print(f'Config path: {config_path}')
 
 with initialize_config_dir(config_dir=config_path, version_base=None):
-    config = compose(config_name=sys.argv[1])
+    # Load the workflow orchestrator config to get SSH parameters
+    workflow_config = compose(config_name='workflow_orchestrator')
+    print('Loaded workflow orchestrator config')
+    print(f'Config keys: {list(workflow_config.keys())}')
 
-print('Applying transformations...')
-# Apply transformations
-config = apply_all_transformations(config)
+    # Extract workflow section with proper error handling
+    workflow_section = workflow_config.get('workflow', {})
+    if not workflow_section:
+        raise ValueError('No workflow section found in workflow_orchestrator config')
+
+    cpu_login = workflow_section.get('cpu_login')
+    gpu_login = workflow_section.get('gpu_login')
+
+    if not cpu_login:
+        raise ValueError('CPU login configuration required in workflow_orchestrator config')
+
+    print(f'CPU login: {cpu_login}')
+    print(f'GPU login: {gpu_login}')
 
 print('Creating orchestrator...')
-# Create orchestrator with SSH connections
+# Create orchestrator with SSH connections from config
 orchestrator = WorkflowOrchestrator(
-    cpu_login={'host': 'imbi13', 'user': 'menger'},
-    gpu_login={'host': 'imbi_gpu_H100', 'user': 'menger'}
+    cpu_login=cpu_login,
+    gpu_login=gpu_login
 )
 
 print('Starting workflow execution...')
 # Run the workflow in local mode (on the cluster)
 orchestrator.run_workflow_local(
     dataset_config_name=sys.argv[1],
-    workflow_config=config.workflow,
+    workflow_config=workflow_section,
     force=False
 )
 print('Workflow execution completed')
