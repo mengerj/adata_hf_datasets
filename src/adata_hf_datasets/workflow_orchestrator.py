@@ -553,7 +553,9 @@ class WorkflowOrchestrator:
 
         # Step 3: Embedding Preparation (depends on preprocessing)
         embedding_prepare_job_id = None
-        embedding_prepare_enabled = getattr(dataset_config.embedding, "enabled", True)
+        embedding_prepare_enabled = getattr(
+            dataset_config.embedding_preparation, "enabled", True
+        )
         if embedding_prepare_enabled:
             embedding_prepare_job_id = self.run_embedding_prepare_step(
                 dataset_config_name,
@@ -681,7 +683,9 @@ class WorkflowOrchestrator:
 
         # Step 3: Embedding Preparation (depends on preprocessing)
         embedding_prepare_job_id = None
-        embedding_prepare_enabled = getattr(dataset_config.embedding, "enabled", True)
+        embedding_prepare_enabled = getattr(
+            dataset_config.embedding_preparation, "enabled", True
+        )
         if embedding_prepare_enabled:
             logger.info("=== Starting Embedding Preparation Step ===")
             embedding_prepare_job_id = self.run_embedding_prepare_step(

@@ -77,9 +77,29 @@ preprocessing:
     - "pct_counts_mt"
 
 # =============================================================================
+# EMBEDDING PREPARATION CONFIGURATION (dataset-specific overrides)
+# =============================================================================
+embedding_preparation:
+  # Whether to run embedding preparation step
+  enabled: true # Set to false to skip embedding preparation
+
+  # Preparation-specific parameters
+  prepare_only: true # Always true for preparation step
+  mode: "slurm" # Use CPU partition for preparation
+
+  # Execution parameters (accessed by embedding preparation script)
+  input_format: "auto" # Input format detection
+  output_format: "zarr" # Output format preference
+  overwrite: false # Whether to overwrite existing preparation files
+  chunk_rows: 16384 # Number of cells written per chunk when streaming into Zarr
+
+# =============================================================================
 # EMBEDDING CONFIGURATION (dataset-specific overrides)
 # =============================================================================
 embedding:
+  # Whether to run embedding step
+  enabled: true # Set to false to skip embedding
+
   # Embedding methods to apply
   methods: ["hvg"] # Options: ["scvi_fm", "geneformer", "pca", "hvg"]
 

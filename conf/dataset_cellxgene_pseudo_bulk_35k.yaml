@@ -38,6 +38,10 @@ preprocessing:
   split_dataset: true # Important for training datasets. Set to false for test datasets. (Similar parameters in dataset_creation)
   count_layer_key: "counts" # Key in adata.layers with raw counts. If not present, adata.raw.X is checked.
 
+# Embedding preparation overrides
+embedding_preparation:
+  enabled: true # Set to false to skip embedding preparation
+
 # Embedding overrides (both dataset-specific and execution parameters)
 embedding:
   enabled: true
