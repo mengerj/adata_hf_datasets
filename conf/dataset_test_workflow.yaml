@@ -1,5 +1,6 @@
 # Test dataset configuration for workflow testing
 # Inherits from dataset_default_test.yaml for test-specific defaults
+# TESTING PRE-VALIDATION - This should trigger a sync error
 defaults:
   - dataset_default_test.yaml
   - workflow_orchestrator.yaml
@@ -10,13 +11,12 @@ defaults:
 # =============================================================================
 dataset:
   name: "test_workflow"
-  description: "Test dataset for workflow orchestration"
-  download_url: https://datasets.cellxgene.cziscience.com/bbf12ff4-7f22-4cf5-83cf-9cd37ce4d6f4.h5ad
-  file_path: "data/RNA/raw/test/test_workflow.h5ad"
+  description: "Test dataset for workflow validation"
+  download_url: null
   full_name: "test_workflow_full"
 
 # =============================================================================
-# COMMON KEYS (defined once, used across workflows)
+# COMMON KEYS
 # =============================================================================
 # Batch key for batch-aware processing
 batch_key: "batch"
@@ -60,9 +60,3 @@ embedding:
 # =============================================================================
 dataset_creation:
   enabled: false # Disable dataset creation for testing
-
-# =============================================================================
-# WORKFLOW OVERRIDES
-# =============================================================================
-workflow:
-  local_mode: true # Force local mode for testing

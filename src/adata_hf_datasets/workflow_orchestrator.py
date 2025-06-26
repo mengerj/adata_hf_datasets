@@ -452,14 +452,14 @@ class WorkflowOrchestrator:
         )
         return job_id
 
-    def run_embedding_step(
+    def run_embedding_cpu_step(
         self,
         dataset_config_name: str,
         workflow_config: DictConfig,
         dependency_job_id: Optional[int] = None,
     ) -> Optional[int]:
-        """Run the embedding step and return job ID."""
-        logger.info("=== Starting Embedding Step ===")
+        """Run the CPU embedding step and return job ID."""
+        logger.info("=== Starting CPU Embedding Step ===")
         script_path = Path("scripts/embed/run_embed_parallel.slurm")
         dependencies = [dependency_job_id] if dependency_job_id else None
 
@@ -471,16 +471,50 @@ class WorkflowOrchestrator:
             "WORKFLOW_DIR": str(self.workflow_logger.workflow_dir)
             if self.workflow_logger
             else "",
-            "SLURM_PARTITION": workflow_config.gpu_partition,  # Pass the GPU partition
+            "SLURM_PARTITION": workflow_config.cpu_partition,
+            "MODE": "cpu",  # Force CPU mode
         }
 
         job_id = self._submit_slurm_job(
-            self.gpu_login["host"],  # Use GPU cluster for embedding
+            self.cpu_login["host"],  # Use CPU cluster for CPU embedding
+            script_path,
+            partition=workflow_config.cpu_partition,  # Use CPU partition
+            dependencies=dependencies,
+            env_vars=env_vars,
+            step_name="CPU Embedding",
+        )
+        return job_id
+
+    def run_embedding_gpu_step(
+        self,
+        dataset_config_name: str,
+        workflow_config: DictConfig,
+        dependency_job_id: Optional[int] = None,
+    ) -> Optional[int]:
+        """Run the GPU embedding step and return job ID."""
+        logger.info("=== Starting GPU Embedding Step ===")
+        script_path = Path("scripts/embed/run_embed_parallel.slurm")
+        dependencies = [dependency_job_id] if dependency_job_id else None
+
+        logger.info(f"Using dataset config: {dataset_config_name}")
+
+        # Pass the dataset config name, workflow directory, and SLURM partition as environment variables
+        env_vars = {
+            "DATASET_CONFIG": dataset_config_name,
+            "WORKFLOW_DIR": str(self.workflow_logger.workflow_dir)
+            if self.workflow_logger
+            else "",
+            "SLURM_PARTITION": workflow_config.gpu_partition,
+            "MODE": "gpu",  # Force GPU mode
+        }
+
+        job_id = self._submit_slurm_job(
+            self.gpu_login["host"],  # Use GPU cluster for GPU embedding
             script_path,
             partition=workflow_config.gpu_partition,  # Use GPU partition
             dependencies=dependencies,
             env_vars=env_vars,
-            step_name="Embedding",
+            step_name="GPU Embedding",
         )
         return job_id
 
@@ -566,26 +600,67 @@ class WorkflowOrchestrator:
                 f"✓ Embedding preparation job {embedding_prepare_job_id} submitted to cluster ({self.cpu_login['host']})"
             )
 
-        # Step 4: Embedding (depends on embedding preparation)
-        embedding_job_id = None
-        embedding_enabled = getattr(dataset_config.embedding, "enabled", True)
-        if embedding_enabled:
-            embedding_job_id = self.run_embedding_step(
+        # Step 4a: CPU Embedding (depends on embedding preparation)
+        embedding_cpu_job_id = None
+        embedding_cpu_enabled = getattr(dataset_config.embedding_cpu, "enabled", True)
+        if embedding_cpu_enabled:
+            embedding_cpu_job_id = self.run_embedding_cpu_step(
                 dataset_config_name,
                 workflow_config,
                 dependency_job_id=embedding_prepare_job_id,
             )
             logger.info(
-                f"✓ Embedding job {embedding_job_id} submitted to cluster ({self.gpu_login['host']})"
+                f"✓ CPU embedding job {embedding_cpu_job_id} submitted to cluster ({self.cpu_login['host']})"
             )
 
+            # Wait for CPU embedding job to complete
+            self._wait_for_job_completion(
+                self.cpu_login["host"], embedding_cpu_job_id, "CPU Embedding"
+            )
+            self.workflow_logger.log_step_complete(
+                "CPU Embedding", embedding_cpu_job_id
+            )
+        else:
+            logger.info("=== CPU Embedding Step Skipped (disabled) ===")
+            self.workflow_logger.log_step_skipped("CPU Embedding", "disabled in config")
+
+        # Step 4b: GPU Embedding (depends on embedding preparation)
+        embedding_gpu_job_id = None
+        embedding_gpu_enabled = getattr(dataset_config.embedding_gpu, "enabled", True)
+        if embedding_gpu_enabled:
+            embedding_gpu_job_id = self.run_embedding_gpu_step(
+                dataset_config_name,
+                workflow_config,
+                dependency_job_id=embedding_prepare_job_id,
+            )
+            logger.info(
+                f"✓ GPU embedding job {embedding_gpu_job_id} submitted to cluster ({self.gpu_login['host']})"
+            )
+
+            # Wait for GPU embedding job to complete
+            self._wait_for_job_completion(
+                self.gpu_login["host"], embedding_gpu_job_id, "GPU Embedding"
+            )
+            self.workflow_logger.log_step_complete(
+                "GPU Embedding", embedding_gpu_job_id
+            )
+        else:
+            logger.info("=== GPU Embedding Step Skipped (disabled) ===")
+            self.workflow_logger.log_step_skipped("GPU Embedding", "disabled in config")
+
         # Step 5: Dataset Creation (depends on embedding)
+        # Use the last completed embedding job for dependency
+        embedding_dependency = (
+            embedding_gpu_job_id if embedding_gpu_job_id else embedding_cpu_job_id
+        )
         dataset_creation_enabled = getattr(
             dataset_config.dataset_creation, "enabled", True
         )
         if dataset_creation_enabled:
             dataset_job_id = self.run_dataset_creation_step(
-                dataset_config_name, workflow_config, dependency_job_id=embedding_job_id
+                dataset_config_name,
+                workflow_config,
+                dependency_job_id=embedding_dependency,
             )
             logger.info(
                 f"✓ Dataset creation job {dataset_job_id} submitted to cluster ({self.cpu_login['host']})"
@@ -712,37 +787,67 @@ class WorkflowOrchestrator:
                 "Embedding Preparation", "disabled in config"
             )
 
-        # Step 4: Embedding (depends on embedding preparation)
-        embedding_job_id = None
-        embedding_enabled = getattr(dataset_config.embedding, "enabled", True)
-        if embedding_enabled:
-            logger.info("=== Starting Embedding Step ===")
-            embedding_job_id = self.run_embedding_step(
+        # Step 4a: CPU Embedding (depends on embedding preparation)
+        embedding_cpu_job_id = None
+        embedding_cpu_enabled = getattr(dataset_config.embedding_cpu, "enabled", True)
+        if embedding_cpu_enabled:
+            embedding_cpu_job_id = self.run_embedding_cpu_step(
                 dataset_config_name,
                 workflow_config,
                 dependency_job_id=embedding_prepare_job_id,
             )
             logger.info(
-                f"✓ Embedding job {embedding_job_id} submitted to cluster ({self.gpu_login['host']})"
+                f"✓ CPU embedding job {embedding_cpu_job_id} submitted to cluster ({self.cpu_login['host']})"
             )
 
-            # Wait for embedding job to complete
+            # Wait for CPU embedding job to complete
             self._wait_for_job_completion(
-                self.gpu_login["host"], embedding_job_id, "Embedding"
+                self.cpu_login["host"], embedding_cpu_job_id, "CPU Embedding"
             )
-            self.workflow_logger.log_step_complete("Embedding", embedding_job_id)
+            self.workflow_logger.log_step_complete(
+                "CPU Embedding", embedding_cpu_job_id
+            )
         else:
-            logger.info("=== Embedding Step Skipped (disabled) ===")
-            self.workflow_logger.log_step_skipped("Embedding", "disabled in config")
+            logger.info("=== CPU Embedding Step Skipped (disabled) ===")
+            self.workflow_logger.log_step_skipped("CPU Embedding", "disabled in config")
+
+        # Step 4b: GPU Embedding (depends on embedding preparation)
+        embedding_gpu_job_id = None
+        embedding_gpu_enabled = getattr(dataset_config.embedding_gpu, "enabled", True)
+        if embedding_gpu_enabled:
+            embedding_gpu_job_id = self.run_embedding_gpu_step(
+                dataset_config_name,
+                workflow_config,
+                dependency_job_id=embedding_prepare_job_id,
+            )
+            logger.info(
+                f"✓ GPU embedding job {embedding_gpu_job_id} submitted to cluster ({self.gpu_login['host']})"
+            )
+
+            # Wait for GPU embedding job to complete
+            self._wait_for_job_completion(
+                self.gpu_login["host"], embedding_gpu_job_id, "GPU Embedding"
+            )
+            self.workflow_logger.log_step_complete(
+                "GPU Embedding", embedding_gpu_job_id
+            )
+        else:
+            logger.info("=== GPU Embedding Step Skipped (disabled) ===")
+            self.workflow_logger.log_step_skipped("GPU Embedding", "disabled in config")
 
         # Step 5: Dataset Creation (depends on embedding)
+        # Use the last completed embedding job for dependency
+        embedding_dependency = (
+            embedding_gpu_job_id if embedding_gpu_job_id else embedding_cpu_job_id
+        )
         dataset_creation_enabled = getattr(
             dataset_config.dataset_creation, "enabled", True
         )
         if dataset_creation_enabled:
-            logger.info("=== Starting Dataset Creation Step ===")
             dataset_job_id = self.run_dataset_creation_step(
-                dataset_config_name, workflow_config, dependency_job_id=embedding_job_id
+                dataset_config_name,
+                workflow_config,
+                dependency_job_id=embedding_dependency,
             )
             logger.info(
                 f"✓ Dataset creation job {dataset_job_id} submitted to cluster ({self.cpu_login['host']})"

@@ -41,11 +41,28 @@ def extract_embedding_params(
     config: DictConfig, force_prepare_only: bool = False, force_cpu_only: bool = False
 ) -> dict:
     """Extract embedding parameters from dataset config."""
-    embedding_config = config.embedding
+    # Determine which embedding config to use based on MODE environment variable
+    mode = os.environ.get("MODE", "gpu")
+
+    if mode == "cpu":
+        embedding_config = config.embedding_cpu
+        logger.info("Using CPU embedding configuration")
+    elif mode == "gpu":
+        embedding_config = config.embedding_gpu
+        logger.info("Using GPU embedding configuration")
+    else:
+        # Fallback to old structure for backward compatibility
+        if hasattr(config, "embedding"):
+            embedding_config = config.embedding
+            logger.info("Using legacy embedding configuration")
+        else:
+            raise ValueError(
+                f"Unknown MODE: {mode} and no legacy embedding config found"
+            )
 
     logger.info("Extracting embedding parameters from config:")
     logger.info(f"  Config methods: {embedding_config.methods}")
-    logger.info(f"  Config mode: {getattr(embedding_config, 'mode', 'gpu')}")
+    logger.info(f"  Config mode: {mode}")
     logger.info(f"  Config batch_size: {getattr(embedding_config, 'batch_size', 128)}")
 
     # Check for command-line overrides first, then environment variables, then config
@@ -63,14 +80,6 @@ def extract_embedding_params(
         else:
             prepare_only = getattr(embedding_config, "prepare_only", False)
             logger.info(f"  Using PREPARE_ONLY from config: {prepare_only}")
-
-    # Determine mode - force CPU if requested
-    if force_cpu_only:
-        mode = "cpu"
-        logger.info(f"  Using MODE from CPU-only command line: {mode}")
-    else:
-        mode = getattr(embedding_config, "mode", "gpu")
-        logger.info(f"  Using MODE from config: {mode}")
 
     # Extract parameters with defaults
     params = {
@@ -156,7 +165,7 @@ def load_config(config_name: str) -> DictConfig:
 def main():
     """Main function to run embedding with config."""
     parser = argparse.ArgumentParser(description="Run embedding with dataset config")
-    parser.add_argument("--config-name", required=True, help="Dataset config name")
+    parser.add_argument("config_name", help="Dataset config name")
     parser.add_argument(
         "--prepare-only", action="store_true", help="Force prepare only mode"
     )

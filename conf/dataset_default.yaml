@@ -94,14 +94,40 @@ embedding_preparation:
   chunk_rows: 16384 # Number of cells written per chunk when streaming into Zarr
 
 # =============================================================================
-# EMBEDDING CONFIGURATION (dataset-specific overrides)
+# CPU EMBEDDING CONFIGURATION (dataset-specific overrides)
 # =============================================================================
-embedding:
-  # Whether to run embedding step
-  enabled: true # Set to false to skip embedding
+embedding_cpu:
+  # Whether to run CPU embedding step
+  enabled: true # Set to false to skip CPU embedding
 
-  # Embedding methods to apply
-  methods: ["hvg"] # Options: ["scvi_fm", "geneformer", "pca", "hvg"]
+  # CPU embedding methods to apply
+  methods: ["hvg", "pca", "scvi_fm"] # CPU-only methods: ["scvi_fm", "pca", "hvg"]
+
+  # Method-specific parameters
+  batch_size: 128 # Used by geneformer
+
+  # Embedding dimensions (dataset-specific)
+  embedding_dim_map:
+    scvi_fm: 50 # Can't be changed as the pretrained scvi model is fixed.
+    geneformer: 512
+    pca: 50
+    hvg: 512
+
+  # Execution parameters (accessed by embedding script)
+  input_format: "auto" # Input format detection
+  output_format: "zarr" # Output format preference
+  overwrite: false # Whether to overwrite existing embeddings
+  chunk_rows: 16384 # Number of cells written per chunk when streaming into Zarr
+
+# =============================================================================
+# GPU EMBEDDING CONFIGURATION (dataset-specific overrides)
+# =============================================================================
+embedding_gpu:
+  # Whether to run GPU embedding step
+  enabled: true # Set to false to skip GPU embedding
+
+  # GPU embedding methods to apply
+  methods: ["geneformer"] # GPU-required methods: ["geneformer"]
 
   # Method-specific parameters
   batch_size: 128 # Used by geneformer

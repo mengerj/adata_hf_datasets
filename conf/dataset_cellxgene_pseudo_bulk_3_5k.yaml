@@ -1,7 +1,7 @@
 # Dataset configuration for cellxgene pseudo bulk 3_5k dataset
-# Inherits from dataset_default_train.yaml for training-specific defaults
+# Inherits from dataset_default.yaml for training-specific defaults
 defaults:
-  - dataset_default_train.yaml
+  - dataset_default.yaml
   - workflow_orchestrator.yaml
   - _self_
 

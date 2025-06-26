@@ -1,141 +1,169 @@
 # Embedding Scripts
 
-This directory contains scripts for applying various embedding methods to preprocessed AnnData files.
+This directory contains scripts for running embedding steps in the workflow.
 
-## Main Script: `embed_adata.py`
+## Overview
 
-The main script `embed_adata.py` now supports two modes of operation:
+The embedding step applies various embedding methods to preprocessed AnnData files. Different embedding methods have different hardware requirements:
 
-### 1. Prepare-Only Mode (`++prepare_only=true`)
+- **GPU-required methods**: `geneformer`
+- **CPU-only methods**: `scvi_fm`, `pca`, `hvg`
 
-Runs only the `prepare()` step for each embedding method without saving any embeddings. This is useful for:
+## Hardware-Aware Embedding
 
-- GPU-dependent embedders where the prepare step is more efficient on CPU
-- Pre-computing resources that can be reused in subsequent runs
-- Testing and debugging the preparation phase separately
+The workflow now uses a config-based approach to split embedding methods based on hardware requirements:
 
-**Example:**
+### CPU Embedding Step
 
-```bash
-python3 scripts/embed/embed_adata.py ++prepare_only=true ++methods='["scvi_fm", "pca"]'
+- Runs on CPU cluster (`imbi13`)
+- Uses CPU partition (`slurm`)
+- Processes methods: `scvi_fm`, `pca`, `hvg`
+
+### GPU Embedding Step
+
+- Runs on GPU cluster (`imbi_gpu_H100`)
+- Uses GPU partition (`gpu`)
+- Processes methods: `geneformer`
+
+### Configuration Structure
+
+The workflow uses two separate configuration sections in your dataset config:
+
+```yaml
+# CPU embedding configuration
+embedding_cpu:
+  enabled: true
+  methods: ["hvg", "pca", "scvi_fm"] # CPU-only methods
+  batch_size: 128
+  embedding_dim_map:
+    scvi_fm: 50
+    pca: 50
+    hvg: 512
+
+# GPU embedding configuration
+embedding_gpu:
+  enabled: true
+  methods: ["geneformer"] # GPU-required methods
+  batch_size: 128
+  embedding_dim_map:
+    geneformer: 512
 ```
 
-### 2. Full Pipeline Mode (`++prepare_only=false` or default)
+### Automatic Execution
 
-Runs the complete pipeline: prepare + embed + save embeddings. This is the default behavior.
+The workflow automatically:
 
-**Example:**
+1. Checks if `embedding_cpu.enabled` is true and runs CPU methods
+2. Checks if `embedding_gpu.enabled` is true and runs GPU methods
+3. Both steps can run in parallel since they depend on the same preparation step
+4. Dataset creation waits for both embedding steps to complete
 
-```bash
-python3 scripts/embed/embed_adata.py ++prepare_only=false ++methods='["scvi_fm", "pca"]'
-```
+## Scripts
 
-## Input Files Handling
+### `run_embed_parallel.slurm`
 
-The script intelligently handles input files in two ways:
+Main SLURM script for running embedding jobs. Supports both CPU and GPU modes via the `MODE` environment variable.
 
-### Auto-Generated Paths (Default)
+### `embed_adata.py`
 
-When no `input_files` is specified, the script uses auto-generated paths from the dataset configuration:
+Main embedding script that processes AnnData files and applies embeddings.
 
-```bash
-# Uses auto-generated paths from dataset config
-python3 scripts/embed/embed_adata.py ++prepare_only=true
-```
+### `run_embed_with_config.py`
 
-### Command-Line Override
+Script that extracts embedding parameters from config and runs the embedding pipeline.
 
-When `input_files` is explicitly specified, it overrides the auto-generated paths:
+## Usage
 
-```bash
-# Uses command-line specified files
-python3 scripts/embed/embed_adata.py ++prepare_only=true ++input_files='["my_file.h5ad"]'
-```
+### Manual Execution
 
-This allows the script to work seamlessly with both:
-
-- **Direct execution**: Run on specific files by passing `++input_files`
-- **SLURM array jobs**: Let bash scripts override `input_files` for specific chunks
-
-## Usage Examples
-
-### Basic Usage
+To run embedding manually:
 
 ```bash
-# Prepare-only mode with auto-generated paths
-python3 scripts/embed/embed_adata.py ++prepare_only=true
+# CPU embedding
+MODE=cpu python scripts/embed/run_embed_with_config.py --config-name dataset_example
 
-# Full pipeline mode with auto-generated paths
-python3 scripts/embed/embed_adata.py
+# GPU embedding
+MODE=gpu python scripts/embed/run_embed_with_config.py --config-name dataset_example
 ```
 
-### With Specific Files
+### Workflow Integration
+
+The embedding steps are automatically handled by the workflow orchestrator:
 
 ```bash
-# Prepare-only mode on specific file
-python3 scripts/embed/embed_adata.py ++prepare_only=true ++input_files='["data/processed/chunk_0.zarr"]'
-
-# Full pipeline on specific file
-python3 scripts/embed/embed_adata.py ++input_files='["data/processed/chunk_0.zarr"]'
+# Run complete workflow (embedding steps will be split automatically)
+python scripts/workflow/run_workflow_master.py dataset_example
 ```
 
-### With Dataset-Centric Config
+## Configuration
 
-```bash
-# Using dataset config with prepare-only (auto-generated paths)
-python3 scripts/embed/embed_adata.py ++prepare_only=true
+### Environment Variables
 
-# Override methods in dataset config
-python3 scripts/embed/embed_adata.py ++prepare_only=true ++embedding.methods='["scvi_fm", "pca"]'
+- `MODE`: Set to "cpu" or "gpu" to force specific hardware usage
+- `DATASET_CONFIG`: Name of the dataset configuration to use
+- `WORKFLOW_DIR`: Directory for workflow outputs and logs
+- `SLURM_PARTITION`: SLURM partition to use (auto-detected based on MODE)
+
+### Dataset Config Structure
+
+Configure embedding methods in your dataset config with separate CPU and GPU sections:
+
+```yaml
+# CPU embedding methods
+embedding_cpu:
+  enabled: true
+  methods: ["hvg", "pca", "scvi_fm"]
+  batch_size: 128
+  embedding_dim_map:
+    scvi_fm: 50
+    pca: 50
+    hvg: 512
+
+# GPU embedding methods
+embedding_gpu:
+  enabled: true
+  methods: ["geneformer"]
+  batch_size: 128
+  embedding_dim_map:
+    geneformer: 512
 ```
 
-### SLURM Array Job Compatibility
+### Backward Compatibility
 
-The script works perfectly with SLURM array jobs where bash scripts set `input_files`:
+The system maintains backward compatibility with the old single `embedding` section. If `embedding_cpu` and `embedding_gpu` are not found, it will fall back to the legacy `embedding` configuration.
 
-```bash
-# In SLURM script: python3 scripts/embed/embed_adata.py ++input_files='["$this_file"]'
-# This will use the specific chunk file, ignoring auto-generated paths
-```
+## Output
 
-## Parameter Overrides
+Embedding results are stored in `adata.obsm` with keys:
 
-You can override any configuration parameter using Hydra's `++` syntax:
+- `X_hvg`: Highly variable genes embedding
+- `X_pca`: PCA embedding
+- `X_scvi_fm`: SCVI foundation model embedding
+- `X_geneformer`: Geneformer embedding
 
-```bash
-python3 scripts/embed/embed_adata.py \
-  ++prepare_only=true \
-  ++methods='["scvi_fm", "pca", "hvg"]' \
-  ++batch_key="dataset_title" \
-  ++batch_size=32 \
-  ++input_files='["custom_file.h5ad"]'
-```
+## Benefits
 
-## Configuration Files
+1. **Clean Separation**: CPU and GPU methods are clearly separated in config
+2. **Flexible Control**: Enable/disable CPU or GPU embedding independently
+3. **Parallel Execution**: Both steps can run simultaneously
+4. **Resource Optimization**: Each step runs on appropriate hardware
+5. **Simple Configuration**: No complex filtering logic needed
 
-- `conf/embed_adata.yaml`: Standalone configuration
-- `conf/dataset_*.yaml`: Dataset-centric configurations
-- `conf/prepare_embed_adata.yaml`: Example configuration for prepare-only mode
+## Troubleshooting
 
-## Supported Embedding Methods
+### No Methods Found
 
-- `scvi_fm`: scVI Foundation Model
-- `geneformer`: Geneformer transformer model
-- `pca`: Principal Component Analysis
-- `hvg`: Highly Variable Genes
+If you see "No CPU/GPU embedding methods found", check your dataset config to ensure the methods are properly configured in the respective sections.
 
-## Workflow Benefits
+### Hardware Issues
 
-1. **Resource Efficiency**: Prepare-only mode can run on CPU nodes, saving GPU resources
-2. **Reusability**: Full pipeline can reuse prepared resources from previous runs
-3. **Debugging**: Easy to test and debug each step separately
-4. **Flexibility**: Works with both standalone and dataset-centric configurations
-5. **SLURM Compatibility**: Seamlessly works with array jobs and direct execution
+- CPU methods can run on GPU clusters but may be slower
+- GPU methods require actual GPU hardware and will fail on CPU-only clusters
 
-## SLURM Integration
+### Memory Issues
 
-For SLURM-based workflows, see the example script `run_embedding_workflow.sh` which shows how to structure separate jobs for prepare-only and full pipeline modes.
+For large datasets, consider:
 
-## Migration from Old Scripts
-
-The old `prepare_embed_adata.py` script has been removed. Its functionality is now integrated into `embed_adata.py` with the `++prepare_only=true` parameter.
+- Reducing batch size
+- Using smaller embedding dimensions
+- Processing data in chunks

@@ -37,14 +37,12 @@ preprocessing:
   count_layer_key: "counts" # Key in adata.layers with raw counts. If not present, adata.raw.X is checked.
 
 # Embedding overrides (both dataset-specific and execution parameters)
-embedding:
+embedding_cpu:
   # Dataset-specific parameters
   methods: ["hvg", "pca", "scvi_fm"]
-  embedding_dim_map:
-    scvi_fm: 50 # Can't be changed as the pretrained scvi model is fixed.
-    geneformer: 512
-    pca: 50
-    hvg: 512
+
+embedding_gpu:
+  methods: ["geneformer"]
 
 # Dataset creation overrides
 dataset_creation:
