@@ -46,17 +46,13 @@ submit_array() {
     echo "Submitting $n chunks for '$label' in parallel"
     if command -v sbatch &>/dev/null; then
         # — under SLURM, submit an array job —
-        # Add dependency on the current job if we're running under SLURM
-        DEPENDENCY_FLAG=""
-        if [[ -n "${SLURM_JOB_ID:-}" ]]; then
-            DEPENDENCY_FLAG="--dependency=afterok:${SLURM_JOB_ID}"
-        fi
+        # Note: No dependency on main job - array jobs run independently
+        # Main job will wait for array jobs to complete
 
         # Submit the job and capture the job ID
         job_output=$(sbatch \
           --array=0-$((n-1)) \
           "${SBATCH_EXTRA[@]}" \
-          $DEPENDENCY_FLAG \
           --export=ALL,INPUT_DIR="${dir}",\
 METHODS="${METHODS}",\
 BATCH_KEY="${BATCH_KEY}",\
