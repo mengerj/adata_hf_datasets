@@ -52,7 +52,20 @@ MAX_PROCS="${MAX_PROCS:-8}"
 METHODS_JSON="[$(printf '"%s",' $METHODS | sed 's/,$//')]"
 
 # ─────────────────────────────────────────────────────────────────────────────
-# 4) Determine number of CPU cores (local mode only)
+# 4) Determine embedding section based on MODE
+# ─────────────────────────────────────────────────────────────────────────────
+# Determine which embedding section to use based on MODE
+if [[ "$MODE" == "cpu" ]]; then
+    EMBEDDING_SECTION="embedding_cpu"
+elif [[ "$MODE" == "gpu" ]]; then
+    EMBEDDING_SECTION="embedding_gpu"
+else
+    # Fallback to old structure for backward compatibility
+    EMBEDDING_SECTION="embedding"
+fi
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 5) Determine number of CPU cores (local mode only)
 # ─────────────────────────────────────────────────────────────────────────────
 if command -v nproc &>/dev/null; then
   LOCAL_CONCURRENCY=$(nproc)
@@ -88,10 +101,10 @@ if [[ -z "${SLURM_ARRAY_JOB_ID:-}" ]]; then
         python3 scripts/embed/embed_adata.py \
           --config-name="${DATASET_CONFIG:-dataset_cellxgene_pseudo_bulk_3_5k}" \
           ++prepare_only=true \
-          ++embedding.methods="'"$METHODS_JSON"'" \
+          ++"$EMBEDDING_SECTION".methods="'"$METHODS_JSON"'" \
           ++batch_key="'"$BATCH_KEY"'" \
           ++batch_size="'"$BATCH_SIZE"'" \
-          ++embedding.input_files="[\"$f\"]" \
+          ++"$EMBEDDING_SECTION".input_files="[\"$f\"]" \
           ++hydra.run.dir="$OUTDIR"
       ' {}
 
@@ -113,10 +126,10 @@ echo "[${RUN_ID}:${SLURM_ARRAY_TASK_ID}] Methods: $METHODS_JSON"
 python3 scripts/embed/embed_adata.py \
   --config-name="${DATASET_CONFIG:-dataset_cellxgene_pseudo_bulk_3_5k}" \
   ++prepare_only=true \
-  ++embedding.methods="'"$METHODS_JSON"'" \
+  ++"$EMBEDDING_SECTION".methods="'"$METHODS_JSON"'" \
   ++batch_key="'"$BATCH_KEY"'" \
   ++batch_size="'"$BATCH_SIZE"'" \
-  ++embedding.input_files="[\"$this_file\"]" \
+  ++"$EMBEDDING_SECTION".input_files="[\"$this_file\"]" \
   ++hydra.run.dir="$BASE_OUT"
 
 echo "[${RUN_ID}:${SLURM_ARRAY_TASK_ID}] Done."
