@@ -65,8 +65,6 @@ def generate_paths_from_config(cfg: DictConfig) -> Dict[str, str]:
         # Preprocessing paths
         "preprocessing.input_file": f"{raw_base}/{dataset_name}.h5ad",
         "preprocessing.output_dir": f"{processed_base}/{dataset_name}",
-        # Embedding paths
-        "embedding.output_dir": f"{embed_base}/{dataset_name}",
         # Dataset creation paths
         "dataset_creation.data_dir": f"{embed_base}/{dataset_name}",
     }
@@ -74,15 +72,36 @@ def generate_paths_from_config(cfg: DictConfig) -> Dict[str, str]:
     # Generate input files for embedding based on preprocessing output
     if is_training:
         # Training datasets have train/val splits
-        paths["embedding.input_files"] = [
+        input_files = [
             f"{processed_base}/{dataset_name}/train/chunk_0.{output_format}",
             f"{processed_base}/{dataset_name}/val/chunk_0.{output_format}",
         ]
     else:
         # Test datasets have a single "all" split
-        paths["embedding.input_files"] = [
-            f"{processed_base}/{dataset_name}/all/chunk_0.{output_format}"
-        ]
+        input_files = [f"{processed_base}/{dataset_name}/all/chunk_0.{output_format}"]
+
+    # Determine which embedding structure to use
+    has_new_structure = (
+        hasattr(cfg, "embedding_cpu") and cfg.embedding_cpu is not None
+    ) or (hasattr(cfg, "embedding_gpu") and cfg.embedding_gpu is not None)
+
+    has_old_structure = hasattr(cfg, "embedding") and cfg.embedding is not None
+
+    # Add embedding paths based on the structure present
+    if has_new_structure:
+        # New structure: embedding_cpu and/or embedding_gpu
+        if hasattr(cfg, "embedding_cpu") and cfg.embedding_cpu is not None:
+            paths["embedding_cpu.output_dir"] = f"{embed_base}/{dataset_name}"
+            paths["embedding_cpu.input_files"] = input_files
+
+        if hasattr(cfg, "embedding_gpu") and cfg.embedding_gpu is not None:
+            paths["embedding_gpu.output_dir"] = f"{embed_base}/{dataset_name}"
+            paths["embedding_gpu.input_files"] = input_files
+
+    elif has_old_structure:
+        # Old structure: single embedding section
+        paths["embedding.output_dir"] = f"{embed_base}/{dataset_name}"
+        paths["embedding.input_files"] = input_files
 
     return paths
 
