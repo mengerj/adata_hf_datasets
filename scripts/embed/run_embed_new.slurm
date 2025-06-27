@@ -124,20 +124,45 @@ if [[ -f "$job_file" ]]; then
         if [[ -n "$array_job_id" && "$array_job_id" =~ ^[0-9]+$ ]]; then
             echo "Waiting for array job $array_job_id to complete..."
 
-            # Wait for job to complete
-            while squeue -j "$array_job_id" &>/dev/null; do
-                sleep 30
+            # Wait for ALL array job tasks to complete
+            # Use sacct to check for any running/pending array tasks
+            while true; do
+                # Get all array job states
+                array_states=$(sacct -j "$array_job_id" --format=JobID,State --noheader --parsable2 2>/dev/null | grep "${array_job_id}_" | cut -d'|' -f2)
+
+                if [[ -z "$array_states" ]]; then
+                    # No array tasks found yet, wait a bit
+                    echo "  No array tasks found yet for job $array_job_id, waiting..."
+                    sleep 30
+                    continue
+                fi
+
+                # Check if any tasks are still running or pending
+                running_count=$(echo "$array_states" | grep -E "^(PENDING|RUNNING|COMPLETING)$" | wc -l)
+                total_count=$(echo "$array_states" | wc -l)
+                completed_count=$((total_count - running_count))
+
+                if [[ $running_count -eq 0 ]]; then
+                    echo "  All $total_count array tasks completed"
+                    break
+                else
+                    echo "  Array job $array_job_id: $completed_count/$total_count tasks completed, $running_count still running..."
+                    sleep 30
+                fi
             done
 
-            # Check job status
-            job_status=$(sacct -j "$array_job_id" --format=JobID,State --noheader --parsable2 | head -1 | cut -d'|' -f2)
-            echo "Array job $array_job_id completed with status: $job_status"
+            # Check final status of all array tasks
+            failed_tasks=$(sacct -j "$array_job_id" --format=JobID,State --noheader --parsable2 2>/dev/null | grep "${array_job_id}_" | grep -E "FAILED|CANCELLED|TIMEOUT" | wc -l)
+            total_tasks=$(sacct -j "$array_job_id" --format=JobID,State --noheader --parsable2 2>/dev/null | grep "${array_job_id}_" | wc -l)
 
-            # Check if job failed
-            if [[ "$job_status" =~ ^(FAILED|CANCELLED|TIMEOUT)$ ]]; then
-                echo "ERROR: Array job $array_job_id failed with status: $job_status"
+            if [[ $failed_tasks -gt 0 ]]; then
+                echo "ERROR: $failed_tasks out of $total_tasks array tasks failed for job $array_job_id"
+                echo "Failed tasks:"
+                sacct -j "$array_job_id" --format=JobID,State --noheader --parsable2 2>/dev/null | grep "${array_job_id}_" | grep -E "FAILED|CANCELLED|TIMEOUT"
                 echo "Check array job logs in: $BASE_OUT/../array_${array_job_id}/"
                 exit 1
+            else
+                echo "✓ Array job $array_job_id: all $total_tasks tasks completed successfully"
             fi
         fi
     done < "$job_file"

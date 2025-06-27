@@ -14,6 +14,7 @@ import logging
 import sys
 import os
 import shutil
+import signal
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 import subprocess
@@ -209,6 +210,7 @@ class WorkflowOrchestrator:
         self.cpu_login = cpu_login
         self.gpu_login = gpu_login
         self.workflow_logger = None
+        self.submitted_jobs = []  # Track jobs for cancellation
 
         # Validate that SSH command is available
         try:
@@ -357,6 +359,9 @@ class WorkflowOrchestrator:
             raise RuntimeError(error_msg)
 
         job_id = int(job_id_match.group(1))
+
+        # Track this job for potential cancellation
+        self.submitted_jobs.append((host, job_id, step_name))
 
         # Log the job submission
         if self.workflow_logger:
@@ -692,6 +697,16 @@ class WorkflowOrchestrator:
         self, dataset_config_name: str, workflow_config: DictConfig, force: bool = False
     ) -> None:
         """Run the complete workflow locally on the cluster, waiting for each step to complete."""
+
+        # Set up signal handlers for graceful cancellation
+        def signal_handler(signum, frame):
+            logger.info(f"Received signal {signum}, cancelling all jobs...")
+            self.cancel_all_jobs()
+            sys.exit(1)
+
+        signal.signal(signal.SIGINT, signal_handler)  # Ctrl+C
+        signal.signal(signal.SIGTERM, signal_handler)  # Termination signal
+
         # Initialize the workflow logger
         master_job_id = os.environ.get(
             "SLURM_JOB_ID", f"local_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
@@ -882,6 +897,32 @@ class WorkflowOrchestrator:
         logger.info("=== Workflow Complete ===")
         logger.info("All steps have been completed successfully.")
 
+    def cancel_all_jobs(self) -> None:
+        """Cancel all submitted jobs."""
+        if not self.submitted_jobs:
+            logger.info("No jobs to cancel")
+            return
+
+        logger.info(f"Cancelling {len(self.submitted_jobs)} submitted jobs...")
+
+        for host, job_id, step_name in self.submitted_jobs:
+            try:
+                # Cancel the job (this will also cancel any array jobs it spawned)
+                cmd = ["ssh", host, f"scancel {job_id}"]
+                result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+
+                if result.returncode == 0:
+                    logger.info(f"✓ Cancelled {step_name} job {job_id} on {host}")
+                else:
+                    logger.warning(
+                        f"Failed to cancel job {job_id} on {host}: {result.stderr}"
+                    )
+
+            except Exception as e:
+                logger.warning(f"Error cancelling job {job_id} on {host}: {e}")
+
+        logger.info("Job cancellation complete")
+
     def _wait_for_job_completion(self, host: str, job_id: int, step_name: str) -> None:
         """Wait for a SLURM job to complete and check for errors."""
         logger.info(f"Waiting for {step_name} job {job_id} to complete...")
@@ -904,21 +945,20 @@ class WorkflowOrchestrator:
                 )
 
                 if exit_result.returncode == 0 and exit_result.stdout.strip():
-                    # Parse the job state
+                    # Parse the job state - only check the main job
                     lines = exit_result.stdout.strip().split("\n")
-                    main_job_completed = False
-                    array_jobs = []
-
                     for line in lines:
-                        parts = line.split()
-                        if len(parts) >= 2:
-                            job_id_str = parts[0]
-                            state = parts[1]
-
-                            if job_id_str == str(job_id):
-                                # This is the main job
+                        if (
+                            str(job_id) in line and "_" not in line.split()[0]
+                        ):  # Main job only, not array tasks
+                            parts = line.split()
+                            if len(parts) >= 2:
+                                state = parts[1]
                                 if state in ["COMPLETED", "COMPLETED+"]:
-                                    main_job_completed = True
+                                    logger.info(
+                                        f"✓ {step_name} job {job_id} completed successfully"
+                                    )
+                                    return
                                 elif state in ["FAILED", "CANCELLED", "TIMEOUT"]:
                                     error_msg = f"✗ {step_name} job {job_id} failed with state: {state}"
                                     logger.error(error_msg)
@@ -934,27 +974,11 @@ class WorkflowOrchestrator:
                                                 f"{datetime.now().isoformat()} - {error_msg}\n"
                                             )
                                     raise RuntimeError(error_msg)
-                            elif job_id_str.startswith(f"{job_id}_"):
-                                # This is an array job task
-                                array_jobs.append((job_id_str, state))
-
-                    # If this is an array job master, wait for all array tasks
-                    if array_jobs:
-                        logger.info(
-                            f"Found {len(array_jobs)} array job tasks for job {job_id}"
-                        )
-                        self._wait_for_array_jobs(host, job_id, array_jobs, step_name)
-                        return
-                    elif main_job_completed:
-                        logger.info(
-                            f"✓ {step_name} job {job_id} completed successfully"
-                        )
-                        return
-                    else:
-                        logger.warning(
-                            f"? {step_name} job {job_id} ended with unknown state"
-                        )
-                        return
+                                else:
+                                    logger.warning(
+                                        f"? {step_name} job {job_id} ended with unknown state: {state}"
+                                    )
+                                    return
 
                 # If we can't get detailed status, assume it completed
                 logger.info(f"✓ {step_name} job {job_id} completed")
@@ -965,100 +989,6 @@ class WorkflowOrchestrator:
             import time
 
             time.sleep(60)  # Wait 1 minute before checking again
-
-    def _wait_for_array_jobs(
-        self,
-        host: str,
-        master_job_id: int,
-        array_jobs: List[Tuple[str, str]],
-        step_name: str,
-    ) -> None:
-        """Wait for all array job tasks to complete."""
-        logger.info(f"Waiting for {len(array_jobs)} array job tasks to complete...")
-
-        # For GPU jobs, we need to check on the GPU cluster
-        check_host = host
-        if "GPU" in step_name and self.gpu_login:
-            check_host = f"{self.gpu_login['user']}@{self.gpu_login['host']}"
-            logger.info(f"Checking array jobs on GPU cluster: {check_host}")
-
-        completed_jobs = set()
-        failed_jobs = []
-
-        while len(completed_jobs) < len(array_jobs):
-            # Check status of all array jobs
-            cmd = [
-                "ssh",
-                check_host,
-                f"sacct -j {master_job_id} --format=JobID,State --noheader --parsable2",
-            ]
-            result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
-
-            if result.returncode != 0:
-                logger.warning(f"Failed to check array job status: {result.stderr}")
-                import time
-
-                time.sleep(30)
-                continue
-
-            # Parse the output
-            current_status = {}
-            for line in result.stdout.strip().split("\n"):
-                if "|" in line:
-                    job_id_str, state = line.split("|", 1)
-                    if job_id_str.startswith(f"{master_job_id}_"):
-                        current_status[job_id_str] = state
-
-            # Check each array job
-            for array_job_id, _ in array_jobs:
-                if array_job_id in completed_jobs:
-                    continue
-
-                state = current_status.get(array_job_id, "UNKNOWN")
-
-                if state in ["COMPLETED", "COMPLETED+"]:
-                    completed_jobs.add(array_job_id)
-                    logger.info(f"✓ Array job {array_job_id} completed")
-                elif state in ["FAILED", "CANCELLED", "TIMEOUT"]:
-                    failed_jobs.append((array_job_id, state))
-                    completed_jobs.add(array_job_id)  # Mark as "done" even if failed
-                    logger.error(
-                        f"✗ Array job {array_job_id} failed with state: {state}"
-                    )
-                elif state in ["PENDING", "RUNNING"]:
-                    # Still running, continue waiting
-                    pass
-                else:
-                    logger.warning(
-                        f"? Array job {array_job_id} has unknown state: {state}"
-                    )
-
-            # Log progress
-            if len(completed_jobs) < len(array_jobs):
-                remaining = len(array_jobs) - len(completed_jobs)
-                logger.info(
-                    f"  {len(completed_jobs)}/{len(array_jobs)} array jobs completed, {remaining} remaining..."
-                )
-                import time
-
-                time.sleep(30)  # Check every 30 seconds
-
-        # Check if any jobs failed
-        if failed_jobs:
-            error_msg = f"✗ {len(failed_jobs)} array jobs failed: {failed_jobs}"
-            logger.error(error_msg)
-            # Log to consolidated error log
-            if self.workflow_logger:
-                error_log_path = (
-                    self.workflow_logger.workflow_dir
-                    / "logs"
-                    / "errors_consolidated.log"
-                )
-                with open(error_log_path, "a") as f:
-                    f.write(f"{datetime.now().isoformat()} - {error_msg}\n")
-            raise RuntimeError(error_msg)
-
-        logger.info(f"✓ All {len(array_jobs)} array job tasks completed successfully")
 
     def _load_dataset_config(self, dataset_config_name: str) -> DictConfig:
         """Load the dataset configuration."""
@@ -1106,6 +1036,15 @@ def main(cfg: DictConfig):
     # Create orchestrator from workflow config
     orchestrator = create_orchestrator_from_config(cfg)
 
+    # Set up signal handlers for graceful cancellation
+    def signal_handler(signum, frame):
+        logger.info(f"Received signal {signum}, cancelling all jobs...")
+        orchestrator.cancel_all_jobs()
+        sys.exit(1)
+
+    signal.signal(signal.SIGINT, signal_handler)  # Ctrl+C
+    signal.signal(signal.SIGTERM, signal_handler)  # Termination signal
+
     # Get the dataset config name from the config
     dataset_config_name = cfg.get("dataset_config_name", "dataset_test_workflow")
     logger.info(f"Using dataset config: {dataset_config_name}")
@@ -1118,7 +1057,17 @@ def main(cfg: DictConfig):
     if force:
         logger.warning("Running with --force flag (skipping config sync validation)")
 
-    orchestrator.run_workflow(dataset_config_name, workflow_config, force=force)
+    try:
+        orchestrator.run_workflow(dataset_config_name, workflow_config, force=force)
+    except KeyboardInterrupt:
+        logger.info("Workflow interrupted by user, cancelling jobs...")
+        orchestrator.cancel_all_jobs()
+        sys.exit(1)
+    except Exception as e:
+        logger.error(f"Workflow failed: {e}")
+        logger.info("Cancelling any remaining jobs...")
+        orchestrator.cancel_all_jobs()
+        raise
 
 
 if __name__ == "__main__":
