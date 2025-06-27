@@ -190,7 +190,7 @@ class EmbeddingLauncher:
         # Determine partition based on mode
         partition = None
         if self.mode == "cpu":
-            partition = "cpu"
+            partition = os.environ.get("SLURM_PARTITION", "slurm")
         elif self.mode == "gpu":
             partition = os.environ.get("SLURM_PARTITION", "gpu")
 
