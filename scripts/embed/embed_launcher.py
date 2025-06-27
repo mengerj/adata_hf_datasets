@@ -221,18 +221,8 @@ class EmbeddingLauncher:
         }
 
         # Add environment variables to sbatch command
-        # Quote values that contain spaces or special characters
-        env_pairs = []
-        for k, v in env_vars.items():
-            # Escape any quotes in the value and wrap in quotes if needed
-            if " " in str(v) or "," in str(v) or "'" in str(v) or '"' in str(v):
-                # Escape any existing quotes and wrap in quotes
-                escaped_v = str(v).replace('"', '\\"')
-                env_pairs.append(f'{k}="{escaped_v}"')
-            else:
-                env_pairs.append(f"{k}={v}")
+        env_str = ",".join([f"{k}={v}" for k, v in env_vars.items()])
 
-        env_str = ",".join(env_pairs)
         sbatch_cmd.extend(["--export", f"ALL,{env_str}"])
 
         # Add the script path
