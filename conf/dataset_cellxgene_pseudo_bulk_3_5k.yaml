@@ -45,16 +45,16 @@ embedding_preparation:
 
 # Embedding overrides (both dataset-specific and execution parameters)
 embedding_cpu:
-  enabled: false
+  enabled: true
   methods: ["hvg", "pca"]
 
 embedding_gpu:
   enabled: true
-  methods: ["geneformer", "scvi_fm"]
+  methods: ["geneformer"]
 
 # Dataset creation overrides
 dataset_creation:
-  enabled: false
+  enabled: true
   # Dataset-specific parameters
   required_obsm_keys: ["X_pca", "X_scvi_fm", "X_hvg", "X_geneformer"]
   cs_length: 20
