@@ -2,6 +2,7 @@
 #SBATCH --job-name=pp
 #SBATCH --mem=35G               # Request memory
 #SBATCH --time=24:00:00         # Max job time
+#SBATCH --partition=slurm
 
 # ─────────────────────────────────────────────────────────────────────────────
 # 0) Define a unified RUN_ID: real array job ID under SLURM, or a timestamp locally
