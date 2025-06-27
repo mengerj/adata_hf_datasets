@@ -37,6 +37,16 @@ preprocessing:
   chunk_size: 100000
   split_dataset: true # Important for training datasets. Set to false for test datasets. (Similar parameters in dataset_creation)
   count_layer_key: "counts" # Key in adata.layers with raw counts. If not present, adata.raw.X is checked.
+  # Bimodal splitting (for specific datasets)
+  split_bimodal: true
+  bimodal_col: readsaligned
+
+  # SRA metadata fetching (dataset-specific)
+  skip_sra_fetch: false
+  sra_max_retries: 3
+  sra_continue_on_fail: true
+  sra_chunk_size: null
+  sra_extra_cols: ["instrument", "library_layout"]
 
 # Embedding preparation overrides
 embedding_preparation:
