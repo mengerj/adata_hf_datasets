@@ -48,7 +48,7 @@ source .venv/bin/activate
 
 # Run the embedding preparation script with parameters from the dataset config
 # Force CPU mode and prepare_only=true for this step
-python scripts/embed/run_embed_with_config.py --config-name "$DATASET_CONFIG" --prepare-only --cpu-only
+python scripts/embed/embed_configure_submit_parallel_sh.py --config-name "$DATASET_CONFIG" --prepare-only --cpu-only
 
 # Wait for array jobs to complete if we're running under SLURM
 if [[ -n "${SLURM_JOB_ID:-}" ]]; then

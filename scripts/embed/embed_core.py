@@ -538,5 +538,5 @@ if __name__ == "__main__":
         main()
         logger.info("Embedding python script completed successfully.")
     except Exception:
-        logger.exception("Fatal error in embed_adata.py")
+        logger.exception("Fatal error in embed_core.py")
         sys.exit(1)

@@ -49,7 +49,24 @@ def extract_embedding_params(
         mode = os.environ.get("MODE", "gpu")
         logger.info(f"Using MODE from environment: {mode}")
 
-    if mode == "cpu":
+    # Determine which embedding config to use and which methods to extract
+    if force_prepare_only or force_cpu_only:
+        # For embedding preparation, use embedding_preparation config if available
+        if (
+            hasattr(config, "embedding_preparation")
+            and config.embedding_preparation is not None
+        ):
+            embedding_config = config.embedding_preparation
+            logger.info(
+                "Using embedding_preparation configuration for prepare-only mode"
+            )
+        else:
+            # Fallback to CPU config for preparation
+            embedding_config = config.embedding_cpu
+            logger.info(
+                "Using CPU embedding configuration for prepare-only mode (fallback)"
+            )
+    elif mode == "cpu":
         embedding_config = config.embedding_cpu
         logger.info("Using CPU embedding configuration")
     elif mode == "gpu":
@@ -110,7 +127,7 @@ def extract_embedding_params(
 
 def run_embedding_script(params: dict) -> None:
     """Run the embedding bash script with the given parameters."""
-    script_path = Path("scripts/embed/run_embed_parallel.sh")
+    script_path = Path("scripts/embed/embed_submit_parallel.sh")
 
     if not script_path.exists():
         raise FileNotFoundError(f"Embedding script not found: {script_path}")

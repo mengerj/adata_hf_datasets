@@ -126,7 +126,7 @@ if [[ -z "${SLURM_ARRAY_JOB_ID:-}" ]]; then
         fi
         mkdir -p "$OUTDIR"
         echo "[LOCAL][${idx}] → $OUTDIR"
-        python3 scripts/embed/embed_adata.py \
+        python3 scripts/embed/embed_core.py \
           --config-name="${DATASET_CONFIG:-dataset_cellxgene_pseudo_bulk_3_5k}" \
           ++prepare_only='"$PREPARE_ONLY"' \
           ++"$EMBEDDING_SECTION".methods="'"$METHODS_JSON"'" \
@@ -155,7 +155,7 @@ fi
 echo "[${RUN_ID}:${SLURM_ARRAY_TASK_ID}] Processing $this_file ($MODE_STR)"
 
 echo "[${RUN_ID}:${SLURM_ARRAY_TASK_ID}] Running methods: $METHODS_JSON"
-python3 scripts/embed/embed_adata.py \
+python3 scripts/embed/embed_core.py \
     --config-name="${DATASET_CONFIG:-dataset_cellxgene_pseudo_bulk_3_5k}" \
     ++prepare_only="$PREPARE_ONLY" \
     ++"$EMBEDDING_SECTION".methods="$METHODS_JSON" \

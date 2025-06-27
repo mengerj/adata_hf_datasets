@@ -61,7 +61,7 @@ source .venv/bin/activate
 # Run the embedding script with parameters from the dataset config
 # We'll use a Python script to extract parameters and run the bash script
 
-python scripts/embed/run_embed_with_config.py --config-name "$DATASET_CONFIG"
+python scripts/embed/embed_configure_submit_parallel_sh.py --config-name "$DATASET_CONFIG"
 
 # Wait for array jobs to complete if we're running under SLURM
 if [[ -n "${SLURM_JOB_ID:-}" ]]; then
