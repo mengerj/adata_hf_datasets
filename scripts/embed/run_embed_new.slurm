@@ -120,60 +120,94 @@ if [[ -f "$job_file" ]]; then
     echo "Found array job IDs file: $job_file"
 
     # Read and wait for each array job
-    while IFS= read -r array_job_id; do
-        if [[ -n "$array_job_id" && "$array_job_id" =~ ^[0-9]+$ ]]; then
-            echo "Waiting for array job $array_job_id to complete..."
+    while IFS= read -r job_line; do
+        # Parse job line format: job_id:cluster_type:host
+        if [[ -n "$job_line" ]]; then
+            # Split the line by colons
+            IFS=':' read -r array_job_id cluster_type cluster_host <<< "$job_line"
 
-            # Wait for ALL array job tasks to complete
-            # Use sacct to check for any running/pending array tasks
-            while true; do
-                # Get all array job states - handle grep exit codes properly
-                # Temporarily disable pipefail for commands that can legitimately fail
-                set +o pipefail
-                array_states=$(sacct -j "$array_job_id" --format=JobID,State --noheader --parsable2 2>/dev/null | grep "${array_job_id}_" | cut -d'|' -f2 || true)
-                set -o pipefail
+            # Validate job ID
+            if [[ -n "$array_job_id" && "$array_job_id" =~ ^[0-9]+$ ]]; then
+                echo "Waiting for array job $array_job_id to complete (cluster: $cluster_type, host: $cluster_host)..."
 
-                if [[ -z "$array_states" ]]; then
-                    # No array tasks found yet, wait a bit
-                    echo "  No array tasks found yet for job $array_job_id, waiting..."
-                    sleep 30
-                    continue
-                fi
+                # Wait for ALL array job tasks to complete
+                # Use sacct to check for any running/pending array tasks
+                while true; do
+                    # Get all array job states - handle grep exit codes properly
+                    # Choose the appropriate command based on cluster type
+                    if [[ "$cluster_type" == "gpu" && "$cluster_host" != "local" ]]; then
+                        # GPU job - use SSH to check status on remote cluster
+                        set +o pipefail
+                        array_states=$(ssh "$cluster_host" "sacct -j $array_job_id --format=JobID,State --noheader --parsable2 2>/dev/null" | grep "${array_job_id}_" | cut -d'|' -f2 || true)
+                        set -o pipefail
+                        echo "  Checking GPU job $array_job_id status via SSH to $cluster_host"
+                    else
+                        # CPU job - check locally
+                        set +o pipefail
+                        array_states=$(sacct -j "$array_job_id" --format=JobID,State --noheader --parsable2 2>/dev/null | grep "${array_job_id}_" | cut -d'|' -f2 || true)
+                        set -o pipefail
+                        echo "  Checking CPU job $array_job_id status locally"
+                    fi
 
-                # Check if any tasks are still running or pending - handle grep exit codes
-                set +o pipefail
-                running_count=$(echo "$array_states" | grep -E "^(PENDING|RUNNING|COMPLETING)$" | wc -l || echo "0")
-                set -o pipefail
+                    if [[ -z "$array_states" ]]; then
+                        # No array tasks found yet, wait a bit
+                        echo "  No array tasks found yet for job $array_job_id, waiting..."
+                        sleep 30
+                        continue
+                    fi
 
-                total_count=$(echo "$array_states" | wc -l)
-                completed_count=$((total_count - running_count))
+                    # Check if any tasks are still running or pending - handle grep exit codes
+                    set +o pipefail
+                    running_count=$(echo "$array_states" | grep -E "^(PENDING|RUNNING|COMPLETING)$" | wc -l || echo "0")
+                    set -o pipefail
 
-                if [[ $running_count -eq 0 ]]; then
-                    echo "  All $total_count array tasks completed"
-                    break
+                    total_count=$(echo "$array_states" | wc -l)
+                    completed_count=$((total_count - running_count))
+
+                    if [[ $running_count -eq 0 ]]; then
+                        echo "  All $total_count array tasks completed"
+                        break
+                    else
+                        echo "  Array job $array_job_id: $completed_count/$total_count tasks completed, $running_count still running..."
+                        sleep 30
+                    fi
+                done
+
+                # Check final status of all array tasks - handle grep exit codes
+                if [[ "$cluster_type" == "gpu" && "$cluster_host" != "local" ]]; then
+                    # GPU job - use SSH for final status check
+                    set +o pipefail
+                    failed_tasks=$(ssh "$cluster_host" "sacct -j $array_job_id --format=JobID,State --noheader --parsable2 2>/dev/null" | grep "${array_job_id}_" | grep -E "FAILED|CANCELLED|TIMEOUT" | wc -l || echo "0")
+                    total_tasks=$(ssh "$cluster_host" "sacct -j $array_job_id --format=JobID,State --noheader --parsable2 2>/dev/null" | grep "${array_job_id}_" | wc -l || echo "0")
+                    set -o pipefail
                 else
-                    echo "  Array job $array_job_id: $completed_count/$total_count tasks completed, $running_count still running..."
-                    sleep 30
+                    # CPU job - check locally
+                    set +o pipefail
+                    failed_tasks=$(sacct -j "$array_job_id" --format=JobID,State --noheader --parsable2 2>/dev/null | grep "${array_job_id}_" | grep -E "FAILED|CANCELLED|TIMEOUT" | wc -l || echo "0")
+                    total_tasks=$(sacct -j "$array_job_id" --format=JobID,State --noheader --parsable2 2>/dev/null | grep "${array_job_id}_" | wc -l || echo "0")
+                    set -o pipefail
                 fi
-            done
 
-            # Check final status of all array tasks - handle grep exit codes
-            set +o pipefail
-            failed_tasks=$(sacct -j "$array_job_id" --format=JobID,State --noheader --parsable2 2>/dev/null | grep "${array_job_id}_" | grep -E "FAILED|CANCELLED|TIMEOUT" | wc -l || echo "0")
-            total_tasks=$(sacct -j "$array_job_id" --format=JobID,State --noheader --parsable2 2>/dev/null | grep "${array_job_id}_" | wc -l || echo "0")
-            set -o pipefail
-
-            if [[ $failed_tasks -gt 0 ]]; then
-                echo "ERROR: $failed_tasks out of $total_tasks array tasks failed for job $array_job_id"
-                echo "Failed tasks:"
-                # Show failed tasks - disable pipefail for this command too
-                set +o pipefail
-                sacct -j "$array_job_id" --format=JobID,State --noheader --parsable2 2>/dev/null | grep "${array_job_id}_" | grep -E "FAILED|CANCELLED|TIMEOUT" || echo "Could not retrieve failed task details"
-                set -o pipefail
-                echo "Check array job logs in: $BASE_OUT/../array_${array_job_id}/"
-                exit 1
+                if [[ $failed_tasks -gt 0 ]]; then
+                    echo "ERROR: $failed_tasks out of $total_tasks array tasks failed for job $array_job_id"
+                    echo "Failed tasks:"
+                    # Show failed tasks - disable pipefail for this command too
+                    if [[ "$cluster_type" == "gpu" && "$cluster_host" != "local" ]]; then
+                        set +o pipefail
+                        ssh "$cluster_host" "sacct -j $array_job_id --format=JobID,State --noheader --parsable2 2>/dev/null" | grep "${array_job_id}_" | grep -E "FAILED|CANCELLED|TIMEOUT" || echo "Could not retrieve failed task details"
+                        set -o pipefail
+                    else
+                        set +o pipefail
+                        sacct -j "$array_job_id" --format=JobID,State --noheader --parsable2 2>/dev/null | grep "${array_job_id}_" | grep -E "FAILED|CANCELLED|TIMEOUT" || echo "Could not retrieve failed task details"
+                        set -o pipefail
+                    fi
+                    echo "Check array job logs in: $BASE_OUT/../array_${array_job_id}/"
+                    exit 1
+                else
+                    echo "✓ Array job $array_job_id: all $total_tasks tasks completed successfully"
+                fi
             else
-                echo "✓ Array job $array_job_id: all $total_tasks tasks completed successfully"
+                echo "Warning: Invalid job line format: $job_line"
             fi
         fi
     done < "$job_file"

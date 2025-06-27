@@ -296,8 +296,20 @@ class EmbeddingLauncher:
             job_file = f"/tmp/embedding_array_jobs_{os.environ.get('SLURM_JOB_ID', 'local')}.txt"
             try:
                 with open(job_file, "a") as f:  # Use append mode
-                    f.write(f"{job_id}\n")
-                logger.info(f"✓ Job ID {job_id} written to tracking file: {job_file}")
+                    # Include cluster information for cross-cluster monitoring
+                    if self.mode == "gpu" and os.environ.get("GPU_HOST"):
+                        # GPU job - include cluster info
+                        gpu_host = os.environ.get("GPU_HOST")
+                        f.write(f"{job_id}:gpu:{gpu_host}\n")
+                        logger.info(
+                            f"✓ Job ID {job_id} written to tracking file (GPU cluster: {gpu_host}): {job_file}"
+                        )
+                    else:
+                        # CPU job - local cluster
+                        f.write(f"{job_id}:cpu:local\n")
+                        logger.info(
+                            f"✓ Job ID {job_id} written to tracking file (CPU cluster): {job_file}"
+                        )
             except Exception as write_error:
                 logger.warning(
                     f"Failed to write job ID to tracking file: {write_error}"
@@ -355,32 +367,71 @@ class EmbeddingLauncher:
 
         for job_id in self.job_ids:
             logger.info(f"Waiting for job {job_id}...")
-            while True:
-                try:
-                    # Check if job is still in queue
-                    result = subprocess.run(
-                        ["squeue", "-j", str(job_id), "--noheader"],
-                        capture_output=True,
-                        text=True,
-                        timeout=30,
-                    )
 
-                    if result.returncode != 0 or not result.stdout.strip():
-                        # Job is no longer in queue
-                        logger.info(f"✓ Job {job_id} completed")
+            # Determine which cluster this job is on
+            if self.mode == "gpu" and os.environ.get("GPU_HOST"):
+                # GPU job - use SSH to check status
+                gpu_host = os.environ.get("GPU_HOST")
+                logger.info(f"Monitoring GPU job {job_id} via SSH to {gpu_host}")
+
+                while True:
+                    try:
+                        # Check if job is still in queue via SSH
+                        ssh_cmd = ["ssh", gpu_host, f"squeue -j {job_id} --noheader"]
+                        result = subprocess.run(
+                            ssh_cmd, capture_output=True, text=True, timeout=30
+                        )
+
+                        if result.returncode != 0 or not result.stdout.strip():
+                            # Job is no longer in queue
+                            logger.info(f"✓ GPU job {job_id} completed")
+                            break
+
+                        # Job is still running
+                        import time
+
+                        time.sleep(30)
+
+                    except subprocess.TimeoutExpired:
+                        logger.warning(f"Timeout checking status of GPU job {job_id}")
                         break
+                    except Exception as e:
+                        logger.warning(
+                            f"Error checking status of GPU job {job_id}: {e}"
+                        )
+                        break
+            else:
+                # CPU job - check locally
+                logger.info(f"Monitoring CPU job {job_id} locally")
 
-                    # Job is still running
-                    import time
+                while True:
+                    try:
+                        # Check if job is still in queue
+                        result = subprocess.run(
+                            ["squeue", "-j", str(job_id), "--noheader"],
+                            capture_output=True,
+                            text=True,
+                            timeout=30,
+                        )
 
-                    time.sleep(30)
+                        if result.returncode != 0 or not result.stdout.strip():
+                            # Job is no longer in queue
+                            logger.info(f"✓ CPU job {job_id} completed")
+                            break
 
-                except subprocess.TimeoutExpired:
-                    logger.warning(f"Timeout checking status of job {job_id}")
-                    break
-                except Exception as e:
-                    logger.warning(f"Error checking status of job {job_id}: {e}")
-                    break
+                        # Job is still running
+                        import time
+
+                        time.sleep(30)
+
+                    except subprocess.TimeoutExpired:
+                        logger.warning(f"Timeout checking status of CPU job {job_id}")
+                        break
+                    except Exception as e:
+                        logger.warning(
+                            f"Error checking status of CPU job {job_id}: {e}"
+                        )
+                        break
 
         logger.info("✓ All array jobs completed")
 
@@ -454,17 +505,26 @@ def main():
         )
         try:
             # Ensure all job IDs are in the file (in case some immediate writes failed)
-            existing_ids = set()
+            existing_entries = set()
             if os.path.exists(job_file):
                 with open(job_file, "r") as f:
-                    existing_ids = {line.strip() for line in f if line.strip()}
+                    for line in f:
+                        if line.strip():
+                            # Extract job ID from the line (format: job_id:cluster_type:host)
+                            job_id_part = line.strip().split(":")[0]
+                            existing_entries.add(job_id_part)
 
             # Write any missing job IDs
-            missing_ids = [str(jid) for jid in job_ids if str(jid) not in existing_ids]
+            missing_ids = [jid for jid in job_ids if str(jid) not in existing_entries]
             if missing_ids:
                 with open(job_file, "a") as f:
                     for job_id in missing_ids:
-                        f.write(f"{job_id}\n")
+                        # Determine cluster info for missing job IDs
+                        if args.mode == "gpu" and os.environ.get("GPU_HOST"):
+                            gpu_host = os.environ.get("GPU_HOST")
+                            f.write(f"{job_id}:gpu:{gpu_host}\n")
+                        else:
+                            f.write(f"{job_id}:cpu:local\n")
                 logger.info(f"✓ Added missing job IDs to tracking file: {missing_ids}")
 
             logger.info(f"✓ Final job IDs tracking file: {job_file}")
