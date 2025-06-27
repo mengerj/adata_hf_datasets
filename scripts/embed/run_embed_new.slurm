@@ -4,7 +4,7 @@
 #SBATCH --mem=32G
 #SBATCH --cpus-per-task=4
 
-# Exit on any error
+# Exit on any error, but be more careful about pipefail
 set -euo pipefail
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -127,8 +127,11 @@ if [[ -f "$job_file" ]]; then
             # Wait for ALL array job tasks to complete
             # Use sacct to check for any running/pending array tasks
             while true; do
-                # Get all array job states
-                array_states=$(sacct -j "$array_job_id" --format=JobID,State --noheader --parsable2 2>/dev/null | grep "${array_job_id}_" | cut -d'|' -f2)
+                # Get all array job states - handle grep exit codes properly
+                # Temporarily disable pipefail for commands that can legitimately fail
+                set +o pipefail
+                array_states=$(sacct -j "$array_job_id" --format=JobID,State --noheader --parsable2 2>/dev/null | grep "${array_job_id}_" | cut -d'|' -f2 || true)
+                set -o pipefail
 
                 if [[ -z "$array_states" ]]; then
                     # No array tasks found yet, wait a bit
@@ -137,8 +140,11 @@ if [[ -f "$job_file" ]]; then
                     continue
                 fi
 
-                # Check if any tasks are still running or pending
-                running_count=$(echo "$array_states" | grep -E "^(PENDING|RUNNING|COMPLETING)$" | wc -l)
+                # Check if any tasks are still running or pending - handle grep exit codes
+                set +o pipefail
+                running_count=$(echo "$array_states" | grep -E "^(PENDING|RUNNING|COMPLETING)$" | wc -l || echo "0")
+                set -o pipefail
+
                 total_count=$(echo "$array_states" | wc -l)
                 completed_count=$((total_count - running_count))
 
@@ -151,14 +157,19 @@ if [[ -f "$job_file" ]]; then
                 fi
             done
 
-            # Check final status of all array tasks
-            failed_tasks=$(sacct -j "$array_job_id" --format=JobID,State --noheader --parsable2 2>/dev/null | grep "${array_job_id}_" | grep -E "FAILED|CANCELLED|TIMEOUT" | wc -l)
-            total_tasks=$(sacct -j "$array_job_id" --format=JobID,State --noheader --parsable2 2>/dev/null | grep "${array_job_id}_" | wc -l)
+            # Check final status of all array tasks - handle grep exit codes
+            set +o pipefail
+            failed_tasks=$(sacct -j "$array_job_id" --format=JobID,State --noheader --parsable2 2>/dev/null | grep "${array_job_id}_" | grep -E "FAILED|CANCELLED|TIMEOUT" | wc -l || echo "0")
+            total_tasks=$(sacct -j "$array_job_id" --format=JobID,State --noheader --parsable2 2>/dev/null | grep "${array_job_id}_" | wc -l || echo "0")
+            set -o pipefail
 
             if [[ $failed_tasks -gt 0 ]]; then
                 echo "ERROR: $failed_tasks out of $total_tasks array tasks failed for job $array_job_id"
                 echo "Failed tasks:"
-                sacct -j "$array_job_id" --format=JobID,State --noheader --parsable2 2>/dev/null | grep "${array_job_id}_" | grep -E "FAILED|CANCELLED|TIMEOUT"
+                # Show failed tasks - disable pipefail for this command too
+                set +o pipefail
+                sacct -j "$array_job_id" --format=JobID,State --noheader --parsable2 2>/dev/null | grep "${array_job_id}_" | grep -E "FAILED|CANCELLED|TIMEOUT" || echo "Could not retrieve failed task details"
+                set -o pipefail
                 echo "Check array job logs in: $BASE_OUT/../array_${array_job_id}/"
                 exit 1
             else

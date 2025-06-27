@@ -31,13 +31,20 @@ logger = logging.getLogger(__name__)
 WORKFLOW_DIR = os.environ.get("WORKFLOW_DIR")
 if WORKFLOW_DIR:
     error_log_path = os.path.join(WORKFLOW_DIR, "logs", "errors_consolidated.log")
-    error_handler = logging.FileHandler(error_log_path, mode="a")
-    error_handler.setLevel(logging.ERROR)
-    formatter = logging.Formatter(
-        "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
-    )
-    error_handler.setFormatter(formatter)
-    logging.getLogger().addHandler(error_handler)
+    try:
+        # Ensure the directory exists before creating the log file
+        os.makedirs(os.path.dirname(error_log_path), exist_ok=True)
+        error_handler = logging.FileHandler(error_log_path, mode="a")
+        error_handler.setLevel(logging.ERROR)
+        formatter = logging.Formatter(
+            "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+        )
+        error_handler.setFormatter(formatter)
+        logging.getLogger().addHandler(error_handler)
+    except Exception as e:
+        # Don't fail if we can't set up the error log - just continue without it
+        print(f"Warning: Could not set up error logging to {error_log_path}: {e}")
+        print("Continuing without centralized error logging...")
 
 
 class EmbeddingLauncher:
