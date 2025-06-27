@@ -427,19 +427,22 @@ class WorkflowOrchestrator:
         workflow_config: DictConfig,
         dependency_job_id: Optional[int] = None,
     ) -> Optional[int]:
-        """Run the embedding preparation step on CPU and return job ID."""
-        logger.info("=== Starting Embedding Preparation Step ===")
-        script_path = Path("scripts/embed/run_embed_prepare.slurm")
+        """Run the embedding preparation step using the new simplified structure."""
+        logger.info("=== Starting Embedding Preparation Step (New) ===")
+        script_path = Path("scripts/embed/run_embed_new.slurm")
         dependencies = [dependency_job_id] if dependency_job_id else None
 
         logger.info(f"Using dataset config: {dataset_config_name}")
 
-        # Pass the dataset config name and workflow directory as environment variables
+        # Pass the dataset config name, workflow directory, and mode settings as environment variables
         env_vars = {
             "DATASET_CONFIG": dataset_config_name,
             "WORKFLOW_DIR": str(self.workflow_logger.workflow_dir)
             if self.workflow_logger
             else "",
+            "MODE": "cpu",  # Preparation typically runs on CPU
+            "PREPARE_ONLY": "true",  # This is preparation mode
+            "SLURM_PARTITION": workflow_config.cpu_partition,
         }
 
         job_id = self._submit_slurm_job(
@@ -458,21 +461,22 @@ class WorkflowOrchestrator:
         workflow_config: DictConfig,
         dependency_job_id: Optional[int] = None,
     ) -> Optional[int]:
-        """Run the CPU embedding step and return job ID."""
-        logger.info("=== Starting CPU Embedding Step ===")
-        script_path = Path("scripts/embed/run_embed_parallel.slurm")
+        """Run the CPU embedding step using the new simplified structure."""
+        logger.info("=== Starting CPU Embedding Step (New) ===")
+        script_path = Path("scripts/embed/run_embed_new.slurm")
         dependencies = [dependency_job_id] if dependency_job_id else None
 
         logger.info(f"Using dataset config: {dataset_config_name}")
 
-        # Pass the dataset config name, workflow directory, and SLURM partition as environment variables
+        # Pass the dataset config name, workflow directory, and mode settings as environment variables
         env_vars = {
             "DATASET_CONFIG": dataset_config_name,
             "WORKFLOW_DIR": str(self.workflow_logger.workflow_dir)
             if self.workflow_logger
             else "",
-            "SLURM_PARTITION": workflow_config.cpu_partition,
             "MODE": "cpu",  # Force CPU mode
+            "PREPARE_ONLY": "false",  # This is full embedding mode
+            "SLURM_PARTITION": workflow_config.cpu_partition,
         }
 
         job_id = self._submit_slurm_job(
@@ -491,27 +495,35 @@ class WorkflowOrchestrator:
         workflow_config: DictConfig,
         dependency_job_id: Optional[int] = None,
     ) -> Optional[int]:
-        """Run the GPU embedding step and return job ID."""
-        logger.info("=== Starting GPU Embedding Step ===")
-        script_path = Path("scripts/embed/run_embed_parallel.slurm")
+        """Run the GPU embedding step using the new simplified structure."""
+        logger.info("=== Starting GPU Embedding Step (New) ===")
+        script_path = Path("scripts/embed/run_embed_new.slurm")
         dependencies = [dependency_job_id] if dependency_job_id else None
 
         logger.info(f"Using dataset config: {dataset_config_name}")
 
-        # Pass the dataset config name, workflow directory, and SLURM partition as environment variables
+        # Pass the dataset config name, workflow directory, and mode settings as environment variables
+        # IMPORTANT: Master job runs on CPU cluster to avoid consuming GPU resources
+        # Only the array jobs will use GPU resources
         env_vars = {
             "DATASET_CONFIG": dataset_config_name,
             "WORKFLOW_DIR": str(self.workflow_logger.workflow_dir)
             if self.workflow_logger
             else "",
-            "SLURM_PARTITION": workflow_config.gpu_partition,
-            "MODE": "gpu",  # Force GPU mode
+            "MODE": "gpu",  # Force GPU mode for array jobs
+            "PREPARE_ONLY": "false",  # This is full embedding mode
+            "SLURM_PARTITION": workflow_config.gpu_partition,  # Pass GPU partition for array jobs
+            "GPU_HOST": f"{self.gpu_login['user']}@{self.gpu_login['host']}"
+            if self.gpu_login
+            else "",  # GPU cluster info for array job submission
         }
 
         job_id = self._submit_slurm_job(
-            self.gpu_login["host"],  # Use GPU cluster for GPU embedding
+            self.cpu_login[
+                "host"
+            ],  # Use CPU cluster for master job (coordination only)
             script_path,
-            partition=workflow_config.gpu_partition,  # Use GPU partition
+            partition=workflow_config.cpu_partition,  # Use CPU partition for master job
             dependencies=dependencies,
             env_vars=env_vars,
             step_name="GPU Embedding",

@@ -1,8 +1,7 @@
-# Dataset configuration for cellxgene pseudo bulk 3_5k dataset
-# Inherits from dataset_default.yaml for training-specific defaults
+# Example dataset configuration demonstrating simplified structure
+# Inherits directly from dataset_default.yaml
 defaults:
   - dataset_default.yaml
-  - workflow_orchestrator.yaml
   - _self_
 
 # =============================================================================
@@ -10,75 +9,55 @@ defaults:
 # =============================================================================
 dataset:
   name: "cellxgene_pseudo_bulk_3_5k"
-  description: "CellxGene pseudo bulk dataset with 3_5k samples"
+  description: "CellxGene pseudo bulk dataset with 3,5k samples. Annotated with natural language descriptions obtained in CellWhisperer Study."
   download_url: "https://medical-epigenomics.org/papers/schaefer2024/data/datasets/cellxgene_census/full_data.h5ad" # Example URL
-  full_name: "cellxgene_pseudo_bulk_full"
-  # file_path will be auto-generated as: data/RNA/raw/train/cellxgene_pseudo_bulk_3_5k.h5ad
+  full_name: "cellxgene_pseudo_bulk_350k"
 
 # =============================================================================
-# COMMON KEYS (defined once, used across workflows)
+# COMMON KEYS (dataset-specific)
 # =============================================================================
-# Batch key for batch-aware processing
 batch_key: "dataset_title"
-
-# Annotation key for cell type/annotation
 annotation_key: "cell_type"
-
-# Caption/description key for natural language descriptions
 caption_key: "natural_language_annotation"
-
-# Instrument key for technical metadata
 instrument_key: "assay"
-
-# Other biological labels for consolidation and plotting
-other_bio_labels: ["tissue"]
-
-# =============================================================================
-# DOWNLOAD OVERRIDES
-# =============================================================================
-download:
-  enabled: true # Enable download for this dataset
-  subset_size: 3500 # Create a subset of 3,5k cells
-  seed: 42 # Random seed for reproducible subsetting
-  stratify_keys: null # Will be auto-generated as [batch_key, annotation_key]
-  preserve_proportions: true # Preserve proportions when stratifying
-  validate: true # Validate downloaded file format
-  keep_full_file: true # Keep the full downloaded file for future subsetting
+other_bio_labels: ["tissue", "disease"]
 
 # =============================================================================
 # DATASET-SPECIFIC OVERRIDES
 # =============================================================================
-# Override specific preprocessing parameters
+# Download configuration
+download:
+  enabled: false
+  subset_size: 3500
+
+# Preprocessing overrides (both dataset-specific and execution parameters)
 preprocessing:
-  enabled: true # Enable preprocessing for this dataset
-  split_dataset: true
-  chunk_size: 100000
-  n_top_genes: 512 # Reduced from default 1000
-  category_threshold: 3 # Remove categories with fewer than 3 samples
-  remove_low_frequency: true
+  # Dataset-specific parameters
+  enabled: false
+  chunk_size: 500 #small to test many chunks
+  split_dataset: true # Important for training datasets. Set to false for test datasets. (Similar parameters in dataset_creation)
+  count_layer_key: "counts" # Key in adata.layers with raw counts. If not present, adata.raw.X is checked.
 
-# Override embedding methods
-embedding:
-  enabled: true # Enable embedding for testing
-  methods: ["hvg", "pca"] # Multiple methods for comparison
-  mode: "gpu" # Use GPU mode
-  gpu_count: "1" # Use 1 GPU
-  batch_size: 128 # Batch size for embedding
-  prepare_only: false # Run full embedding pipeline
+# Embedding preparation overrides
+embedding_preparation:
+  enabled: true # Set to false to skip embedding preparation
+  methods: ["geneformer"] #run the prepare step on cpu to save gpu time
 
-# Override dataset creation parameters
+# Embedding overrides (both dataset-specific and execution parameters)
+embedding_cpu:
+  enabled: true
+  methods: ["hvg", "pca"]
+
+embedding_gpu:
+  enabled: true
+  methods: ["geneformer", "scvi_fm"]
+
+# Dataset creation overrides
 dataset_creation:
-  enabled: true # Disable dataset creation for testing
-  # Override dataset format for this specific dataset
-  dataset_format: "pairs"
-  # Override required embedding keys if needed
-  required_obsm_keys: ["X_pca", "X_scvi_fm", "X_hvg"]
-  # Override sentence keys if needed
-  sentence_keys:
-    - "sample_id_og"
-    - "cell_sentence"
-    - "semantic_true"
-    - "semantic_similar"
-  # Override other parameters if needed
+  enabled: false
+  # Dataset-specific parameters
+  required_obsm_keys: ["X_pca", "X_scvi_fm", "X_hvg", "X_geneformer"]
+  cs_length: 20
   negatives_per_sample: 2
-  cs_length: 10
+  split_dataset: true # Important for training datasets. Set to false for test datasets.
+  dataset_format: "pairs" # Important for training datasets. Set to "single" for test datasets.
