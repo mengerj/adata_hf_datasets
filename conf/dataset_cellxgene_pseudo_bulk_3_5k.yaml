@@ -45,11 +45,11 @@ embedding_preparation:
 
 # Embedding overrides (both dataset-specific and execution parameters)
 embedding_cpu:
-  enabled: true
+  enabled: false
   methods: ["hvg", "pca"]
 
 embedding_gpu:
-  enabled: false
+  enabled: true
   methods: ["geneformer", "scvi_fm"]
 
 # Dataset creation overrides
