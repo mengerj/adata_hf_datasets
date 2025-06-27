@@ -246,7 +246,10 @@ class EmbeddingLauncher:
             if self.mode == "gpu" and os.environ.get("GPU_HOST"):
                 # Submit via SSH to GPU cluster
                 gpu_host = os.environ.get("GPU_HOST")
-                ssh_cmd = ["ssh", gpu_host, " ".join(sbatch_cmd)]
+                # Change to project directory before running sbatch
+                project_dir = "/home/menger/git/adata_hf_datasets"
+                remote_cmd = f"cd {project_dir} && {' '.join(sbatch_cmd)}"
+                ssh_cmd = ["ssh", gpu_host, remote_cmd]
                 logger.info(f"Executing via SSH to {gpu_host}: {' '.join(ssh_cmd)}")
                 result = subprocess.run(
                     ssh_cmd, capture_output=True, text=True, timeout=60
