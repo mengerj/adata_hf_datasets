@@ -651,10 +651,10 @@ class WorkflowOrchestrator:
 
             # Wait for GPU embedding job to complete
             self._wait_for_job_completion(
-                self.gpu_login["host"], embedding_gpu_job_id, "GPU Embedding"
+                self.cpu_login["host"], embedding_gpu_job_id, "GPU Embedding Master"
             )
             self.workflow_logger.log_step_complete(
-                "GPU Embedding", embedding_gpu_job_id
+                "GPU Embedding Master", embedding_gpu_job_id
             )
         else:
             logger.info("=== GPU Embedding Step Skipped (disabled) ===")
@@ -838,10 +838,10 @@ class WorkflowOrchestrator:
 
             # Wait for GPU embedding job to complete
             self._wait_for_job_completion(
-                self.gpu_login["host"], embedding_gpu_job_id, "GPU Embedding"
+                self.cpu_login["host"], embedding_gpu_job_id, "GPU Embedding Master"
             )
             self.workflow_logger.log_step_complete(
-                "GPU Embedding", embedding_gpu_job_id
+                "GPU Embedding Master", embedding_gpu_job_id
             )
         else:
             logger.info("=== GPU Embedding Step Skipped (disabled) ===")
