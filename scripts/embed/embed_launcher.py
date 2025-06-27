@@ -175,37 +175,52 @@ class EmbeddingLauncher:
     def _submit_array_job(
         self, label: str, input_dir: Path, file_count: int
     ) -> Optional[int]:
-        """Submit a SLURM array job for processing a directory."""
+        """Submit a SLURM array job for a specific input directory."""
         if file_count == 0:
-            logger.warning(f"No .zarr files found in {input_dir}, skipping {label}")
+            logger.warning(f"No files found in {input_dir}, skipping {label}")
             return None
 
         logger.info(
-            f"Submitting array job for {label}: {file_count} files in {input_dir}"
+            f"Submitting array job for {label}: {input_dir} ({file_count} tasks)"
         )
 
-        # Get embedding config for method extraction
+        # Get embedding configuration for resource allocation
         embedding_config = self._get_embedding_config()
+
+        # Determine partition based on mode
+        partition = None
+        if self.mode == "cpu":
+            partition = "cpu"
+        elif self.mode == "gpu":
+            partition = os.environ.get("SLURM_PARTITION", "gpu")
 
         # Build sbatch command
         sbatch_cmd = [
             "sbatch",
+            f"--job-name=embed_{label}",
             f"--array=0-{file_count - 1}",
-            f"--job-name=embed_{label}_{self.mode}",
+            "--time=24:00:00",
         ]
 
-        # Add partition and GPU settings based on mode
-        if self.mode == "gpu":
-            partition = os.environ.get("SLURM_PARTITION", "gpu")
-            gpu_count = getattr(embedding_config, "gpu_count", 1)
+        # Add resource requirements based on mode
+        if self.mode == "cpu":
             sbatch_cmd.extend(
                 [
-                    f"--partition={partition}",
-                    f"--gres=gpu:{gpu_count}",
+                    "--mem=32G",
+                    "--cpus-per-task=4",
                 ]
             )
-        else:
-            partition = os.environ.get("SLURM_PARTITION", "slurm")
+        elif self.mode == "gpu":
+            sbatch_cmd.extend(
+                [
+                    "--mem=64G",
+                    "--cpus-per-task=8",
+                    "--gres=gpu:1",
+                ]
+            )
+
+        # Add partition if specified
+        if partition:
             sbatch_cmd.extend([f"--partition={partition}"])
 
         # Build environment variables
@@ -269,6 +284,19 @@ class EmbeddingLauncher:
             logger.info(
                 f"✓ Submitted array job {job_id} for {label} ({file_count} tasks)"
             )
+
+            # IMMEDIATELY write job ID to temp file for tracking
+            job_file = f"/tmp/embedding_array_jobs_{os.environ.get('SLURM_JOB_ID', 'local')}.txt"
+            try:
+                with open(job_file, "a") as f:  # Use append mode
+                    f.write(f"{job_id}\n")
+                logger.info(f"✓ Job ID {job_id} written to tracking file: {job_file}")
+            except Exception as write_error:
+                logger.warning(
+                    f"Failed to write job ID to tracking file: {write_error}"
+                )
+                # Don't fail the submission if we can't write to temp file
+
             return job_id
 
         except subprocess.TimeoutExpired:
@@ -379,6 +407,9 @@ def main():
         format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
     )
 
+    job_ids = []
+    launcher_success = False
+
     try:
         # Create launcher and run
         launcher = EmbeddingLauncher(
@@ -386,20 +417,59 @@ def main():
         )
 
         job_ids = launcher.run()
+        launcher_success = True
 
         if args.wait:
             launcher.wait_for_completion()
 
-        # Store job IDs for master script to read
-        if job_ids:
-            job_file = f"/tmp/embedding_array_jobs_{os.environ.get('SLURM_JOB_ID', 'local')}.txt"
-            with open(job_file, "w") as f:
-                for job_id in job_ids:
-                    f.write(f"{job_id}\n")
-            logger.info(f"Job IDs stored in: {job_file}")
+        logger.info(
+            f"✓ Embedding launcher completed successfully with {len(job_ids)} jobs"
+        )
 
     except Exception as e:
-        logger.error(f"Embedding launcher failed: {e}")
+        logger.error(f"Embedding launcher encountered an error: {e}")
+
+        # If we successfully submitted some jobs, don't fail the master job
+        if job_ids:
+            logger.warning(
+                f"Despite the error, {len(job_ids)} array jobs were successfully submitted: {job_ids}"
+            )
+            logger.warning("Master job will continue to track these jobs")
+            launcher_success = True
+        else:
+            logger.error("No array jobs were submitted, failing master job")
+            sys.exit(1)
+
+    # Final attempt to write job IDs file (in case immediate writing failed)
+    if job_ids:
+        job_file = (
+            f"/tmp/embedding_array_jobs_{os.environ.get('SLURM_JOB_ID', 'local')}.txt"
+        )
+        try:
+            # Ensure all job IDs are in the file (in case some immediate writes failed)
+            existing_ids = set()
+            if os.path.exists(job_file):
+                with open(job_file, "r") as f:
+                    existing_ids = {line.strip() for line in f if line.strip()}
+
+            # Write any missing job IDs
+            missing_ids = [str(jid) for jid in job_ids if str(jid) not in existing_ids]
+            if missing_ids:
+                with open(job_file, "a") as f:
+                    for job_id in missing_ids:
+                        f.write(f"{job_id}\n")
+                logger.info(f"✓ Added missing job IDs to tracking file: {missing_ids}")
+
+            logger.info(f"✓ Final job IDs tracking file: {job_file}")
+
+        except Exception as file_error:
+            logger.error(f"Failed to finalize job IDs file: {file_error}")
+            # Don't fail if we can't write the file - array jobs are already running
+            logger.warning(
+                "Array jobs are running independently, master job will continue"
+            )
+
+    if not launcher_success:
         sys.exit(1)
 
 
