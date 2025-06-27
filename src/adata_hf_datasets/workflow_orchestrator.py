@@ -893,7 +893,7 @@ class WorkflowOrchestrator:
 
             if result.returncode != 0 or not result.stdout.strip():
                 # Job is no longer in queue (completed, failed, or cancelled)
-                # Check the exit status
+                # Check the exit status and look for array jobs
                 exit_cmd = [
                     "ssh",
                     host,
@@ -906,16 +906,19 @@ class WorkflowOrchestrator:
                 if exit_result.returncode == 0 and exit_result.stdout.strip():
                     # Parse the job state
                     lines = exit_result.stdout.strip().split("\n")
+                    main_job_completed = False
+                    array_jobs = []
+
                     for line in lines:
-                        if str(job_id) in line:
-                            parts = line.split()
-                            if len(parts) >= 2:
-                                state = parts[1]
+                        parts = line.split()
+                        if len(parts) >= 2:
+                            job_id_str = parts[0]
+                            state = parts[1]
+
+                            if job_id_str == str(job_id):
+                                # This is the main job
                                 if state in ["COMPLETED", "COMPLETED+"]:
-                                    logger.info(
-                                        f"✓ {step_name} job {job_id} completed successfully"
-                                    )
-                                    return
+                                    main_job_completed = True
                                 elif state in ["FAILED", "CANCELLED", "TIMEOUT"]:
                                     error_msg = f"✗ {step_name} job {job_id} failed with state: {state}"
                                     logger.error(error_msg)
@@ -931,11 +934,27 @@ class WorkflowOrchestrator:
                                                 f"{datetime.now().isoformat()} - {error_msg}\n"
                                             )
                                     raise RuntimeError(error_msg)
-                                else:
-                                    logger.warning(
-                                        f"? {step_name} job {job_id} ended with unknown state: {state}"
-                                    )
-                                    return
+                            elif job_id_str.startswith(f"{job_id}_"):
+                                # This is an array job task
+                                array_jobs.append((job_id_str, state))
+
+                    # If this is an array job master, wait for all array tasks
+                    if array_jobs:
+                        logger.info(
+                            f"Found {len(array_jobs)} array job tasks for job {job_id}"
+                        )
+                        self._wait_for_array_jobs(host, job_id, array_jobs, step_name)
+                        return
+                    elif main_job_completed:
+                        logger.info(
+                            f"✓ {step_name} job {job_id} completed successfully"
+                        )
+                        return
+                    else:
+                        logger.warning(
+                            f"? {step_name} job {job_id} ended with unknown state"
+                        )
+                        return
 
                 # If we can't get detailed status, assume it completed
                 logger.info(f"✓ {step_name} job {job_id} completed")
@@ -946,6 +965,100 @@ class WorkflowOrchestrator:
             import time
 
             time.sleep(60)  # Wait 1 minute before checking again
+
+    def _wait_for_array_jobs(
+        self,
+        host: str,
+        master_job_id: int,
+        array_jobs: List[Tuple[str, str]],
+        step_name: str,
+    ) -> None:
+        """Wait for all array job tasks to complete."""
+        logger.info(f"Waiting for {len(array_jobs)} array job tasks to complete...")
+
+        # For GPU jobs, we need to check on the GPU cluster
+        check_host = host
+        if "GPU" in step_name and self.gpu_login:
+            check_host = f"{self.gpu_login['user']}@{self.gpu_login['host']}"
+            logger.info(f"Checking array jobs on GPU cluster: {check_host}")
+
+        completed_jobs = set()
+        failed_jobs = []
+
+        while len(completed_jobs) < len(array_jobs):
+            # Check status of all array jobs
+            cmd = [
+                "ssh",
+                check_host,
+                f"sacct -j {master_job_id} --format=JobID,State --noheader --parsable2",
+            ]
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+
+            if result.returncode != 0:
+                logger.warning(f"Failed to check array job status: {result.stderr}")
+                import time
+
+                time.sleep(30)
+                continue
+
+            # Parse the output
+            current_status = {}
+            for line in result.stdout.strip().split("\n"):
+                if "|" in line:
+                    job_id_str, state = line.split("|", 1)
+                    if job_id_str.startswith(f"{master_job_id}_"):
+                        current_status[job_id_str] = state
+
+            # Check each array job
+            for array_job_id, _ in array_jobs:
+                if array_job_id in completed_jobs:
+                    continue
+
+                state = current_status.get(array_job_id, "UNKNOWN")
+
+                if state in ["COMPLETED", "COMPLETED+"]:
+                    completed_jobs.add(array_job_id)
+                    logger.info(f"✓ Array job {array_job_id} completed")
+                elif state in ["FAILED", "CANCELLED", "TIMEOUT"]:
+                    failed_jobs.append((array_job_id, state))
+                    completed_jobs.add(array_job_id)  # Mark as "done" even if failed
+                    logger.error(
+                        f"✗ Array job {array_job_id} failed with state: {state}"
+                    )
+                elif state in ["PENDING", "RUNNING"]:
+                    # Still running, continue waiting
+                    pass
+                else:
+                    logger.warning(
+                        f"? Array job {array_job_id} has unknown state: {state}"
+                    )
+
+            # Log progress
+            if len(completed_jobs) < len(array_jobs):
+                remaining = len(array_jobs) - len(completed_jobs)
+                logger.info(
+                    f"  {len(completed_jobs)}/{len(array_jobs)} array jobs completed, {remaining} remaining..."
+                )
+                import time
+
+                time.sleep(30)  # Check every 30 seconds
+
+        # Check if any jobs failed
+        if failed_jobs:
+            error_msg = f"✗ {len(failed_jobs)} array jobs failed: {failed_jobs}"
+            logger.error(error_msg)
+            # Log to consolidated error log
+            if self.workflow_logger:
+                error_log_path = (
+                    self.workflow_logger.workflow_dir
+                    / "logs"
+                    / "errors_consolidated.log"
+                )
+                with open(error_log_path, "a") as f:
+                    f.write(f"{datetime.now().isoformat()} - {error_msg}\n")
+            raise RuntimeError(error_msg)
+
+        logger.info(f"✓ All {len(array_jobs)} array job tasks completed successfully")
 
     def _load_dataset_config(self, dataset_config_name: str) -> DictConfig:
         """Load the dataset configuration."""
