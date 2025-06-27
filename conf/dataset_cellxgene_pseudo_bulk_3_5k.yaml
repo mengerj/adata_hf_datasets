@@ -45,7 +45,7 @@ embedding_preparation:
 
 # Embedding overrides (both dataset-specific and execution parameters)
 embedding_cpu:
-  enabled: true
+  enabled: false
   methods: ["hvg", "pca", "scvi_fm"]
 
 embedding_gpu:
