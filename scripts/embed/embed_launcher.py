@@ -70,6 +70,7 @@ class EmbeddingLauncher:
         self.prepare_only = prepare_only
         self.config = self._load_config()
         self.job_ids: List[int] = []
+        self.temp_config_files: List[str] = []  # Track temp files for cleanup
 
     def _determine_mode(self, mode: str) -> str:
         """Determine the processing mode based on input and environment."""
@@ -191,9 +192,6 @@ class EmbeddingLauncher:
             f"Submitting array job for {label}: {input_dir} ({file_count} tasks)"
         )
 
-        # Get embedding configuration for resource allocation
-        embedding_config = self._get_embedding_config()
-
         # Determine partition based on mode
         partition = None
         if self.mode == "cpu":
@@ -230,14 +228,13 @@ class EmbeddingLauncher:
         if partition:
             sbatch_cmd.extend([f"--partition={partition}"])
 
+        # Create unified config file for this job
+        unified_config_path = self._create_unified_config()
+
         # Build environment variables
         env_vars = {
             "INPUT_DIR": str(input_dir),
-            "DATASET_CONFIG": self.config_name,
-            "MODE": self.mode,
-            "METHODS": " ".join(getattr(embedding_config, "methods", ["pca", "hvg"])),
-            "BATCH_KEY": self.config.get("batch_key", "batch"),
-            "BATCH_SIZE": str(getattr(embedding_config, "batch_size", 128)),
+            "UNIFIED_CONFIG": unified_config_path,
             "PREPARE_ONLY": str(self.prepare_only).lower(),
             "WORKFLOW_DIR": os.environ.get("WORKFLOW_DIR", ""),
         }
@@ -433,7 +430,64 @@ class EmbeddingLauncher:
                         )
                         break
 
-        logger.info("✓ All array jobs completed")
+                    logger.info("✓ All array jobs completed")
+
+    def cleanup_temp_files(self) -> None:
+        """Clean up temporary configuration files."""
+        for temp_file in self.temp_config_files:
+            try:
+                if os.path.exists(temp_file):
+                    os.unlink(temp_file)
+                    logger.debug(f"Cleaned up temporary config file: {temp_file}")
+            except Exception as e:
+                logger.warning(f"Failed to clean up temporary file {temp_file}: {e}")
+        self.temp_config_files.clear()
+
+    def _create_unified_config(self) -> str:
+        """
+        Create a unified configuration file that merges the selected embedding config
+        into a standard structure for the core script to use.
+
+        Returns
+        -------
+        str
+            Path to the created unified config file
+        """
+        import tempfile
+        import yaml
+        from omegaconf import OmegaConf
+
+        # Get the appropriate embedding config based on mode and prepare_only
+        embedding_config = self._get_embedding_config()
+
+        # Create a copy of the base config
+        unified_config = OmegaConf.to_container(self.config, resolve=True)
+
+        # Replace the embedding section with our selected config
+        # Remove all mode-specific embedding sections
+        for key in ["embedding_cpu", "embedding_gpu", "embedding_preparation"]:
+            if key in unified_config:
+                del unified_config[key]
+
+        # Add the selected config as the standard 'embedding' section
+        unified_config["embedding"] = OmegaConf.to_container(
+            embedding_config, resolve=True
+        )
+
+        # Add runtime parameters
+        unified_config["prepare_only"] = self.prepare_only
+
+        # Create temporary config file
+        temp_fd, temp_path = tempfile.mkstemp(suffix=".yaml", prefix="embed_config_")
+        try:
+            with os.fdopen(temp_fd, "w") as f:
+                yaml.dump(unified_config, f, default_flow_style=False)
+            logger.info(f"Created unified config file: {temp_path}")
+            self.temp_config_files.append(temp_path)  # Track for cleanup
+            return temp_path
+        except Exception:
+            os.close(temp_fd)  # Make sure to close if yaml.dump fails
+            raise
 
 
 def main():
@@ -484,8 +538,15 @@ def main():
             f"✓ Embedding launcher completed successfully with {len(job_ids)} jobs"
         )
 
+        # Clean up temporary config files
+        launcher.cleanup_temp_files()
+
     except Exception as e:
         logger.error(f"Embedding launcher encountered an error: {e}")
+
+        # Clean up temporary config files
+        if "launcher" in locals():
+            launcher.cleanup_temp_files()
 
         # If we successfully submitted some jobs, don't fail the master job
         if job_ids:

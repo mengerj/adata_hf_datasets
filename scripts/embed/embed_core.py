@@ -25,7 +25,6 @@ is more efficient on the CPU and would otherwise block the precious GPU for a lo
 import sys
 from pathlib import Path
 from typing import Union
-import os
 
 import hydra
 from omegaconf import DictConfig
@@ -293,8 +292,8 @@ def append_embedding(
 
 @hydra.main(
     version_base=None,
-    config_path="../../conf",
-    config_name="dataset_cellxgene_pseudo_bulk_3_5k",
+    config_path=None,  # Will be set dynamically by the launcher
+    config_name=None,  # Will be set dynamically by the launcher
 )
 def main(cfg: DictConfig):
     """
@@ -325,36 +324,12 @@ def main(cfg: DictConfig):
     logger.info("Validating config...")
     validate_config(cfg)
 
-    # Extract embedding config from the dataset-centric config
-    # Determine which embedding section to use based on MODE environment variable
-    mode = os.environ.get("MODE", "gpu")
-
-    if mode == "cpu":
-        if hasattr(cfg, "embedding_cpu") and cfg.embedding_cpu is not None:
-            embedding_cfg = cfg.embedding_cpu
-            logger.info("Using CPU embedding configuration")
-        else:
-            raise ValueError(
-                "CPU mode requested but no embedding_cpu configuration found"
-            )
-    elif mode == "gpu":
-        if hasattr(cfg, "embedding_gpu") and cfg.embedding_gpu is not None:
-            embedding_cfg = cfg.embedding_gpu
-            logger.info("Using GPU embedding configuration")
-        else:
-            raise ValueError(
-                "GPU mode requested but no embedding_gpu configuration found"
-            )
+    # Use the unified embedding config (created by the launcher)
+    if hasattr(cfg, "embedding") and cfg.embedding is not None:
+        embedding_cfg = cfg.embedding
+        logger.info("Using unified embedding configuration")
     else:
-        # Fallback to old structure for backward compatibility
-        if hasattr(cfg, "embedding") and cfg.embedding is not None:
-            embedding_cfg = cfg.embedding
-            logger.info("Using legacy embedding configuration")
-        else:
-            raise ValueError(
-                f"Unknown MODE: {mode} and no legacy embedding config found"
-            )
-
+        raise ValueError("No embedding configuration found in unified config")
     # Get prepare_only from command line override (defaults to False)
     prepare_only = getattr(cfg, "prepare_only", False)
 

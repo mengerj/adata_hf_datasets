@@ -12,11 +12,7 @@ set -euo pipefail
 
 # Required environment variables (set by embed_launcher.py)
 INPUT_DIR="${INPUT_DIR:?INPUT_DIR environment variable is required}"
-DATASET_CONFIG="${DATASET_CONFIG:?DATASET_CONFIG environment variable is required}"
-MODE="${MODE:-cpu}"
-METHODS="${METHODS:-pca hvg}"
-BATCH_KEY="${BATCH_KEY:-batch}"
-BATCH_SIZE="${BATCH_SIZE:-128}"
+UNIFIED_CONFIG="${UNIFIED_CONFIG:?UNIFIED_CONFIG environment variable is required}"
 PREPARE_ONLY="${PREPARE_ONLY:-false}"
 WORKFLOW_DIR="${WORKFLOW_DIR:-}"
 
@@ -59,9 +55,7 @@ echo "=== SLURM Array Task Started ==="
 echo "Array Job ID: $ARRAY_JOB_ID"
 echo "Task ID: $TASK_ID"
 echo "Input Directory: $INPUT_DIR"
-echo "Dataset Config: $DATASET_CONFIG"
-echo "Mode: $MODE"
-echo "Methods: $METHODS"
+echo "Unified Config: $UNIFIED_CONFIG"
 echo "Prepare Only: $PREPARE_ONLY"
 echo "Output Directory: $OUTPUT_DIR"
 echo "Start Time: $(date)"
@@ -105,24 +99,7 @@ source .venv/bin/activate
 # Build Configuration Parameters
 # ─────────────────────────────────────────────────────────────────────────────
 
-# Convert space-separated methods to JSON array format for Hydra
-METHODS_JSON="[$(printf '"%s",' $METHODS | sed 's/,$//')]"
-
-# Determine embedding section based on MODE and PREPARE_ONLY
-if [[ "$PREPARE_ONLY" == "true" ]]; then
-    # For preparation, try embedding_preparation first, then fall back to CPU config
-    EMBEDDING_SECTION="embedding_preparation"
-elif [[ "$MODE" == "cpu" ]]; then
-    EMBEDDING_SECTION="embedding_cpu"
-elif [[ "$MODE" == "gpu" ]]; then
-    EMBEDDING_SECTION="embedding_gpu"
-else
-    # Fallback to legacy embedding section
-    EMBEDDING_SECTION="embedding"
-fi
-
-echo "Using embedding section: $EMBEDDING_SECTION"
-echo "Methods JSON: $METHODS_JSON"
+echo "Using unified config: $UNIFIED_CONFIG"
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Run Embedding Core
@@ -131,12 +108,9 @@ echo "Methods JSON: $METHODS_JSON"
 echo "Starting embedding processing..."
 
 python3 scripts/embed/embed_core.py \
-    --config-name="$DATASET_CONFIG" \
-    ++prepare_only="$PREPARE_ONLY" \
-    ++"$EMBEDDING_SECTION".methods="$METHODS_JSON" \
-    ++batch_key="$BATCH_KEY" \
-    ++batch_size="$BATCH_SIZE" \
-    ++"$EMBEDDING_SECTION".input_files="[\"$target_file\"]" \
+    --config-path="$(dirname "$UNIFIED_CONFIG")" \
+    --config-name="$(basename "$UNIFIED_CONFIG" .yaml)" \
+    ++embedding.input_files="[\"$target_file\"]" \
     ++hydra.run.dir="$OUTPUT_DIR"
 
 embedding_exit_code=$?
