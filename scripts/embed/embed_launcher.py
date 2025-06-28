@@ -443,8 +443,8 @@ class EmbeddingLauncher:
                 logger.warning(f"Failed to clean up temporary file {temp_file}: {e}")
         self.temp_config_files.clear()
 
-        # Also clean up old config files (older than 4 hours)
-        self._cleanup_old_config_files()
+        # Note: Old config files are now cleaned up by the master job
+        # after all array jobs complete, preventing race conditions
 
     def _cleanup_old_config_files(self) -> None:
         """Clean up old config files from previous runs."""
@@ -456,16 +456,16 @@ class EmbeddingLauncher:
             import time
 
             current_time = time.time()
-            # Be more conservative - only clean up files older than 4 hours
-            # to avoid interfering with long-running array jobs
-            four_hours_ago = current_time - (4 * 3600)  # 4 hours in seconds
+            # Be VERY conservative - only clean up files older than 24 hours
+            # to avoid interfering with long-running or queued array jobs
+            twenty_four_hours_ago = current_time - (24 * 3600)  # 24 hours in seconds
 
             cleaned_count = 0
             for config_file in config_dir.glob("embed_config_*.yaml"):
                 try:
                     # Check file modification time
                     file_mtime = config_file.stat().st_mtime
-                    if file_mtime < four_hours_ago:
+                    if file_mtime < twenty_four_hours_ago:
                         config_file.unlink()
                         cleaned_count += 1
                         logger.debug(f"Cleaned up old config file: {config_file}")
@@ -475,7 +475,7 @@ class EmbeddingLauncher:
                     )
 
             if cleaned_count > 0:
-                logger.info(f"Cleaned up {cleaned_count} old config files (>4h old)")
+                logger.info(f"Cleaned up {cleaned_count} old config files (>24h old)")
 
             # Don't remove the directory - other concurrent jobs might need it
             # The directory will be cleaned up by system temp cleanup eventually
@@ -610,6 +610,7 @@ def main():
                 "Jobs submitted but not waiting for completion - temp config files will persist"
             )
             logger.info(f"Temp config files: {launcher.temp_config_files}")
+            logger.info("Config files will be cleaned up after array jobs complete")
 
         logger.info(
             f"✓ Embedding launcher completed successfully with {len(job_ids)} jobs"
@@ -618,19 +619,19 @@ def main():
     except Exception as e:
         logger.error(f"Embedding launcher encountered an error: {e}")
 
-        # Clean up temporary config files
-        if "launcher" in locals():
-            launcher.cleanup_temp_files()
-
-        # If we successfully submitted some jobs, don't fail the master job
+        # Only clean up temp files if NO jobs were submitted successfully
+        # This prevents deleting config files that submitted jobs still need
         if job_ids:
             logger.warning(
                 f"Despite the error, {len(job_ids)} array jobs were successfully submitted: {job_ids}"
             )
+            logger.warning("Temp config files will be preserved for running array jobs")
             logger.warning("Master job will continue to track these jobs")
             launcher_success = True
         else:
-            logger.error("No array jobs were submitted, failing master job")
+            logger.error("No array jobs were submitted, cleaning up temp files")
+            if "launcher" in locals():
+                launcher.cleanup_temp_files()
             sys.exit(1)
 
     # Final attempt to write job IDs file (in case immediate writing failed)

@@ -215,6 +215,37 @@ if [[ -f "$job_file" ]]; then
     # Clean up the temporary file
     rm -f "$job_file"
     echo "All array jobs completed successfully"
+
+    # Now it's safe to clean up the temporary config files since all array jobs are done
+    echo "Cleaning up temporary config files..."
+    python3 -c "
+import os
+import sys
+from pathlib import Path
+import time
+
+config_dir = Path('/tmp/adata_hf_embed_configs')
+if config_dir.exists():
+    cleaned_count = 0
+    # Clean up config files that were created for this master job
+    # Use a broader time window since jobs might have taken a while
+    current_time = time.time()
+    six_hours_ago = current_time - (6 * 3600)  # 6 hours
+
+    for config_file in config_dir.glob('embed_config_*.yaml'):
+        try:
+            file_mtime = config_file.stat().st_mtime
+            if file_mtime > six_hours_ago:  # Recent files likely belong to this job
+                config_file.unlink()
+                cleaned_count += 1
+                print(f'Cleaned up config file: {config_file}')
+        except Exception as e:
+            print(f'Failed to clean up {config_file}: {e}')
+
+    print(f'Cleaned up {cleaned_count} config files')
+else:
+    print('No config directory found')
+"
 else
     echo "WARNING: No array job file found at $job_file"
     echo "This might indicate that no array jobs were submitted"
