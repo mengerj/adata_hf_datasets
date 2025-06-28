@@ -249,6 +249,9 @@ def apply_common_key_transformations(cfg: DictConfig) -> DictConfig:
             updated_cfg.embedding_cpu.batch_key = updated_cfg.batch_key
         if hasattr(updated_cfg, "embedding_gpu"):
             updated_cfg.embedding_gpu.batch_key = updated_cfg.batch_key
+        # Also apply to embedding_preparation
+        if hasattr(updated_cfg, "embedding_preparation"):
+            updated_cfg.embedding_preparation.batch_key = updated_cfg.batch_key
         # Fallback to old structure for backward compatibility
         if hasattr(updated_cfg, "embedding"):
             updated_cfg.embedding.batch_key = updated_cfg.batch_key
