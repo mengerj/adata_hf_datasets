@@ -92,7 +92,7 @@ echo "Processing file: $target_file"
 # ─────────────────────────────────────────────────────────────────────────────
 
 # Change to project directory
-cd /home/menger/git/adata_hf_datasets
+cd /dsk/home/menger/git/adata_hf_datasets
 
 # Activate environment
 source .venv/bin/activate
@@ -115,9 +115,11 @@ echo "Starting embedding processing..."
 # No temporary files needed!
 export EMBEDDING_CONFIG_SECTION
 export PREPARE_ONLY
-
+echo "in the current directory: $(pwd)"
+echo "ls"
+echo "in conf: $(ls -la conf)"
 python3 scripts/embed/embed_core.py \
-    --config-path="conf" \
+    --config-path="/conf" \
     --config-name="$DATASET_CONFIG" \
     ++embedding.input_files="[\"$target_file\"]" \
     ++hydra.run.dir="$OUTPUT_DIR" \
