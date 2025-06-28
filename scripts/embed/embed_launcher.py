@@ -443,7 +443,7 @@ class EmbeddingLauncher:
                 logger.warning(f"Failed to clean up temporary file {temp_file}: {e}")
         self.temp_config_files.clear()
 
-        # Also clean up old config files (older than 1 hour)
+        # Also clean up old config files (older than 4 hours)
         self._cleanup_old_config_files()
 
     def _cleanup_old_config_files(self) -> None:
@@ -456,27 +456,29 @@ class EmbeddingLauncher:
             import time
 
             current_time = time.time()
-            one_hour_ago = current_time - 3600  # 1 hour in seconds
+            # Be more conservative - only clean up files older than 4 hours
+            # to avoid interfering with long-running array jobs
+            four_hours_ago = current_time - (4 * 3600)  # 4 hours in seconds
 
+            cleaned_count = 0
             for config_file in config_dir.glob("embed_config_*.yaml"):
                 try:
                     # Check file modification time
                     file_mtime = config_file.stat().st_mtime
-                    if file_mtime < one_hour_ago:
+                    if file_mtime < four_hours_ago:
                         config_file.unlink()
+                        cleaned_count += 1
                         logger.debug(f"Cleaned up old config file: {config_file}")
                 except Exception as e:
                     logger.debug(
                         f"Failed to clean up old config file {config_file}: {e}"
                     )
 
-            # Try to remove the directory if it's empty
-            try:
-                config_dir.rmdir()
-                logger.debug("Removed empty config directory")
-            except OSError:
-                # Directory not empty, that's fine
-                pass
+            if cleaned_count > 0:
+                logger.info(f"Cleaned up {cleaned_count} old config files (>4h old)")
+
+            # Don't remove the directory - other concurrent jobs might need it
+            # The directory will be cleaned up by system temp cleanup eventually
         except Exception as e:
             logger.debug(f"Error during old config file cleanup: {e}")
             # Don't fail the main process for cleanup issues
@@ -516,7 +518,11 @@ class EmbeddingLauncher:
 
         # Create config directory if it doesn't exist
         config_dir = Path("/tmp/adata_hf_embed_configs")
-        config_dir.mkdir(exist_ok=True, mode=0o755)
+        try:
+            config_dir.mkdir(exist_ok=True, mode=0o755)
+        except Exception as e:
+            logger.error(f"Failed to create config directory {config_dir}: {e}")
+            raise
 
         # Use launcher process ID and current time to create unique but deterministic filename
         import time
@@ -533,11 +539,24 @@ class EmbeddingLauncher:
                 config_path, "w", opener=lambda path, flags: os.open(path, flags, 0o644)
             ) as f:
                 yaml.dump(unified_config, f, default_flow_style=False)
+
+            # Verify the file was created and is readable
+            if not config_path.exists():
+                raise RuntimeError(f"Config file was not created: {config_path}")
+            if not os.access(config_path, os.R_OK):
+                raise RuntimeError(f"Config file is not readable: {config_path}")
+
             logger.info(f"Created unified config file: {config_path}")
             self.temp_config_files.append(str(config_path))  # Track for cleanup
             return str(config_path)
         except Exception as e:
             logger.error(f"Failed to create unified config file: {e}")
+            # Clean up partial file if it exists
+            try:
+                if config_path.exists():
+                    config_path.unlink()
+            except Exception as _e:
+                pass
             raise
 
 
