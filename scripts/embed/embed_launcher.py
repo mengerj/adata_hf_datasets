@@ -443,6 +443,44 @@ class EmbeddingLauncher:
                 logger.warning(f"Failed to clean up temporary file {temp_file}: {e}")
         self.temp_config_files.clear()
 
+        # Also clean up old config files (older than 1 hour)
+        self._cleanup_old_config_files()
+
+    def _cleanup_old_config_files(self) -> None:
+        """Clean up old config files from previous runs."""
+        try:
+            config_dir = Path("/tmp/adata_hf_embed_configs")
+            if not config_dir.exists():
+                return
+
+            import time
+
+            current_time = time.time()
+            one_hour_ago = current_time - 3600  # 1 hour in seconds
+
+            for config_file in config_dir.glob("embed_config_*.yaml"):
+                try:
+                    # Check file modification time
+                    file_mtime = config_file.stat().st_mtime
+                    if file_mtime < one_hour_ago:
+                        config_file.unlink()
+                        logger.debug(f"Cleaned up old config file: {config_file}")
+                except Exception as e:
+                    logger.debug(
+                        f"Failed to clean up old config file {config_file}: {e}"
+                    )
+
+            # Try to remove the directory if it's empty
+            try:
+                config_dir.rmdir()
+                logger.debug("Removed empty config directory")
+            except OSError:
+                # Directory not empty, that's fine
+                pass
+        except Exception as e:
+            logger.debug(f"Error during old config file cleanup: {e}")
+            # Don't fail the main process for cleanup issues
+
     def _create_unified_config(self) -> str:
         """
         Create a unified configuration file that merges the selected embedding config
@@ -453,7 +491,6 @@ class EmbeddingLauncher:
         str
             Path to the created unified config file
         """
-        import tempfile
         import yaml
         from omegaconf import OmegaConf
 
@@ -477,16 +514,30 @@ class EmbeddingLauncher:
         # Add runtime parameters
         unified_config["prepare_only"] = self.prepare_only
 
-        # Create temporary config file
-        temp_fd, temp_path = tempfile.mkstemp(suffix=".yaml", prefix="embed_config_")
+        # Create config directory if it doesn't exist
+        config_dir = Path("/tmp/adata_hf_embed_configs")
+        config_dir.mkdir(exist_ok=True, mode=0o755)
+
+        # Use launcher process ID and current time to create unique but deterministic filename
+        import time
+
+        timestamp = int(time.time() * 1000)  # milliseconds for uniqueness
+        launcher_pid = os.getpid()
+        config_filename = f"embed_config_{launcher_pid}_{timestamp}.yaml"
+        config_path = config_dir / config_filename
+
+        # Write the config file with proper permissions
         try:
-            with os.fdopen(temp_fd, "w") as f:
+            # Create file with restrictive permissions initially
+            with open(
+                config_path, "w", opener=lambda path, flags: os.open(path, flags, 0o644)
+            ) as f:
                 yaml.dump(unified_config, f, default_flow_style=False)
-            logger.info(f"Created unified config file: {temp_path}")
-            self.temp_config_files.append(temp_path)  # Track for cleanup
-            return temp_path
-        except Exception:
-            os.close(temp_fd)  # Make sure to close if yaml.dump fails
+            logger.info(f"Created unified config file: {config_path}")
+            self.temp_config_files.append(str(config_path))  # Track for cleanup
+            return str(config_path)
+        except Exception as e:
+            logger.error(f"Failed to create unified config file: {e}")
             raise
 
 
@@ -533,13 +584,17 @@ def main():
 
         if args.wait:
             launcher.wait_for_completion()
+            # Only clean up temp files if we waited for completion
+            launcher.cleanup_temp_files()
+        else:
+            logger.info(
+                "Jobs submitted but not waiting for completion - temp config files will persist"
+            )
+            logger.info(f"Temp config files: {launcher.temp_config_files}")
 
         logger.info(
             f"✓ Embedding launcher completed successfully with {len(job_ids)} jobs"
         )
-
-        # Clean up temporary config files
-        launcher.cleanup_temp_files()
 
     except Exception as e:
         logger.error(f"Embedding launcher encountered an error: {e}")
