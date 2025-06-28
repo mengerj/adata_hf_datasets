@@ -115,8 +115,6 @@ echo "Starting embedding processing..."
 # No temporary files needed!
 export EMBEDDING_CONFIG_SECTION
 export PREPARE_ONLY
-echo "in the current directory: $(pwd)"
-echo "in conf: $(ls -la conf)"
 #path always is read relative to the script by hydra
 python3 scripts/embed/embed_core.py \
     --config-path="../../conf" \
