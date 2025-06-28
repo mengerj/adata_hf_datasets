@@ -12,7 +12,8 @@ set -euo pipefail
 
 # Required environment variables (set by embed_launcher.py)
 INPUT_DIR="${INPUT_DIR:?INPUT_DIR environment variable is required}"
-UNIFIED_CONFIG="${UNIFIED_CONFIG:?UNIFIED_CONFIG environment variable is required}"
+DATASET_CONFIG="${DATASET_CONFIG:?DATASET_CONFIG environment variable is required}"
+EMBEDDING_CONFIG_SECTION="${EMBEDDING_CONFIG_SECTION:?EMBEDDING_CONFIG_SECTION environment variable is required}"
 PREPARE_ONLY="${PREPARE_ONLY:-false}"
 WORKFLOW_DIR="${WORKFLOW_DIR:-}"
 
@@ -99,7 +100,9 @@ source .venv/bin/activate
 # Build Configuration Parameters
 # ─────────────────────────────────────────────────────────────────────────────
 
-echo "Using unified config: $UNIFIED_CONFIG"
+echo "Using dataset config: $DATASET_CONFIG"
+echo "Using embedding section: $EMBEDDING_CONFIG_SECTION"
+echo "Prepare only: $PREPARE_ONLY"
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Run Embedding Core
@@ -107,11 +110,17 @@ echo "Using unified config: $UNIFIED_CONFIG"
 
 echo "Starting embedding processing..."
 
+# Pass the config selection to embed_core.py via environment variables
+# No temporary files needed!
+export EMBEDDING_CONFIG_SECTION
+export PREPARE_ONLY
+
 python3 scripts/embed/embed_core.py \
-    --config-path="$(dirname "$UNIFIED_CONFIG")" \
-    --config-name="$(basename "$UNIFIED_CONFIG" .yaml)" \
+    --config-path="conf" \
+    --config-name="$DATASET_CONFIG" \
     ++embedding.input_files="[\"$target_file\"]" \
-    ++hydra.run.dir="$OUTPUT_DIR"
+    ++hydra.run.dir="$OUTPUT_DIR" \
+    ++embedding_config_section="$EMBEDDING_CONFIG_SECTION"
 
 embedding_exit_code=$?
 

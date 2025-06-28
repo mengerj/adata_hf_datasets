@@ -70,7 +70,7 @@ class EmbeddingLauncher:
         self.prepare_only = prepare_only
         self.config = self._load_config()
         self.job_ids: List[int] = []
-        self.temp_config_files: List[str] = []  # Track temp files for cleanup
+        # No longer need to track temp files since we use environment variables
 
     def _determine_mode(self, mode: str) -> str:
         """Determine the processing mode based on input and environment."""
@@ -228,13 +228,37 @@ class EmbeddingLauncher:
         if partition:
             sbatch_cmd.extend([f"--partition={partition}"])
 
-        # Create unified config file for this job
-        unified_config_path = self._create_unified_config()
+        # Instead of creating temporary config files, pass the config selection via environment
+        # This eliminates the race condition entirely!
 
-        # Build environment variables
+        # Determine which config section to use
+        if self.prepare_only:
+            # For embedding preparation, use embedding_preparation config if available
+            if (
+                hasattr(self.config, "embedding_preparation")
+                and self.config.embedding_preparation is not None
+            ):
+                config_section = "embedding_preparation"
+            else:
+                # Fallback to CPU config for preparation
+                config_section = "embedding_cpu"
+        else:
+            # For actual embedding, use mode-specific config
+            if self.mode == "cpu":
+                config_section = "embedding_cpu"
+            elif self.mode == "gpu":
+                config_section = "embedding_gpu"
+            else:
+                # Fallback to legacy embedding config
+                config_section = "embedding"
+
+        logger.info(f"Using config section: {config_section}")
+
+        # Build environment variables - NO TEMPORARY FILES!
         env_vars = {
             "INPUT_DIR": str(input_dir),
-            "UNIFIED_CONFIG": unified_config_path,
+            "DATASET_CONFIG": self.config_name,  # Pass original config name
+            "EMBEDDING_CONFIG_SECTION": config_section,  # Tell array job which section to use
             "PREPARE_ONLY": str(self.prepare_only).lower(),
             "WORKFLOW_DIR": os.environ.get("WORKFLOW_DIR", ""),
         }
@@ -433,131 +457,13 @@ class EmbeddingLauncher:
                     logger.info("✓ All array jobs completed")
 
     def cleanup_temp_files(self) -> None:
-        """Clean up temporary configuration files."""
-        for temp_file in self.temp_config_files:
-            try:
-                if os.path.exists(temp_file):
-                    os.unlink(temp_file)
-                    logger.debug(f"Cleaned up temporary config file: {temp_file}")
-            except Exception as e:
-                logger.warning(f"Failed to clean up temporary file {temp_file}: {e}")
-        self.temp_config_files.clear()
-
-        # Note: Old config files are now cleaned up by the master job
-        # after all array jobs complete, preventing race conditions
-
-    def _cleanup_old_config_files(self) -> None:
-        """Clean up old config files from previous runs."""
-        try:
-            config_dir = Path("/tmp/adata_hf_embed_configs")
-            if not config_dir.exists():
-                return
-
-            import time
-
-            current_time = time.time()
-            # Be VERY conservative - only clean up files older than 24 hours
-            # to avoid interfering with long-running or queued array jobs
-            twenty_four_hours_ago = current_time - (24 * 3600)  # 24 hours in seconds
-
-            cleaned_count = 0
-            for config_file in config_dir.glob("embed_config_*.yaml"):
-                try:
-                    # Check file modification time
-                    file_mtime = config_file.stat().st_mtime
-                    if file_mtime < twenty_four_hours_ago:
-                        config_file.unlink()
-                        cleaned_count += 1
-                        logger.debug(f"Cleaned up old config file: {config_file}")
-                except Exception as e:
-                    logger.debug(
-                        f"Failed to clean up old config file {config_file}: {e}"
-                    )
-
-            if cleaned_count > 0:
-                logger.info(f"Cleaned up {cleaned_count} old config files (>24h old)")
-
-            # Don't remove the directory - other concurrent jobs might need it
-            # The directory will be cleaned up by system temp cleanup eventually
-        except Exception as e:
-            logger.debug(f"Error during old config file cleanup: {e}")
-            # Don't fail the main process for cleanup issues
-
-    def _create_unified_config(self) -> str:
-        """
-        Create a unified configuration file that merges the selected embedding config
-        into a standard structure for the core script to use.
-
-        Returns
-        -------
-        str
-            Path to the created unified config file
-        """
-        import yaml
-        from omegaconf import OmegaConf
-
-        # Get the appropriate embedding config based on mode and prepare_only
-        embedding_config = self._get_embedding_config()
-
-        # Create a copy of the base config
-        unified_config = OmegaConf.to_container(self.config, resolve=True)
-
-        # Replace the embedding section with our selected config
-        # Remove all mode-specific embedding sections
-        for key in ["embedding_cpu", "embedding_gpu", "embedding_preparation"]:
-            if key in unified_config:
-                del unified_config[key]
-
-        # Add the selected config as the standard 'embedding' section
-        unified_config["embedding"] = OmegaConf.to_container(
-            embedding_config, resolve=True
+        """Clean up temporary configuration files - NO LONGER NEEDED!"""
+        # With the new environment variable approach, no temporary files are created
+        logger.info(
+            "No temporary files to clean up (using environment variable approach)"
         )
 
-        # Add runtime parameters
-        unified_config["prepare_only"] = self.prepare_only
-
-        # Create config directory if it doesn't exist
-        config_dir = Path("/tmp/adata_hf_embed_configs")
-        try:
-            config_dir.mkdir(exist_ok=True, mode=0o755)
-        except Exception as e:
-            logger.error(f"Failed to create config directory {config_dir}: {e}")
-            raise
-
-        # Use launcher process ID and current time to create unique but deterministic filename
-        import time
-
-        timestamp = int(time.time() * 1000)  # milliseconds for uniqueness
-        launcher_pid = os.getpid()
-        config_filename = f"embed_config_{launcher_pid}_{timestamp}.yaml"
-        config_path = config_dir / config_filename
-
-        # Write the config file with proper permissions
-        try:
-            # Create file with restrictive permissions initially
-            with open(
-                config_path, "w", opener=lambda path, flags: os.open(path, flags, 0o644)
-            ) as f:
-                yaml.dump(unified_config, f, default_flow_style=False)
-
-            # Verify the file was created and is readable
-            if not config_path.exists():
-                raise RuntimeError(f"Config file was not created: {config_path}")
-            if not os.access(config_path, os.R_OK):
-                raise RuntimeError(f"Config file is not readable: {config_path}")
-
-            logger.info(f"Created unified config file: {config_path}")
-            self.temp_config_files.append(str(config_path))  # Track for cleanup
-            return str(config_path)
-        except Exception as e:
-            logger.error(f"Failed to create unified config file: {e}")
-            # Clean up partial file if it exists
-            try:
-                if config_path.exists():
-                    config_path.unlink()
-            except Exception as _e:
-                pass
-            raise
+    # Cleanup methods removed - no longer needed with environment variable approach!
 
 
 def main():
@@ -606,11 +512,10 @@ def main():
             # Only clean up temp files if we waited for completion
             launcher.cleanup_temp_files()
         else:
+            logger.info("Jobs submitted but not waiting for completion")
             logger.info(
-                "Jobs submitted but not waiting for completion - temp config files will persist"
+                "No temporary files created (using environment variable approach)"
             )
-            logger.info(f"Temp config files: {launcher.temp_config_files}")
-            logger.info("Config files will be cleaned up after array jobs complete")
 
         logger.info(
             f"✓ Embedding launcher completed successfully with {len(job_ids)} jobs"
@@ -625,13 +530,10 @@ def main():
             logger.warning(
                 f"Despite the error, {len(job_ids)} array jobs were successfully submitted: {job_ids}"
             )
-            logger.warning("Temp config files will be preserved for running array jobs")
             logger.warning("Master job will continue to track these jobs")
             launcher_success = True
         else:
-            logger.error("No array jobs were submitted, cleaning up temp files")
-            if "launcher" in locals():
-                launcher.cleanup_temp_files()
+            logger.error("No array jobs were submitted, failing master job")
             sys.exit(1)
 
     # Final attempt to write job IDs file (in case immediate writing failed)

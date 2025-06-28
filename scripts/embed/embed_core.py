@@ -308,7 +308,7 @@ def main(cfg: DictConfig):
     - ++prepare_only=false # Run full pipeline (default)
 
     This function now works with dataset-centric config structure where:
-    - cfg.embedding contains all embedding parameters
+    - cfg.embedding contains all embedding parameters (selected by launcher)
     - Common keys (batch_key, etc.) are at the top level
     - Paths are auto-generated from dataset metadata
 
@@ -324,12 +324,34 @@ def main(cfg: DictConfig):
     logger.info("Validating config...")
     validate_config(cfg)
 
-    # Use the unified embedding config (created by the launcher)
-    if hasattr(cfg, "embedding") and cfg.embedding is not None:
-        embedding_cfg = cfg.embedding
-        logger.info("Using unified embedding configuration")
+    # Select the appropriate embedding configuration section
+    # This replaces the unified config approach with direct section selection
+    embedding_config_section = getattr(cfg, "embedding_config_section", None)
+    if embedding_config_section:
+        logger.info(f"Using embedding config section: {embedding_config_section}")
+
+        if hasattr(cfg, embedding_config_section):
+            embedding_cfg = getattr(cfg, embedding_config_section)
+
+            # Create a unified embedding config by copying the selected section
+            # This maintains compatibility with the rest of the code
+            cfg.embedding = embedding_cfg
+            logger.info(f"Selected {embedding_config_section} configuration")
+        else:
+            raise ValueError(
+                f"Embedding config section '{embedding_config_section}' not found in config"
+            )
     else:
-        raise ValueError("No embedding configuration found in unified config")
+        # Fallback to legacy unified embedding config
+        if hasattr(cfg, "embedding") and cfg.embedding is not None:
+            embedding_cfg = cfg.embedding
+            logger.info("Using unified embedding configuration (legacy mode)")
+        else:
+            raise ValueError(
+                "No embedding configuration found and no embedding_config_section specified"
+            )
+
+    # Now embedding_cfg points to the correct configuration
     # Get prepare_only from command line override (defaults to False)
     prepare_only = getattr(cfg, "prepare_only", False)
 
