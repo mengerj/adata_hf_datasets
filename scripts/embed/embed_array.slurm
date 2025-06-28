@@ -118,7 +118,7 @@ export PREPARE_ONLY
 echo "in the current directory: $(pwd)"
 echo "in conf: $(ls -la conf)"
 python3 scripts/embed/embed_core.py \
-    --config-path="../../conf" \
+    --config-path="../../conf" \  #path always is read relative to the script by hydra
     --config-name="$DATASET_CONFIG" \
     ++embedding.input_files="[\"$target_file\"]" \
     ++hydra.run.dir="$OUTPUT_DIR" \
