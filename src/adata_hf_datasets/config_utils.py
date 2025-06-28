@@ -98,6 +98,13 @@ def generate_paths_from_config(cfg: DictConfig) -> Dict[str, str]:
             paths["embedding_gpu.output_dir"] = f"{embed_base}/{dataset_name}"
             paths["embedding_gpu.input_files"] = input_files
 
+        if (
+            hasattr(cfg, "embedding_preparation")
+            and cfg.embedding_preparation is not None
+        ):
+            paths["embedding_preparation.output_dir"] = f"{embed_base}/{dataset_name}"
+            paths["embedding_preparation.input_files"] = input_files
+
     elif has_old_structure:
         # Old structure: single embedding section
         paths["embedding.output_dir"] = f"{embed_base}/{dataset_name}"
