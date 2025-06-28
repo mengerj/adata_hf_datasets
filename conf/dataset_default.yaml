@@ -92,6 +92,15 @@ embedding_preparation:
   output_format: "zarr" # Output format preference
   overwrite: false # Whether to overwrite existing preparation files
   chunk_rows: 16384 # Number of cells written per chunk when streaming into Zarr
+  # Method-specific parameters
+  batch_size: 128 # Used by geneformer
+
+  # Embedding dimensions (dataset-specific)
+  embedding_dim_map:
+    scvi_fm: 50 # Can't be changed as the pretrained scvi model is fixed.
+    geneformer: 512
+    pca: 50
+    hvg: 512
 
 # =============================================================================
 # CPU EMBEDDING CONFIGURATION (dataset-specific overrides)
