@@ -8,10 +8,10 @@ defaults:
 # DATASET METADATA
 # =============================================================================
 dataset:
-  name: "geo_7k"
+  name: "geo_7k" #name of the subset being used
   description: "GEO dataset with 7k samples. Annotated with natural language descriptions obtained in CellWhisperer Study."
   download_url: "https://medical-epigenomics.org/papers/schaefer2024/data/datasets/archs4_geo/full_data.h5ad" # Example URL
-  full_name: "geo_7k"
+  full_name: "geo_700k" #name of the full dataset
 
 # =============================================================================
 # COMMON KEYS (dataset-specific)
