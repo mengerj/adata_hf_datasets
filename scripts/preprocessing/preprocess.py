@@ -16,7 +16,6 @@ import adata_hf_datasets.pp as pp
 from adata_hf_datasets.plotting import qc_evaluation_plots
 from adata_hf_datasets.sys_monitor import SystemMonitor
 from adata_hf_datasets.utils import subset_sra_and_plot
-from adata_hf_datasets.file_utils import add_sample_index_to_h5ad
 from adata_hf_datasets.config_utils import apply_all_transformations, validate_config
 
 logger = logging.getLogger(__name__)
@@ -87,7 +86,7 @@ def main(cfg: DictConfig):
     infile = Path(preprocess_cfg.input_file)
     logger.info("Input file: %s", infile)
     # Get the stem of the input file (filename without extension)
-    input_stem = infile.stem
+    # input_stem = infile.stem
     out_dir = Path(preprocess_cfg.output_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     run_dir = HydraConfig.get().run.dir
@@ -97,12 +96,11 @@ def main(cfg: DictConfig):
     monitor.start()
 
     try:
-        # Add a sample index without loading the whole object into memory
-        temp_infile = add_sample_index_to_h5ad(
-            infile=infile, temp_out=out_dir / f"{input_stem}_temp_input.h5ad"
-        )
-
-        ad_bk = sc.read_h5ad(temp_infile, backed="r")
+        ## Add a sample index without loading the whole object into memory
+        # temp_infile = add_sample_index_to_h5ad(
+        #    infile=infile, temp_out=out_dir / f"{input_stem}_temp_input.h5ad"
+        # )
+        ad_bk = sc.read_h5ad(infile, backed="r")
 
         # Plot some quality control plots prior to processing.
         subset_sra_and_plot(
@@ -140,7 +138,7 @@ def main(cfg: DictConfig):
             logger.info(
                 "Writing subset '%s' with %d cells to %s", name, len(indices), out_path
             )
-            ad_view = anndata.read_h5ad(str(temp_infile), backed="r")[indices]
+            ad_view = anndata.read_h5ad(str(infile), backed="r")[indices]
             # view.obs still has sample_index from earlier
             ad_view.write_h5ad(out_path)
             ad_view.file.close()
@@ -219,11 +217,6 @@ def main(cfg: DictConfig):
         for path_in in subset_files.values():
             logger.info("Removing temporary file: %s", path_in)
             path_in.unlink()
-
-        # Clean up the temporary input file if it was created
-        if temp_infile.exists():
-            logger.info(f"Removing temporary input file: {temp_infile}")
-            temp_infile.unlink()
 
         # Save system monitor metrics
     except Exception:

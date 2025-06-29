@@ -2,6 +2,7 @@ import logging
 import scanpy as sc
 from anndata import AnnData
 from adata_hf_datasets.pp.pybiomart_utils import add_ensembl_ids
+import numpy as np
 
 logger = logging.getLogger(__name__)
 
@@ -55,6 +56,8 @@ def pp_adata_geneformer(
         adata.obs["n_counts"] = adata.obs["total_counts"]
 
     # sample_index should already be present
+    # add a numeric sample index to obs, which is needed for geneformer
+    adata.obs["sample_index"] = np.arange(adata.shape[0])
     if "sample_index" not in adata.obs.columns:
         raise ValueError(
             "sample_index not found in adata.obs. Please add it before calling this function. Add it before splitting the data."
