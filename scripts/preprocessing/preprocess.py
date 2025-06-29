@@ -164,6 +164,16 @@ def main(cfg: DictConfig):
 
             # Use caption_key from top level if available, otherwise from preprocessing
             caption_key = cfg.get("caption_key", preprocess_cfg.get("description_key"))
+            logger.info("SRA Settings:")
+            logger.info(f"SRA chunk size: {preprocess_cfg.get('sra_chunk_size', None)}")
+            logger.info(f"SRA extra cols: {preprocess_cfg.get('sra_extra_cols', None)}")
+            logger.info(
+                f"Skip SRA fetch: {preprocess_cfg.get('skip_sra_fetch', False)}"
+            )
+            logger.info(f"SRA max retries: {preprocess_cfg.get('sra_max_retries', 3)}")
+            logger.info(
+                f"SRA continue on fail: {preprocess_cfg.get('sra_continue_on_fail', False)}"
+            )
 
             pp.preprocess_h5ad(
                 path_in,
