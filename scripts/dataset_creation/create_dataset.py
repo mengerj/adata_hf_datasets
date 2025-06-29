@@ -75,7 +75,7 @@ def build_split_dataset(
     negatives_per_sample: int,
     dataset_format: str,
     gene_name_column: str,
-    annotation_key: str,
+    annotation_key: str | None,
     cs_length: int,
 ) -> Dataset:
     """
@@ -96,6 +96,7 @@ def build_split_dataset(
         Column name in AnnData.obs with gene names.
     annotation_key
         Column name in AnnData.obs with cell type annotations.
+        If None, semantic sentences will be skipped.
     cs_length
         Length of the cell sentence to create.
 
@@ -230,6 +231,24 @@ def main(cfg: DictConfig):
     caption_key: str | None = (
         dataset_cfg.caption_key if dataset_cfg.dataset_format != "single" else None
     )
+
+    # Get annotation_key early to filter sentence_keys
+    annotation_key = getattr(dataset_cfg, "annotation_key", None)
+
+    # Filter sentence_keys to remove semantic columns if annotation_key is None
+    if annotation_key is None:
+        # Remove semantic sentence keys that won't be created
+        sentence_keys = [
+            key
+            for key in sentence_keys
+            if key not in ["semantic_true", "semantic_similar"]
+        ]
+        logger.warning(
+            "annotation_key is None. Removed 'semantic_true' and 'semantic_similar' "
+            "from sentence_keys. Final sentence_keys: %s",
+            sentence_keys,
+        )
+
     batch_key: str = cfg.batch_key
     negatives_per_sample: int = dataset_cfg.negatives_per_sample
     dataset_format: str = dataset_cfg.dataset_format
@@ -303,7 +322,7 @@ def main(cfg: DictConfig):
             negatives_per_sample=negatives_per_sample,
             dataset_format=dataset_format,
             gene_name_column=dataset_cfg.gene_name_column,
-            annotation_key=dataset_cfg.annotation_key,
+            annotation_key=annotation_key,
             cs_length=dataset_cfg.cs_length,
         )
         # if the split is called all, change it to "test" to avoid issue with hf format
