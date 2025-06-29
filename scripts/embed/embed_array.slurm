@@ -116,10 +116,15 @@ echo "Starting embedding processing..."
 export EMBEDDING_CONFIG_SECTION
 export PREPARE_ONLY
 #path always is read relative to the script by hydra
+
+# Override input_files for the specific embedding section being used
+# This ensures the override happens to the correct section BEFORE config selection
+echo "Overriding input_files for section: $EMBEDDING_CONFIG_SECTION"
 python3 scripts/embed/embed_core.py \
     --config-path="../../conf" \
     --config-name="$DATASET_CONFIG" \
-    ++embedding.input_files="[\"$target_file\"]" \
+    ++${EMBEDDING_CONFIG_SECTION}.input_files="[\"$target_file\"]" \
+    ++prepare_only="$PREPARE_ONLY" \
     ++hydra.run.dir="$OUTPUT_DIR" \
     ++embedding_config_section="$EMBEDDING_CONFIG_SECTION"
 

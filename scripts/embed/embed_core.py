@@ -328,27 +328,52 @@ def main(cfg: DictConfig):
     # This replaces the unified config approach with direct section selection
     embedding_config_section = getattr(cfg, "embedding_config_section", None)
     if embedding_config_section:
-        logger.info(f"Using embedding config section: {embedding_config_section}")
+        logger.info(
+            f"🔧 Config section selection requested: {embedding_config_section}"
+        )
 
         if hasattr(cfg, embedding_config_section):
             embedding_cfg = getattr(cfg, embedding_config_section)
 
+            # Log the configuration details before copying
+            logger.info(f"📋 Found {embedding_config_section} section with:")
+            logger.info(f"   - Methods: {getattr(embedding_cfg, 'methods', 'NOT SET')}")
+            logger.info(
+                f"   - Input files: {getattr(embedding_cfg, 'input_files', 'NOT SET')}"
+            )
+            logger.info(
+                f"   - Batch size: {getattr(embedding_cfg, 'batch_size', 'NOT SET')}"
+            )
+            logger.info(
+                f"   - Output dir: {getattr(embedding_cfg, 'output_dir', 'NOT SET')}"
+            )
+
             # Create a unified embedding config by copying the selected section
             # This maintains compatibility with the rest of the code
             cfg.embedding = embedding_cfg
-            logger.info(f"Selected {embedding_config_section} configuration")
+            logger.info(
+                f"✅ Successfully selected {embedding_config_section} configuration"
+            )
         else:
+            available_sections = [
+                key for key in cfg.keys() if key.startswith("embedding")
+            ]
             raise ValueError(
-                f"Embedding config section '{embedding_config_section}' not found in config"
+                f"Embedding config section '{embedding_config_section}' not found in config. "
+                f"Available embedding sections: {available_sections}"
             )
     else:
         # Fallback to legacy unified embedding config
         if hasattr(cfg, "embedding") and cfg.embedding is not None:
             embedding_cfg = cfg.embedding
-            logger.info("Using unified embedding configuration (legacy mode)")
+            logger.info("📋 Using unified embedding configuration (legacy mode)")
         else:
+            available_sections = [
+                key for key in cfg.keys() if key.startswith("embedding")
+            ]
             raise ValueError(
-                "No embedding configuration found and no embedding_config_section specified"
+                f"No embedding configuration found and no embedding_config_section specified. "
+                f"Available embedding sections: {available_sections}"
             )
 
     # Now embedding_cfg points to the correct configuration
