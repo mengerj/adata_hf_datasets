@@ -53,6 +53,17 @@ preprocessing:
     - "total_counts"
     - "pct_counts_mt"
 
+  # Bimodal splitting (for specific datasets)
+  split_bimodal: false
+  bimodal_col: null
+
+  # SRA metadata fetching (dataset-specific)
+  skip_sra_fetch: false
+  sra_max_retries: 3
+  sra_continue_on_fail: true
+  sra_chunk_size: null
+  sra_extra_cols: [null]
+
 # =============================================================================
 # CPU EMBEDDING CONFIGURATION
 # =============================================================================
