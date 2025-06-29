@@ -42,7 +42,7 @@ preprocessing:
   bimodal_col: readsaligned
 
   # SRA metadata fetching (dataset-specific)
-  skip_sra_fetch: true
+  skip_sra_fetch: false
   sra_max_retries: 3
   sra_continue_on_fail: true
   sra_chunk_size: 10000
