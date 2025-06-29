@@ -54,7 +54,7 @@ def maybe_add_sra_metadata(
     if skip_sra_fetch:
         logger.info("Skipping SRA metadata fetching as requested.")
         return adata
-
+    logger.info("Fetching SRA metadata for %d samples.", adata.n_obs)
     adata.obs[exp_id_key] = adata.obs.index
     # will be false if no srx ids are found
     if filter_invalid_sra_ids(adata, srx_column=exp_id_key, srs_column=sample_id_key):

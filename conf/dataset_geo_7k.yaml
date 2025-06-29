@@ -27,7 +27,7 @@ other_bio_labels: []
 # =============================================================================
 # Download configuration
 download:
-  enabled: true
+  enabled: false
   subset_size: 7000
 
 # Preprocessing overrides (both dataset-specific and execution parameters)
@@ -45,26 +45,26 @@ preprocessing:
   skip_sra_fetch: false
   sra_max_retries: 3
   sra_continue_on_fail: true
-  sra_chunk_size: null
+  sra_chunk_size: 10000
   sra_extra_cols: ["instrument", "library_layout"]
 
 # Embedding preparation overrides
 embedding_preparation:
-  enabled: true # Set to false to skip embedding preparation
+  enabled: false # Set to false to skip embedding preparation
   methods: ["geneformer"] #run the prepare step on cpu to save gpu time
 
 # Embedding overrides (both dataset-specific and execution parameters)
 embedding_cpu:
-  enabled: true
+  enabled: false
   methods: ["hvg", "pca", "scvi_fm"]
 
 embedding_gpu:
-  enabled: true
+  enabled: false
   methods: ["geneformer"]
 
 # Dataset creation overrides
 dataset_creation:
-  enabled: true
+  enabled: false
   # Dataset-specific parameters
   required_obsm_keys: ["X_pca", "X_scvi_fm", "X_hvg", "X_geneformer"]
   cs_length: 50

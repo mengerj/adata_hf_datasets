@@ -193,6 +193,7 @@ def main(cfg: DictConfig):
                 split_bimodal=bool(preprocess_cfg.get("split_bimodal", False)),
                 output_format=output_format,
             )
+            logger.info("Preprocessing %s → %s", path_in, out_dir_split)
             if output_format == "h5ad":
                 # If using h5ad, we need to close the file before reading it
                 ad_bk = anndata.read_h5ad(

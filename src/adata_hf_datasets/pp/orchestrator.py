@@ -148,6 +148,8 @@ def preprocess_h5ad(
                         max_retries=sra_max_retries,
                         continue_on_fail=sra_continue_on_fail,
                     )
+                else:
+                    logger.info("Skipping SRA metadata fetching as requested.")
                 ad_sub = pp_quality_control(ad_sub)
                 ad_sub = pp_adata_general(
                     ad_sub,
