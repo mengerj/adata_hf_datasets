@@ -19,7 +19,7 @@ dataset:
 batch_key: "study"
 annotation_key: null
 caption_key: "natural_language_annotation"
-instrument_key: "instrument"
+instrument_key: "instrument_model"
 other_bio_labels: []
 
 # =============================================================================
@@ -27,7 +27,7 @@ other_bio_labels: []
 # =============================================================================
 # Download configuration
 download:
-  enabled: true
+  enabled: false
   subset_size: 7000
 
 # Preprocessing overrides (both dataset-specific and execution parameters)
@@ -46,7 +46,7 @@ preprocessing:
   sra_max_retries: 3
   sra_continue_on_fail: true
   sra_chunk_size: 10000
-  sra_extra_cols: ["instrument", "library_layout"]
+  sra_extra_cols: ["instrument_model", "library_layout"]
 
 # Embedding preparation overrides
 embedding_preparation:
