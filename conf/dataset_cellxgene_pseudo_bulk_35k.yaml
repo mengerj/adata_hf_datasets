@@ -33,8 +33,8 @@ download:
 # Preprocessing overrides (both dataset-specific and execution parameters)
 preprocessing:
   # Dataset-specific parameters
-  enabled: false
-  chunk_size: 7000 #small to test many chunks
+  enabled: true
+  chunk_size: 100000 #small to test many chunks
   split_dataset: true # Important for training datasets. Set to false for test datasets. (Similar parameters in dataset_creation)
   count_layer_key: "counts" # Key in adata.layers with raw counts. If not present, adata.raw.X is checked.
 
@@ -45,11 +45,11 @@ embedding_preparation:
 
 # Embedding overrides (both dataset-specific and execution parameters)
 embedding_cpu:
-  enabled: false
+  enabled: true
   methods: ["hvg", "pca"]
 
 embedding_gpu:
-  enabled: false
+  enabled: true
   methods: ["geneformer", "scvi_fm"]
 
 # Dataset creation overrides
@@ -57,7 +57,7 @@ dataset_creation:
   enabled: true
   # Dataset-specific parameters
   required_obsm_keys: ["X_pca", "X_scvi_fm", "X_hvg", "X_geneformer"]
-  cs_length: 20
+  cs_length: 50
   negatives_per_sample: 2
   split_dataset: true # Important for training datasets. Set to false for test datasets.
   dataset_format: "pairs" # Important for training datasets. Set to "single" for test datasets.
