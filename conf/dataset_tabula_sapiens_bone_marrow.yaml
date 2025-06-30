@@ -1,63 +1,64 @@
-# Dataset configuration for Tabula Sapiens bone marrow test dataset
-# Inherits from dataset_default_test.yaml for test-specific defaults
+# Example dataset configuration demonstrating simplified structure
+# Inherits directly from dataset_default.yaml
 defaults:
-  - dataset_default_test.yaml
+  - dataset_default.yaml
   - _self_
 
 # =============================================================================
 # DATASET METADATA
 # =============================================================================
 dataset:
-  name: "tabula_sapiens_bone_marrow_10k"
+  name: "tabula_sapiens_bone_marrow"
   description: "Tabula Sapiens bone marrow dataset for testing"
   download_url: https://datasets.cellxgene.cziscience.com/bbf12ff4-7f22-4cf5-83cf-9cd37ce4d6f4.h5ad
   full_name: "tabula_sapiens_bone_marrow_full"
   # file_path will be auto-generated as: data/RNA/raw/test/tabula_sapiens_bone_marrow_10k.h5ad
 
 # =============================================================================
-# DOWNLOAD OVERRIDES
+# COMMON KEYS (dataset-specific)
 # =============================================================================
-download:
-  enabled: true # Enable download for this dataset
-  subset_size: 10000 # Create a subset of 10k cells (different from 3_5k)
-  seed: 42 # Same seed for reproducibility
-  stratify_keys: null # Will be auto-generated as [batch_key, annotation_key]
-  preserve_proportions: true # Preserve proportions when stratifying
-  validate: true # Validate downloaded file format
-  keep_full_file: true # Keep the full downloaded file for future subsetting
-
-# =============================================================================
-# COMMON KEYS
-# =============================================================================
-batch_key: "dataset_title"
+batch_key: "_scvi_batch"
 annotation_key: "cell_type"
-caption_key: "cell_type" # Use cell_type as caption for test datasets
+caption_key: null
 instrument_key: "assay"
-other_bio_labels: ["tissue", "donor"]
+other_bio_labels: ["tissue", "disease"]
 
 # =============================================================================
-# EMBEDDING OVERRIDES
+# DATASET-SPECIFIC OVERRIDES
 # =============================================================================
-embedding:
-  enabled: false # Disable embedding for testing
-  methods: ["hvg", "pca"]
+# Download configuration
+download:
+  enabled: false
+  subset_size: 10000
 
-# =============================================================================
-# DATASET CREATION OVERRIDES
-# =============================================================================
+# Preprocessing overrides (both dataset-specific and execution parameters)
+preprocessing:
+  # Dataset-specific parameters
+  enabled: true
+  chunk_size: 100000
+  split_dataset: false # Important for training datasets. Set to false for test datasets. (Similar parameters in dataset_creation)
+  count_layer_key: "decontXcounts" # Key in adata.layers with raw counts. If not present, adata.raw.X is checked.
+
+# Embedding preparation overrides
+embedding_preparation:
+  enabled: true # Set to false to skip embedding preparation
+  methods: ["geneformer"] #run the prepare step on cpu to save gpu time
+
+# Embedding overrides (both dataset-specific and execution parameters)
+embedding_cpu:
+  enabled: true
+  methods: ["hvg", "pca", "scvi_fm"]
+
+embedding_gpu:
+  enabled: true
+  methods: ["geneformer"]
+
+# Dataset creation overrides
 dataset_creation:
-  enabled: false # Enable dataset creation for testing
-  # Test datasets use single format by default (inherited from dataset_default_test.yaml)
-  # Override required embedding keys if needed
-  required_obsm_keys: ["X_pca", "X_scvi_fm"]
-
-  # Override sentence keys if needed
-  sentence_keys:
-    - "sample_id_og"
-    - "cell_sentence"
-    - "semantic_true"
-    - "semantic_similar"
-
-  # Override other parameters if needed
-  negatives_per_sample: 0 # No negatives for test datasets
-  cs_length: 10
+  enabled: true
+  # Dataset-specific parameters
+  required_obsm_keys: ["X_pca", "X_scvi_fm", "X_hvg", "X_geneformer"]
+  cs_length: 50
+  negatives_per_sample: 2
+  split_dataset: false # Important for training datasets. Set to false for test datasets.
+  dataset_format: "single" # Important for training datasets. Set to "single" for test datasets.
