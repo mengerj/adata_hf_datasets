@@ -24,6 +24,9 @@ import scipy.sparse as sp
 import numpy as np
 from appdirs import user_cache_dir
 import pandas as pd
+import errno
+import time
+import random
 
 logger = logging.getLogger(__name__)
 
@@ -854,12 +857,20 @@ class SCVIEmbedder(BaseEmbedder):
             Dimension of the output embeddings.
         model_cache_dir : str | None
             Directory to cache downloaded models. If None, uses '../models/scvi_cellxgene'.
+        file_copy_max_retries : int, optional
+            Maximum number of retry attempts for NFS file copying (default: 5)
+        file_copy_base_delay : float, optional
+            Base delay in seconds for exponential backoff during file copying (default: 1.0)
         **kwargs
             Additional arguments passed to SCVI setup.
         """
         super().__init__(embedding_dim=embedding_dim)
         self.model = None
         self.init_kwargs = kwargs
+
+        # File copying configuration for NFS robustness
+        self.file_copy_max_retries = kwargs.get("file_copy_max_retries", 5)
+        self.file_copy_base_delay = kwargs.get("file_copy_base_delay", 1.0)
 
     def prepare(
         self,
@@ -1014,25 +1025,176 @@ class SCVIEmbedder(BaseEmbedder):
         return not path.is_symlink() and "/tmp/" not in path.as_posix()
 
     @staticmethod
-    def _localize_hubmodel(model: HubModel) -> HubModel:
+    def _robust_copy_file(
+        src: Path, dst: Path, max_retries: int = 5, base_delay: float = 1.0
+    ) -> None:
+        """
+        Robustly copy a file with retry logic for NFS/shared filesystem issues.
+
+        Parameters
+        ----------
+        src : Path
+            Source file path
+        dst : Path
+            Destination file path
+        max_retries : int
+            Maximum number of retry attempts
+        base_delay : float
+            Base delay in seconds for exponential backoff
+
+        Raises
+        ------
+        OSError
+            If all retry attempts fail
+        """
+        # NFS-related error codes that should trigger retries
+        nfs_errors = {
+            errno.ESTALE,  # Stale file handle (70 on macOS, varies on Linux)
+            errno.EIO,  # 5: I/O error
+            errno.EBUSY,  # 16: Device or resource busy
+            errno.EAGAIN,  # 11: Try again (35 on macOS)
+            errno.EINTR,  # 4: Interrupted system call
+            70,  # ESTALE on some systems
+            116,  # Stale file handle on Linux systems (from original error)
+        }
+
+        for attempt in range(max_retries):
+            try:
+                # Try different copy strategies on each attempt
+                if attempt == 0:
+                    # First attempt: use shutil.copy2 (preserves metadata)
+                    shutil.copy2(src, dst)
+                elif attempt == 1:
+                    # Second attempt: use shutil.copyfile (no metadata)
+                    shutil.copyfile(src, dst)
+                else:
+                    # Subsequent attempts: manual chunked copy
+                    SCVIEmbedder._chunked_copy(src, dst)
+
+                # If we get here, the copy succeeded
+                logger.debug(
+                    f"Successfully copied {src} to {dst} on attempt {attempt + 1}"
+                )
+                return
+
+            except OSError as e:
+                # Check for NFS-related errors using multiple approaches
+                error_code = getattr(e, "errno", None)
+                # Also check the args in case errno isn't set properly
+                if error_code is None and hasattr(e, "args") and len(e.args) > 0:
+                    error_code = e.args[0] if isinstance(e.args[0], int) else None
+
+                if error_code in nfs_errors and attempt < max_retries - 1:
+                    # Calculate delay with exponential backoff and jitter
+                    delay = base_delay * (2**attempt) + random.uniform(0, 1)
+
+                    logger.warning(
+                        f"NFS error (errno {error_code}) copying {src} to {dst}. "
+                        f"Retry {attempt + 1}/{max_retries} in {delay:.1f}s: {e}"
+                    )
+                    time.sleep(delay)
+                    continue
+                else:
+                    # Non-NFS error or max retries exceeded
+                    if attempt == max_retries - 1:
+                        logger.error(
+                            f"Failed to copy {src} to {dst} after {max_retries} attempts. "
+                            f"Last error: {e}"
+                        )
+                    raise
+
+            except Exception as e:
+                # Non-OSError exceptions should not be retried
+                logger.error(f"Unexpected error copying {src} to {dst}: {e}")
+                raise
+
+    @staticmethod
+    def _chunked_copy(src: Path, dst: Path, chunk_size: int = 64 * 1024) -> None:
+        """
+        Copy a file in chunks to avoid NFS issues with large files.
+
+        Parameters
+        ----------
+        src : Path
+            Source file path
+        dst : Path
+            Destination file path
+        chunk_size : int
+            Size of each chunk in bytes
+        """
+        with open(src, "rb") as fsrc, open(dst, "wb") as fdst:
+            while True:
+                chunk = fsrc.read(chunk_size)
+                if not chunk:
+                    break
+                fdst.write(chunk)
+
+        # Copy file permissions
+        try:
+            shutil.copystat(src, dst)
+        except OSError:
+            # If we can't copy stats, that's usually not critical
+            pass
+
+    @staticmethod
+    def _localize_hubmodel(
+        model: HubModel, max_retries: int = 5, base_delay: float = 1.0
+    ) -> HubModel:
         """
         Copy the weight file (model.pt) into a unique temp dir and return a *new*
         HubModel instance that points there.  This eliminates cross-process races.
+
+        Uses robust file copying with retry logic to handle NFS/shared filesystem issues.
+
+        Parameters
+        ----------
+        model : HubModel
+            The HubModel to localize
+        max_retries : int
+            Maximum number of retry attempts for file copying
+        base_delay : float
+            Base delay in seconds for exponential backoff
         """
         orig_dir = Path(model.local_dir)
         tmp_dir = Path(tempfile.gettempdir()) / f"scvi_{uuid.uuid4().hex}"
         tmp_dir.mkdir(parents=True, exist_ok=True)
 
-        # copy the weight file; other files are usually tiny, copy if you need them
-        shutil.copy2(orig_dir / "model.pt", tmp_dir / "model.pt")
-        if (orig_dir / "adata.h5ad").is_file():
-            shutil.copy2(orig_dir / "adata.h5ad", tmp_dir / "adata.h5ad")
-        # reuse the existing metadata / model-card objects
-        return HubModel(
-            local_dir=str(tmp_dir),
-            metadata=model.metadata,
-            model_card=model.model_card,
-        )
+        try:
+            # Copy the weight file with robust retry logic
+            model_pt_src = orig_dir / "model.pt"
+            model_pt_dst = tmp_dir / "model.pt"
+
+            if model_pt_src.exists():
+                SCVIEmbedder._robust_copy_file(
+                    model_pt_src, model_pt_dst, max_retries, base_delay
+                )
+            else:
+                raise FileNotFoundError(f"Model file not found: {model_pt_src}")
+
+            # Copy adata file if it exists (with retry logic)
+            adata_src = orig_dir / "adata.h5ad"
+            if adata_src.is_file():
+                adata_dst = tmp_dir / "adata.h5ad"
+                SCVIEmbedder._robust_copy_file(
+                    adata_src, adata_dst, max_retries, base_delay
+                )
+
+            # reuse the existing metadata / model-card objects
+            return HubModel(
+                local_dir=str(tmp_dir),
+                metadata=model.metadata,
+                model_card=model.model_card,
+            )
+
+        except Exception as e:
+            # Clean up temp directory on failure
+            try:
+                shutil.rmtree(tmp_dir, ignore_errors=True)
+            except Exception:
+                pass  # Ignore cleanup errors
+
+            logger.error(f"Failed to localize HubModel from {orig_dir}: {e}")
+            raise
 
     def _setup_model_with_ref(self, model, reference_adata):
         """
@@ -1054,7 +1216,9 @@ class SCVIEmbedder(BaseEmbedder):
             logger.info(
                 "Copying SCVI weight file to a worker-unique temp dir to avoid NFS races."
             )
-            model = self._localize_hubmodel(model)
+            model = self._localize_hubmodel(
+                model, self.file_copy_max_retries, self.file_copy_base_delay
+            )
 
         logger.info("Preparing SCVI model with reference data...")
         # didn't quite understand why, but this property has to be deleted
