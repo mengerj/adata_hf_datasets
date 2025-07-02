@@ -17,6 +17,10 @@ from adata_hf_datasets.plotting import qc_evaluation_plots
 from adata_hf_datasets.sys_monitor import SystemMonitor
 from adata_hf_datasets.utils import subset_sra_and_plot
 from adata_hf_datasets.config_utils import apply_all_transformations, validate_config
+from adata_hf_datasets.file_utils import safe_write_h5ad
+
+# Disable HDF5 file locking to prevent BlockingIOError on shared filesystems
+os.environ["HDF5_USE_FILE_LOCKING"] = "FALSE"
 
 logger = logging.getLogger(__name__)
 
@@ -95,6 +99,7 @@ def main(cfg: DictConfig):
     monitor.daemon = True  # to terminate the thread when the main thread exits
     monitor.start()
 
+    ad_bk = None  # Initialize to None for proper cleanup
     try:
         ## Add a sample index without loading the whole object into memory
         # temp_infile = add_sample_index_to_h5ad(
@@ -131,6 +136,7 @@ def main(cfg: DictConfig):
 
         # Close the backed file; we'll re-open for each slice
         ad_bk.file.close()
+        del ad_bk  # Explicitly delete reference to ensure file is released
 
         # Helper: write a slice of the backed file to disk without to_adata()
         def write_subset(indices: list[int], name: str) -> Path:
@@ -140,9 +146,19 @@ def main(cfg: DictConfig):
             )
             ad_view = anndata.read_h5ad(str(infile), backed="r")[indices]
             # view.obs still has sample_index from earlier
-            ad_view.write_h5ad(out_path)
-            ad_view.file.close()
-            del ad_view
+
+            # Use safe_write_h5ad to handle file locking issues
+            try:
+                safe_write_h5ad(ad_view, out_path, compression="gzip")
+                logger.info("Successfully wrote subset to %s", out_path)
+            except Exception as e:
+                logger.error("Failed to write subset '%s': %s", name, e)
+                raise
+            finally:
+                # Ensure file handle is properly closed
+                if hasattr(ad_view, "file") and ad_view.file is not None:
+                    ad_view.file.close()
+                del ad_view
             return out_path
 
         # 4) Write each subset to its own input file
@@ -219,7 +235,9 @@ def main(cfg: DictConfig):
                 if preprocess_cfg.categories_of_interest
                 else None,
             )
-            ad_bk.file.close()
+            # Close the file handle for this iteration
+            if hasattr(ad_bk, "file") and ad_bk.file is not None:
+                ad_bk.file.close()
 
         logger.info("Done. Outputs in %s", out_dir)
 
@@ -233,7 +251,12 @@ def main(cfg: DictConfig):
         logger.exception("Unhandled exception during preprocessing")
         raise  # optional: re-raise if you want Hydra/SLURM to register job as failed
     finally:
-        ad_bk.file.close()
+        # Safely close any remaining file handles
+        if ad_bk is not None and hasattr(ad_bk, "file") and ad_bk.file is not None:
+            try:
+                ad_bk.file.close()
+            except Exception:
+                pass  # Ignore errors on cleanup
         monitor.stop()
         monitor.print_summary()
         monitor.save(run_dir)
