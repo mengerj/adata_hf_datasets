@@ -1,4 +1,11 @@
 import logging
+import os
+import time
+import uuid
+import shutil
+from pathlib import Path
+from typing import Union
+import tempfile
 import numpy as np
 import pandas as pd
 import scipy.sparse as sp
@@ -647,3 +654,116 @@ def remove_zero_variance_genes(adata):
     else:
         logger.info("No genes with zero variance found.")
         return adata
+
+
+def safe_read_h5ad_backed(
+    path: Union[str, Path],
+    *,
+    max_retry: int = 3,
+    copy_local: bool = True,
+    sleep: int = 5,
+) -> AnnData:
+    """
+    Safely read an h5ad file in backed mode with retry logic for memory errors.
+
+    This function provides robust reading of h5ad files in backed mode by handling
+    memory allocation errors that can occur when reading large sparse matrices or
+    corrupted data. On memory errors, it attempts to copy the file to local storage
+    and retry the operation.
+
+    Parameters
+    ----------
+    path : Union[str, Path]
+        Path to the h5ad file
+    max_retry : int, default=3
+        Maximum number of retry attempts
+    copy_local : bool, default=True
+        Whether to copy to local storage on memory errors
+    sleep : int, default=5
+        Sleep time between retries in seconds
+
+    Returns
+    -------
+    AnnData
+        AnnData object opened in backed mode
+
+    Raises
+    ------
+    MemoryError
+        If memory allocation fails after all retry attempts
+    RuntimeError
+        If file cannot be read after all retry attempts
+
+    Notes
+    -----
+    If a local copy is created, it will be cleaned up when the returned
+    AnnData object is deleted or when the process exits. The temporary file
+    location is stored as an attribute on the returned object for cleanup.
+
+    Examples
+    --------
+    >>> adata = safe_read_h5ad_backed("large_dataset.h5ad")
+    >>> print(adata.shape)
+    (1000000, 20000)
+    """
+    path = Path(path)
+    attempt = 0
+    local_copy: Path | None = None
+
+    while attempt < max_retry:
+        attempt += 1
+        try:
+            src = local_copy or path
+            logger.info(
+                f"Reading h5ad file in backed mode from {src} (attempt {attempt})"
+            )
+            adata = sc.read_h5ad(src, backed="r")
+            logger.info(f"Successfully opened backed file with shape: {adata.shape}")
+
+            # Store reference to local copy for cleanup
+            if local_copy is not None:
+                # Add cleanup attribute to the adata object
+                adata._temp_local_copy = local_copy
+                logger.info(f"Local copy reference stored for cleanup: {local_copy}")
+
+            return adata
+
+        except (MemoryError, np.core._exceptions._ArrayMemoryError) as e:
+            logger.warning(f"Memory error reading {path}: {e}")
+            if attempt >= max_retry:
+                logger.error(
+                    f"Failed to read after {max_retry} attempts due to memory issues"
+                )
+                # Clean up local copy if it exists
+                if local_copy and local_copy.exists():
+                    logger.info(f"Cleaning up local copy: {local_copy}")
+                    local_copy.unlink()
+                raise
+
+            # On memory error, try copying to local storage
+            if copy_local and local_copy is None:
+                tmpdir = Path(os.getenv("TMPDIR", tempfile.gettempdir()))
+                local_copy = tmpdir / f"{path.stem}_{uuid.uuid4().hex}.h5ad"
+                try:
+                    logger.info(f"Copying file to local storage: {local_copy}")
+                    shutil.copy2(path, local_copy)
+                    logger.info("Local copy created successfully")
+                except Exception as cp_err:
+                    logger.warning(f"Local copy failed: {cp_err}")
+                    local_copy = None
+
+            logger.info(f"Retrying in {sleep} seconds...")
+            time.sleep(sleep)
+
+        except Exception as e:
+            logger.error(f"Unexpected error reading {path}: {e}")
+            if attempt >= max_retry:
+                # Clean up local copy if it exists
+                if local_copy and local_copy.exists():
+                    logger.info(f"Cleaning up local copy: {local_copy}")
+                    local_copy.unlink()
+                raise
+            logger.info(f"Retrying in {sleep} seconds...")
+            time.sleep(sleep)
+
+    raise RuntimeError(f"Failed to read {path} after {max_retry} attempts")

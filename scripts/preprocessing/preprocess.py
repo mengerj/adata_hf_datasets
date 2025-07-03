@@ -3,7 +3,6 @@ import logging
 from pathlib import Path
 import importlib
 import numpy as np
-import scanpy as sc
 from anndata import AnnData
 import anndata
 import sys
@@ -18,6 +17,7 @@ from adata_hf_datasets.sys_monitor import SystemMonitor
 from adata_hf_datasets.utils import subset_sra_and_plot
 from adata_hf_datasets.config_utils import apply_all_transformations, validate_config
 from adata_hf_datasets.file_utils import safe_write_h5ad
+from adata_hf_datasets.pp.utils import safe_read_h5ad_backed
 
 # Disable HDF5 file locking to prevent BlockingIOError on shared filesystems
 os.environ["HDF5_USE_FILE_LOCKING"] = "FALSE"
@@ -105,7 +105,7 @@ def main(cfg: DictConfig):
         # temp_infile = add_sample_index_to_h5ad(
         #    infile=infile, temp_out=out_dir / f"{input_stem}_temp_input.h5ad"
         # )
-        ad_bk = sc.read_h5ad(infile, backed="r")
+        ad_bk = safe_read_h5ad_backed(infile)
 
         # Plot some quality control plots prior to processing.
         subset_sra_and_plot(
@@ -144,22 +144,45 @@ def main(cfg: DictConfig):
             logger.info(
                 "Writing subset '%s' with %d cells to %s", name, len(indices), out_path
             )
-            ad_view = anndata.read_h5ad(str(infile), backed="r")[indices]
-            # view.obs still has sample_index from earlier
 
-            # Use safe_write_h5ad to handle file locking issues
+            # Use safe backed reading to handle memory issues
             try:
+                ad_backed = safe_read_h5ad_backed(infile)
+                ad_view = ad_backed[indices]
+
+                # Use safe_write_h5ad to handle file locking issues
                 safe_write_h5ad(ad_view, out_path, compression="gzip")
                 logger.info("Successfully wrote subset to %s", out_path)
+                return out_path
+
             except Exception as e:
                 logger.error("Failed to write subset '%s': %s", name, e)
                 raise
             finally:
-                # Ensure file handle is properly closed
-                if hasattr(ad_view, "file") and ad_view.file is not None:
-                    ad_view.file.close()
-                del ad_view
-            return out_path
+                # Ensure file handles are properly closed and clean up temporary files
+                if "ad_backed" in locals():
+                    try:
+                        if hasattr(ad_backed, "file") and ad_backed.file is not None:
+                            ad_backed.file.close()
+                        # Clean up temporary local copy if it exists
+                        if (
+                            hasattr(ad_backed, "_temp_local_copy")
+                            and ad_backed._temp_local_copy.exists()
+                        ):
+                            logger.info(
+                                f"Cleaning up temporary local copy: {ad_backed._temp_local_copy}"
+                            )
+                            ad_backed._temp_local_copy.unlink()
+                    except Exception:
+                        pass  # Ignore cleanup errors
+                    del ad_backed
+                if "ad_view" in locals():
+                    try:
+                        if hasattr(ad_view, "file") and ad_view.file is not None:
+                            ad_view.file.close()
+                    except Exception:
+                        pass  # Ignore cleanup errors
+                    del ad_view
 
         # 4) Write each subset to its own input file
         subset_files = {name: write_subset(idx, name) for name, idx in subsets.items()}
@@ -251,10 +274,20 @@ def main(cfg: DictConfig):
         logger.exception("Unhandled exception during preprocessing")
         raise  # optional: re-raise if you want Hydra/SLURM to register job as failed
     finally:
-        # Safely close any remaining file handles
-        if ad_bk is not None and hasattr(ad_bk, "file") and ad_bk.file is not None:
+        # Safely close any remaining file handles and clean up local copies
+        if ad_bk is not None:
             try:
-                ad_bk.file.close()
+                if hasattr(ad_bk, "file") and ad_bk.file is not None:
+                    ad_bk.file.close()
+                # Clean up temporary local copy if it exists
+                if (
+                    hasattr(ad_bk, "_temp_local_copy")
+                    and ad_bk._temp_local_copy.exists()
+                ):
+                    logger.info(
+                        f"Cleaning up temporary local copy: {ad_bk._temp_local_copy}"
+                    )
+                    ad_bk._temp_local_copy.unlink()
             except Exception:
                 pass  # Ignore errors on cleanup
         monitor.stop()
