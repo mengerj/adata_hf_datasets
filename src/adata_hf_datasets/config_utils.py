@@ -376,8 +376,8 @@ def validate_parameter_values(cfg: DictConfig) -> None:
         _validate_embedding_section(cfg.embedding_gpu, "embedding_gpu")
 
     # Handle old structure for backward compatibility
-    # if hasattr(cfg, "embedding") and cfg.embedding is not None:
-    #    _validate_embedding_section(cfg.embedding, "embedding")
+    if hasattr(cfg, "embedding") and cfg.embedding is not None:
+        _validate_embedding_section(cfg.embedding, "embedding")
 
 
 def _validate_embedding_section(embedding_cfg: DictConfig, section_name: str) -> None:
@@ -461,8 +461,8 @@ def validate_config(cfg: DictConfig) -> bool:
     # Check old structure for backward compatibility
     if hasattr(cfg, "embedding") and cfg.embedding is not None:
         logger.info("Found legacy embedding configuration")
-        # has_embedding_config = True
-        # required_fields["embedding"] = ["input_files", "output_dir", "methods"]
+        has_embedding_config = True
+        required_fields["embedding"] = ["input_files", "output_dir", "methods"]
 
     # Validate that at least one embedding configuration exists
     if not has_embedding_config:

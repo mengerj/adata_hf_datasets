@@ -253,7 +253,7 @@ class TestWorkflowLogger:
         for step in [
             "download",
             "preprocessing",
-            "embedding_preparation",
+            "embedding_prepare",
             "embedding",
             "dataset_creation",
         ]:
@@ -324,7 +324,7 @@ class TestParameterValidation:
                     "input_file": "test.h5ad",
                     "output_dir": "test_output",
                 },
-                "embedding": {
+                "embedding_cpu": {
                     "enabled": True,
                     "input_files": ["test.h5ad"],
                     "output_dir": "test_output",
@@ -343,7 +343,7 @@ class TestParameterValidation:
         )
 
         # This would be caught during embedding step
-        assert config.embedding.embedding_dim_map["hvg"] < 0
+        assert config.embedding_cpu.embedding_dim_map["hvg"] < 0
 
     def test_enhanced_parameter_validation(self):
         """Test enhanced parameter validation with invalid values."""
@@ -362,7 +362,7 @@ class TestParameterValidation:
                     "min_cells": -10,  # Invalid negative value
                     "train_split": 1.5,  # Invalid value > 1
                 },
-                "embedding": {
+                "embedding_cpu": {
                     "enabled": True,
                     "input_files": ["test.h5ad"],
                     "output_dir": "test_output",
