@@ -4,6 +4,7 @@
 # =============================================================================
 # DATASET METADATA
 # =============================================================================
+base_file_path: "/scratch/local/menger/data/RNA/raw"
 dataset:
   name: null # e.g., "cellxgene_pseudo_bulk_35k"
   description: null # Human-readable description
