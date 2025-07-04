@@ -5,7 +5,6 @@ import importlib
 import numpy as np
 from anndata import AnnData
 import anndata
-import anndata as ad
 import sys
 import hydra
 from omegaconf import DictConfig
@@ -140,23 +139,18 @@ def main(cfg: DictConfig):
         ad_bk.file.close()
         del ad_bk  # Explicitly delete reference to ensure file is released
 
-        # Helper: write a slice of the backed file to disk using chunked approach
-        def write_subset_chunked(
-            indices: list[int], name: str, chunk_size: int = 10000
-        ) -> Path:
+        # Helper: write a slice of the backed file to disk using direct approach
+        def write_subset(indices: list[int], name: str) -> Path:
             """
-            Write a subset of cells to disk using chunked approach to avoid memory issues.
-
-            This function reads and writes data in chunks to handle large datasets that
-            would cause memory errors when loaded entirely into memory.
+            Write a subset of cells to disk using direct approach.
+            This is simpler and more reliable than chunked writing.
             """
             out_path = out_dir / f"{name}_input.h5ad"
             logger.info(
-                "Writing subset '%s' with %d cells to %s (chunk size: %d)",
+                "Writing subset '%s' with %d cells to %s",
                 name,
                 len(indices),
                 out_path,
-                chunk_size,
             )
 
             ad_backed = None
@@ -164,120 +158,18 @@ def main(cfg: DictConfig):
                 # Open the backed file
                 ad_backed = safe_read_h5ad_backed(infile)
 
-                # Sort indices to ensure efficient reading
-                indices_sorted = sorted(indices)
+                # Create the subset directly
+                ad_subset = ad_backed[indices]
 
-                # Create chunks of indices
-                chunks = [
-                    indices_sorted[i : i + chunk_size]
-                    for i in range(0, len(indices_sorted), chunk_size)
-                ]
-
-                logger.info(
-                    f"Processing {len(chunks)} chunks of up to {chunk_size} cells each"
-                )
-
-                # Process first chunk to create the initial file
-                first_chunk = chunks[0]
-                logger.info(f"Writing first chunk with {len(first_chunk)} cells")
-
-                # Create view for first chunk
-                ad_view = ad_backed[first_chunk]
-                logger.info(
-                    f"Created view with type: {type(ad_view)}, backed: {getattr(ad_view, 'isbacked', 'N/A')}"
-                )
-
-                # Convert to in-memory AnnData to avoid backed-mode issues during writing
-                # Check if it's already a regular AnnData or if it's a view that needs conversion
-                if hasattr(ad_view, "to_adata"):
-                    logger.info("Converting view to in-memory AnnData using to_adata()")
-                    ad_chunk = ad_view.to_adata()
-                else:
-                    # It's already a regular AnnData object
-                    logger.info("View is already a regular AnnData object")
-                    ad_chunk = ad_view
-
-                # Write the first chunk
-                safe_write_h5ad(ad_chunk, out_path, compression="gzip")
-
-                # Clean up first chunk
-                del ad_chunk
-                if hasattr(ad_view, "file") and ad_view.file is not None:
-                    ad_view.file.close()
-                del ad_view
-
-                # If there are more chunks, append them
-                if len(chunks) > 1:
-                    # Read the remaining chunks and append them
-                    remaining_chunks = []
-                    for i, chunk_indices in enumerate(chunks[1:], 1):
-                        logger.info(
-                            f"Reading chunk {i + 1}/{len(chunks)} with {len(chunk_indices)} cells"
-                        )
-
-                        # Create view for this chunk
-                        ad_view = ad_backed[chunk_indices]
-
-                        # Convert to in-memory AnnData
-                        # Check if it's already a regular AnnData or if it's a view that needs conversion
-                        if hasattr(ad_view, "to_adata"):
-                            ad_chunk = ad_view.to_adata()
-                        else:
-                            # It's already a regular AnnData object
-                            ad_chunk = ad_view
-                        remaining_chunks.append(ad_chunk)
-
-                        # Clean up view
-                        if hasattr(ad_view, "file") and ad_view.file is not None:
-                            ad_view.file.close()
-                        del ad_view
-
-                    # Concatenate all chunks
-                    logger.info(f"Concatenating {len(remaining_chunks) + 1} chunks")
-                    ad_first = ad.read_h5ad(out_path)
-                    ad_combined = ad.concat([ad_first] + remaining_chunks, axis=0)
-
-                    # Write the combined result
-                    safe_write_h5ad(ad_combined, out_path, compression="gzip")
-
-                    # Clean up
-                    del ad_first
-                    del ad_combined
-                    for chunk in remaining_chunks:
-                        del chunk
-                    del remaining_chunks
+                # Write the subset
+                safe_write_h5ad(ad_subset, out_path, compression="gzip")
 
                 logger.info("Successfully wrote subset to %s", out_path)
                 return out_path
 
             except Exception as e:
-                logger.error("Chunked writing failed, trying fallback approach")
-                logger.error("Error details:", exc_info=True)
-
-                # Fallback: try writing without chunking
-                try:
-                    logger.info("Attempting fallback: direct subset writing")
-                    ad_backed_fallback = safe_read_h5ad_backed(infile)
-                    ad_subset = ad_backed_fallback[indices]
-
-                    # Try to write directly
-                    safe_write_h5ad(ad_subset, out_path, compression="gzip")
-
-                    # Clean up
-                    if (
-                        hasattr(ad_backed_fallback, "file")
-                        and ad_backed_fallback.file is not None
-                    ):
-                        ad_backed_fallback.file.close()
-                    del ad_backed_fallback
-                    del ad_subset
-
-                    logger.info("Fallback approach succeeded")
-                    return out_path
-
-                except Exception as fallback_error:
-                    logger.error("Fallback approach also failed: %s", fallback_error)
-                    raise e  # Re-raise original error
+                logger.error("Failed to write subset '%s': %s", name, e)
+                raise e
             finally:
                 # Ensure file handles are properly closed and clean up temporary files
                 if ad_backed is not None:
@@ -301,17 +193,8 @@ def main(cfg: DictConfig):
                     except Exception:
                         pass
 
-        # 4) Write each subset to its own input file using chunked approach
-        write_chunk_size = (
-            min(10000, len(subsets[next(iter(subsets))]) // 4) if subsets else 10000
-        )
-        write_chunk_size = max(1000, write_chunk_size)  # Ensure minimum chunk size
-        logger.info(f"Using write chunk size: {write_chunk_size}")
-
-        subset_files = {
-            name: write_subset_chunked(idx, name, write_chunk_size)
-            for name, idx in subsets.items()
-        }
+        # 4) Write each subset to its own input file using direct approach
+        subset_files = {name: write_subset(idx, name) for name, idx in subsets.items()}
 
         # 5) Now preprocess each subset on disk via your chunked pipeline
         current_ad_bk = None  # Track current AnnData for cleanup
