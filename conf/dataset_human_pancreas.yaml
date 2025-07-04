@@ -11,7 +11,7 @@ dataset:
   name: "human_pancreas"
   description: "Pancreas dataset with complex batch effects (different assays) from Luecken et. al"
   download_url: https://figshare.com/ndownloader/files/24539828
-  full_name: "human_pancreas"
+  full_name: "human_pancreas_full"
   # file_path will be auto-generated as: data/RNA/raw/test/tabula_sapiens_bone_marrow_10k.h5ad
 
 # =============================================================================
