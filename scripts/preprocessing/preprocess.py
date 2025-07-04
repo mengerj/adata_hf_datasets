@@ -101,6 +101,7 @@ def main(cfg: DictConfig):
     monitor.start()
 
     ad_bk = None  # Initialize to None for proper cleanup
+    current_ad_bk = None  # Initialize current AnnData for loop cleanup
     try:
         ## Add a sample index without loading the whole object into memory
         # temp_infile = add_sample_index_to_h5ad(
@@ -182,9 +183,19 @@ def main(cfg: DictConfig):
 
                 # Create view for first chunk
                 ad_view = ad_backed[first_chunk]
+                logger.info(
+                    f"Created view with type: {type(ad_view)}, backed: {getattr(ad_view, 'isbacked', 'N/A')}"
+                )
 
                 # Convert to in-memory AnnData to avoid backed-mode issues during writing
-                ad_chunk = ad_view.to_adata()
+                # Check if it's already a regular AnnData or if it's a view that needs conversion
+                if hasattr(ad_view, "to_adata"):
+                    logger.info("Converting view to in-memory AnnData using to_adata()")
+                    ad_chunk = ad_view.to_adata()
+                else:
+                    # It's already a regular AnnData object
+                    logger.info("View is already a regular AnnData object")
+                    ad_chunk = ad_view
 
                 # Write the first chunk
                 safe_write_h5ad(ad_chunk, out_path, compression="gzip")
@@ -208,7 +219,12 @@ def main(cfg: DictConfig):
                         ad_view = ad_backed[chunk_indices]
 
                         # Convert to in-memory AnnData
-                        ad_chunk = ad_view.to_adata()
+                        # Check if it's already a regular AnnData or if it's a view that needs conversion
+                        if hasattr(ad_view, "to_adata"):
+                            ad_chunk = ad_view.to_adata()
+                        else:
+                            # It's already a regular AnnData object
+                            ad_chunk = ad_view
                         remaining_chunks.append(ad_chunk)
 
                         # Clean up view
@@ -235,9 +251,33 @@ def main(cfg: DictConfig):
                 return out_path
 
             except Exception as e:
-                logger.error("Failed to write subset '%s': %s", name, e)
+                logger.error("Chunked writing failed, trying fallback approach")
                 logger.error("Error details:", exc_info=True)
-                raise
+
+                # Fallback: try writing without chunking
+                try:
+                    logger.info("Attempting fallback: direct subset writing")
+                    ad_backed_fallback = safe_read_h5ad_backed(infile)
+                    ad_subset = ad_backed_fallback[indices]
+
+                    # Try to write directly
+                    safe_write_h5ad(ad_subset, out_path, compression="gzip")
+
+                    # Clean up
+                    if (
+                        hasattr(ad_backed_fallback, "file")
+                        and ad_backed_fallback.file is not None
+                    ):
+                        ad_backed_fallback.file.close()
+                    del ad_backed_fallback
+                    del ad_subset
+
+                    logger.info("Fallback approach succeeded")
+                    return out_path
+
+                except Exception as fallback_error:
+                    logger.error("Fallback approach also failed: %s", fallback_error)
+                    raise e  # Re-raise original error
             finally:
                 # Ensure file handles are properly closed and clean up temporary files
                 if ad_backed is not None:
@@ -389,22 +429,29 @@ def main(cfg: DictConfig):
     finally:
         # Safely close any remaining file handles and clean up local copies
         try:
-            if ad_bk is not None:
-                try:
-                    if hasattr(ad_bk, "file") and ad_bk.file is not None:
-                        ad_bk.file.close()
-                    # Clean up temporary local copy if it exists
-                    if (
-                        hasattr(ad_bk, "_temp_local_copy")
-                        and ad_bk._temp_local_copy is not None
-                        and ad_bk._temp_local_copy.exists()
-                    ):
-                        logger.info(
-                            f"Cleaning up temporary local copy: {ad_bk._temp_local_copy}"
+            # Clean up both ad_bk and current_ad_bk if they exist
+            for var_name, var_obj in [
+                ("ad_bk", ad_bk),
+                ("current_ad_bk", current_ad_bk),
+            ]:
+                if var_obj is not None:
+                    try:
+                        if hasattr(var_obj, "file") and var_obj.file is not None:
+                            var_obj.file.close()
+                        # Clean up temporary local copy if it exists
+                        if (
+                            hasattr(var_obj, "_temp_local_copy")
+                            and var_obj._temp_local_copy is not None
+                            and var_obj._temp_local_copy.exists()
+                        ):
+                            logger.info(
+                                f"Cleaning up temporary local copy for {var_name}: {var_obj._temp_local_copy}"
+                            )
+                            var_obj._temp_local_copy.unlink()
+                    except Exception as cleanup_error:
+                        logger.warning(
+                            f"Error during final cleanup of {var_name}: {cleanup_error}"
                         )
-                        ad_bk._temp_local_copy.unlink()
-                except Exception as cleanup_error:
-                    logger.warning(f"Error during final cleanup: {cleanup_error}")
 
             # Always stop monitor and save results
             try:
