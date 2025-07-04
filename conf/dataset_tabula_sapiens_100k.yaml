@@ -29,7 +29,7 @@ other_bio_labels: [tissue]
 # Download configuration
 download:
   enabled: true
-  subset_size: null
+  subset_size: 100000
 
 # Preprocessing overrides (both dataset-specific and execution parameters)
 preprocessing:
