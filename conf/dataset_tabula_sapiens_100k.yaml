@@ -9,9 +9,9 @@ defaults:
 # =============================================================================
 dataset:
   name: "tabula_sapiens_100k"
-  description: "Human disease dataset annoted in Schaefer et al. 2024"
-  download_url: https://medical-epigenomics.org/papers/schaefer2024/data/datasets/human_disease/rnaseq._.samples.h5ad
-  full_name: "tabula_sapiens"
+  description: "Tabula Sapiens dataset from cellxgene browser."
+  download_url: https://datasets.cellxgene.cziscience.com/9daa676b-07ec-4cea-80aa-daa49200aa64.h5ad
+  full_name: "tabula_sapiens_full"
   # file_path will be auto-generated as: data/RNA/raw/test/tabula_sapiens_bone_marrow_10k.h5ad
 
 # =============================================================================
