@@ -144,16 +144,20 @@ def build_split_dataset(
 
 
 def build_repo_id(
-    base_repo_id: str, dataset_names: List[str], dataset_format: str, caption_key: str
+    base_repo_id: str,
+    dataset_names: List[str],
+    dataset_format: str,
+    caption_key: str,
+    cs_length: int,
 ) -> str:
     """
     Compose the final HF repo-ID.
 
     Example:
-        >>> build_repo_id("jo-mengr", ["bulk_5k", "geo"], "pairs", "cell_type")
-        'jo-mengr/bulk_5k_geo_pairs_cell_type'
+        >>> build_repo_id("jo-mengr", ["bulk_5k", "geo"], "pairs", "cell_type", 512)
+        'jo-mengr/bulk_5k_geo_pairs_cell_type_cs512'
     """
-    return f"{base_repo_id.rstrip('/')}/{dataset_names}_{dataset_format}_{caption_key}"
+    return f"{base_repo_id.rstrip('/')}/{dataset_names}_{dataset_format}_{caption_key}_cs{cs_length}"
 
 
 def push_dataset_to_hub(
@@ -340,6 +344,7 @@ def main(cfg: DictConfig):
         dataset_names=data_name,
         dataset_format=dataset_format,
         caption_key=caption_key or "no_caption",
+        cs_length=dataset_cfg.cs_length,
     )
     logger.info("Final repo_id would be: %s", repo_id)
 
