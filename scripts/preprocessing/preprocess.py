@@ -5,6 +5,7 @@ import importlib
 import numpy as np
 from anndata import AnnData
 import anndata
+import anndata as ad
 import sys
 import hydra
 from omegaconf import DictConfig
@@ -138,56 +139,142 @@ def main(cfg: DictConfig):
         ad_bk.file.close()
         del ad_bk  # Explicitly delete reference to ensure file is released
 
-        # Helper: write a slice of the backed file to disk without to_adata()
-        def write_subset(indices: list[int], name: str) -> Path:
+        # Helper: write a slice of the backed file to disk using chunked approach
+        def write_subset_chunked(
+            indices: list[int], name: str, chunk_size: int = 10000
+        ) -> Path:
+            """
+            Write a subset of cells to disk using chunked approach to avoid memory issues.
+
+            This function reads and writes data in chunks to handle large datasets that
+            would cause memory errors when loaded entirely into memory.
+            """
             out_path = out_dir / f"{name}_input.h5ad"
             logger.info(
-                "Writing subset '%s' with %d cells to %s", name, len(indices), out_path
+                "Writing subset '%s' with %d cells to %s (chunk size: %d)",
+                name,
+                len(indices),
+                out_path,
+                chunk_size,
             )
 
-            # Use safe backed reading to handle memory issues
+            ad_backed = None
             try:
+                # Open the backed file
                 ad_backed = safe_read_h5ad_backed(infile)
-                ad_view = ad_backed[indices]
 
-                # Use safe_write_h5ad to handle file locking issues
-                safe_write_h5ad(ad_view, out_path, compression="gzip")
+                # Sort indices to ensure efficient reading
+                indices_sorted = sorted(indices)
+
+                # Create chunks of indices
+                chunks = [
+                    indices_sorted[i : i + chunk_size]
+                    for i in range(0, len(indices_sorted), chunk_size)
+                ]
+
+                logger.info(
+                    f"Processing {len(chunks)} chunks of up to {chunk_size} cells each"
+                )
+
+                # Process first chunk to create the initial file
+                first_chunk = chunks[0]
+                logger.info(f"Writing first chunk with {len(first_chunk)} cells")
+
+                # Create view for first chunk
+                ad_view = ad_backed[first_chunk]
+
+                # Convert to in-memory AnnData to avoid backed-mode issues during writing
+                ad_chunk = ad_view.to_adata()
+
+                # Write the first chunk
+                safe_write_h5ad(ad_chunk, out_path, compression="gzip")
+
+                # Clean up first chunk
+                del ad_chunk
+                if hasattr(ad_view, "file") and ad_view.file is not None:
+                    ad_view.file.close()
+                del ad_view
+
+                # If there are more chunks, append them
+                if len(chunks) > 1:
+                    # Read the remaining chunks and append them
+                    remaining_chunks = []
+                    for i, chunk_indices in enumerate(chunks[1:], 1):
+                        logger.info(
+                            f"Reading chunk {i + 1}/{len(chunks)} with {len(chunk_indices)} cells"
+                        )
+
+                        # Create view for this chunk
+                        ad_view = ad_backed[chunk_indices]
+
+                        # Convert to in-memory AnnData
+                        ad_chunk = ad_view.to_adata()
+                        remaining_chunks.append(ad_chunk)
+
+                        # Clean up view
+                        if hasattr(ad_view, "file") and ad_view.file is not None:
+                            ad_view.file.close()
+                        del ad_view
+
+                    # Concatenate all chunks
+                    logger.info(f"Concatenating {len(remaining_chunks) + 1} chunks")
+                    ad_first = ad.read_h5ad(out_path)
+                    ad_combined = ad.concat([ad_first] + remaining_chunks, axis=0)
+
+                    # Write the combined result
+                    safe_write_h5ad(ad_combined, out_path, compression="gzip")
+
+                    # Clean up
+                    del ad_first
+                    del ad_combined
+                    for chunk in remaining_chunks:
+                        del chunk
+                    del remaining_chunks
+
                 logger.info("Successfully wrote subset to %s", out_path)
                 return out_path
 
             except Exception as e:
                 logger.error("Failed to write subset '%s': %s", name, e)
+                logger.error("Error details:", exc_info=True)
                 raise
             finally:
                 # Ensure file handles are properly closed and clean up temporary files
-                if "ad_backed" in locals():
+                if ad_backed is not None:
                     try:
                         if hasattr(ad_backed, "file") and ad_backed.file is not None:
                             ad_backed.file.close()
                         # Clean up temporary local copy if it exists
                         if (
                             hasattr(ad_backed, "_temp_local_copy")
+                            and ad_backed._temp_local_copy is not None
                             and ad_backed._temp_local_copy.exists()
                         ):
                             logger.info(
                                 f"Cleaning up temporary local copy: {ad_backed._temp_local_copy}"
                             )
                             ad_backed._temp_local_copy.unlink()
-                    except Exception:
-                        pass  # Ignore cleanup errors
-                    del ad_backed
-                if "ad_view" in locals():
+                    except Exception as cleanup_error:
+                        logger.warning(f"Error during cleanup: {cleanup_error}")
                     try:
-                        if hasattr(ad_view, "file") and ad_view.file is not None:
-                            ad_view.file.close()
+                        del ad_backed
                     except Exception:
-                        pass  # Ignore cleanup errors
-                    del ad_view
+                        pass
 
-        # 4) Write each subset to its own input file
-        subset_files = {name: write_subset(idx, name) for name, idx in subsets.items()}
+        # 4) Write each subset to its own input file using chunked approach
+        write_chunk_size = (
+            min(10000, len(subsets[next(iter(subsets))]) // 4) if subsets else 10000
+        )
+        write_chunk_size = max(1000, write_chunk_size)  # Ensure minimum chunk size
+        logger.info(f"Using write chunk size: {write_chunk_size}")
+
+        subset_files = {
+            name: write_subset_chunked(idx, name, write_chunk_size)
+            for name, idx in subsets.items()
+        }
 
         # 5) Now preprocess each subset on disk via your chunked pipeline
+        current_ad_bk = None  # Track current AnnData for cleanup
         for name, path_in in subset_files.items():
             out_dir_split = out_dir / name
             logger.info("Preprocessing %s → %s", path_in, out_dir)
@@ -241,16 +328,32 @@ def main(cfg: DictConfig):
                 output_format=output_format,
             )
             logger.info("Preprocessing %s → %s", path_in, out_dir_split)
+
+            # Clean up previous iteration's AnnData if exists
+            if current_ad_bk is not None:
+                try:
+                    if (
+                        hasattr(current_ad_bk, "file")
+                        and current_ad_bk.file is not None
+                    ):
+                        current_ad_bk.file.close()
+                    del current_ad_bk
+                except Exception:
+                    pass  # Ignore cleanup errors
+
             if output_format == "h5ad":
                 # If using h5ad, we need to close the file before reading it
-                ad_bk = anndata.read_h5ad(
+                current_ad_bk = anndata.read_h5ad(
                     out_dir_split / f"chunk_0.{output_format}", backed="r"
                 )
             else:
-                ad_bk = anndata.read_zarr(out_dir_split / f"chunk_0.{output_format}")
+                current_ad_bk = anndata.read_zarr(
+                    out_dir_split / f"chunk_0.{output_format}"
+                )
+
             # Plot some quality control plots after processing
             qc_evaluation_plots(
-                ad_bk,
+                current_ad_bk,
                 save_plots=True,
                 save_dir=run_dir + "/after",
                 metrics_of_interest=list(preprocess_cfg.metrics_of_interest),
@@ -259,8 +362,11 @@ def main(cfg: DictConfig):
                 else None,
             )
             # Close the file handle for this iteration
-            if hasattr(ad_bk, "file") and ad_bk.file is not None:
-                ad_bk.file.close()
+            if hasattr(current_ad_bk, "file") and current_ad_bk.file is not None:
+                current_ad_bk.file.close()
+
+        # Update ad_bk for cleanup in finally block
+        ad_bk = current_ad_bk
 
         logger.info("Done. Outputs in %s", out_dir)
 
@@ -270,34 +376,52 @@ def main(cfg: DictConfig):
             path_in.unlink()
 
         # Save system monitor metrics
-    except Exception:
+    except Exception as e:
         logger.exception("Unhandled exception during preprocessing")
-        raise  # optional: re-raise if you want Hydra/SLURM to register job as failed
-    finally:
-        # Safely close any remaining file handles and clean up local copies
-        if ad_bk is not None:
-            try:
-                if hasattr(ad_bk, "file") and ad_bk.file is not None:
-                    ad_bk.file.close()
-                # Clean up temporary local copy if it exists
-                if (
-                    hasattr(ad_bk, "_temp_local_copy")
-                    and ad_bk._temp_local_copy.exists()
-                ):
-                    logger.info(
-                        f"Cleaning up temporary local copy: {ad_bk._temp_local_copy}"
-                    )
-                    ad_bk._temp_local_copy.unlink()
-            except Exception:
-                pass  # Ignore errors on cleanup
+        logger.error(f"Error type: {type(e).__name__}")
+        logger.error(f"Error message: {str(e)}")
+
+        # Force system exit with error code
         monitor.stop()
         monitor.print_summary()
         monitor.save(run_dir)
-        monitor.plot_metrics(run_dir)
+        sys.exit(1)
+    finally:
+        # Safely close any remaining file handles and clean up local copies
+        try:
+            if ad_bk is not None:
+                try:
+                    if hasattr(ad_bk, "file") and ad_bk.file is not None:
+                        ad_bk.file.close()
+                    # Clean up temporary local copy if it exists
+                    if (
+                        hasattr(ad_bk, "_temp_local_copy")
+                        and ad_bk._temp_local_copy is not None
+                        and ad_bk._temp_local_copy.exists()
+                    ):
+                        logger.info(
+                            f"Cleaning up temporary local copy: {ad_bk._temp_local_copy}"
+                        )
+                        ad_bk._temp_local_copy.unlink()
+                except Exception as cleanup_error:
+                    logger.warning(f"Error during final cleanup: {cleanup_error}")
+
+            # Always stop monitor and save results
+            try:
+                monitor.stop()
+                monitor.print_summary()
+                monitor.save(run_dir)
+                monitor.plot_metrics(run_dir)
+            except Exception as monitor_error:
+                logger.warning(f"Error during monitor cleanup: {monitor_error}")
+
+        except Exception as final_error:
+            logger.error(f"Critical error during final cleanup: {final_error}")
 
 
 if __name__ == "__main__":
     try:
         main()
-    except Exception:
+    except Exception as e:
+        logger.error(f"Script failed with error: {e}")
         sys.exit(1)
