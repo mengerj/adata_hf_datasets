@@ -5,8 +5,10 @@ import pandas as pd
 import anndata as ad
 from pathlib import Path
 from scipy import sparse
+from unittest.mock import patch
 
 from adata_hf_datasets.pp.orchestrator import preprocess_h5ad
+from adata_hf_datasets.pp.utils import safe_read_h5ad_backed
 
 
 @pytest.fixture
@@ -146,6 +148,117 @@ def temp_h5ad_paths():
         input_path = Path(tmpdir) / "input.h5ad"
         output_dir = Path(tmpdir) / "output/"
         yield input_path, output_dir
+
+
+def test_safe_read_h5ad_backed_normal_operation(realistic_adata, temp_h5ad_paths):
+    """Test that safe_read_h5ad_backed works normally without any errors."""
+    input_path, _ = temp_h5ad_paths
+
+    # Save the test AnnData to disk
+    realistic_adata.write_h5ad(input_path)
+
+    # Test normal reading
+    adata_backed = safe_read_h5ad_backed(input_path)
+
+    # Verify it's in backed mode
+    assert adata_backed.isbacked
+    assert adata_backed.shape == realistic_adata.shape
+
+    # Clean up
+    if hasattr(adata_backed, "file") and adata_backed.file is not None:
+        adata_backed.file.close()
+
+
+def test_safe_read_h5ad_backed_with_memory_error_retry(
+    realistic_adata, temp_h5ad_paths
+):
+    """Test that safe_read_h5ad_backed handles memory errors and retries."""
+    input_path, _ = temp_h5ad_paths
+
+    # Save the test AnnData to disk
+    realistic_adata.write_h5ad(input_path)
+
+    # Mock scanpy.read_h5ad to simulate memory error on first call, success on second
+    call_count = 0
+    original_read_h5ad = ad.read_h5ad
+
+    def mock_read_h5ad(*args, **kwargs):
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            # First call fails with memory error
+            raise MemoryError("Unable to allocate memory for test")
+        else:
+            # Second call succeeds (after local copy)
+            return original_read_h5ad(*args, **kwargs)
+
+    with patch("scanpy.read_h5ad", side_effect=mock_read_h5ad):
+        # This should succeed after retry
+        adata_backed = safe_read_h5ad_backed(
+            input_path,
+            max_retry=3,
+            copy_local=True,
+            sleep=0.1,  # Fast retry for testing
+        )
+
+        # Verify it worked
+        assert adata_backed.isbacked
+        assert adata_backed.shape == realistic_adata.shape
+
+        # Verify that it created a local copy (indicated by the attribute)
+        assert hasattr(adata_backed, "_temp_local_copy")
+        assert adata_backed._temp_local_copy is not None
+
+        # Clean up
+        if hasattr(adata_backed, "file") and adata_backed.file is not None:
+            adata_backed.file.close()
+
+        # Verify local copy was created and exists
+        if hasattr(adata_backed, "_temp_local_copy"):
+            _ = adata_backed._temp_local_copy
+            # The local copy should exist during the test
+            # It will be cleaned up automatically when the function finishes
+
+
+def test_safe_read_h5ad_backed_max_retries_exceeded(realistic_adata, temp_h5ad_paths):
+    """Test that safe_read_h5ad_backed raises error after max retries exceeded."""
+    input_path, _ = temp_h5ad_paths
+
+    # Save the test AnnData to disk
+    realistic_adata.write_h5ad(input_path)
+
+    # Mock scanpy.read_h5ad to always fail with memory error
+    with patch("scanpy.read_h5ad", side_effect=MemoryError("Persistent memory error")):
+        with pytest.raises(MemoryError, match="Persistent memory error"):
+            safe_read_h5ad_backed(
+                input_path,
+                max_retry=2,
+                copy_local=False,  # Disable local copying to ensure failure
+                sleep=0.1,  # Fast retry for testing
+            )
+
+
+def test_safe_read_h5ad_backed_handles_other_exceptions(
+    realistic_adata, temp_h5ad_paths
+):
+    """Test that safe_read_h5ad_backed handles non-memory errors appropriately."""
+    input_path, _ = temp_h5ad_paths
+
+    # Save the test AnnData to disk
+    realistic_adata.write_h5ad(input_path)
+
+    # Mock scanpy.read_h5ad to fail with a different error type
+    with patch("scanpy.read_h5ad", side_effect=OSError("File system error")):
+        with pytest.raises(OSError, match="File system error"):
+            safe_read_h5ad_backed(input_path, max_retry=2, copy_local=False, sleep=0.1)
+
+
+def test_safe_read_h5ad_backed_with_missing_file():
+    """Test that safe_read_h5ad_backed handles missing files appropriately."""
+    nonexistent_path = Path("/tmp/nonexistent_file.h5ad")
+
+    with pytest.raises(FileNotFoundError):
+        safe_read_h5ad_backed(nonexistent_path, max_retry=1, sleep=0.1)
 
 
 def test_preprocess_h5ad_basic(realistic_adata, temp_h5ad_paths):
