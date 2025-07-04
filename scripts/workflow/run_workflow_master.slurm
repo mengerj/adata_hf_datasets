@@ -1,6 +1,6 @@
 #!/bin/bash
 #SBATCH --job-name=workflow_master
-#SBATCH --time=72:00:00
+#SBATCH --time=96:00:00
 #SBATCH --mem=8G
 #SBATCH --cpus-per-task=2
 

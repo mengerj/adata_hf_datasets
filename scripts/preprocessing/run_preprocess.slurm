@@ -1,7 +1,7 @@
 #!/bin/bash
 #SBATCH --job-name=pp
 #SBATCH --mem=100G               # Request memory
-#SBATCH --time=24:00:00         # Max job time
+#SBATCH --time=48:00:00         # Max job time
 #SBATCH --partition=slurm
 
 # ─────────────────────────────────────────────────────────────────────────────
