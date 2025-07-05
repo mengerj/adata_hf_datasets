@@ -144,31 +144,63 @@ echo "Transferring zip file to GPU cluster..."
 TRANSFER_START=$(date +%s)
 
 # Get GPU cluster connection info from config
+echo "Loading GPU cluster configuration..."
 GPU_HOST=$(python3 -c "
 import sys
+import traceback
+import os
 sys.path.insert(0, 'src')
-from omegaconf import OmegaConf
+print('Python path:', sys.path, file=sys.stderr)
+print('Current working directory:', os.getcwd(), file=sys.stderr)
+
 try:
+    from omegaconf import OmegaConf
+    print('OmegaConf imported successfully', file=sys.stderr)
+
     cfg = OmegaConf.load('conf/workflow_orchestrator.yaml')
+    print('Config loaded successfully', file=sys.stderr)
+
     gpu_login = cfg.workflow.gpu_login
-    print(f'{gpu_login.user}@{gpu_login.host}')
+    print('GPU login config:', gpu_login, file=sys.stderr)
+
+    result = f'{gpu_login.user}@{gpu_login.host}'
+    print('Final result:', result, file=sys.stderr)
+    print(result)
 except Exception as e:
+    print('ERROR: Could not load GPU login info:', str(e), file=sys.stderr)
+    traceback.print_exc(file=sys.stderr)
     print('ERROR: Could not load GPU login info')
     sys.exit(1)
-")
+" 2>&1)
+
+echo "GPU_HOST result: '$GPU_HOST'"
 
 if [[ "$GPU_HOST" == "ERROR:"* ]]; then
+    echo "Failed to get GPU host information:"
     echo "$GPU_HOST"
+    exit 1
+fi
+
+if [[ -z "$GPU_HOST" ]]; then
+    echo "ERROR: GPU_HOST is empty"
     exit 1
 fi
 
 echo "GPU host: $GPU_HOST"
 
 # Transfer zip file to GPU cluster
-scp "$TEMP_ZIP_PATH" "$GPU_HOST:/tmp/$TEMP_ZIP_NAME"
+echo "Executing SCP command: scp '$TEMP_ZIP_PATH' '$GPU_HOST:/tmp/$TEMP_ZIP_NAME'"
+echo "Source file exists: $(test -f "$TEMP_ZIP_PATH" && echo "YES" || echo "NO")"
+echo "Source file size: $(ls -lh "$TEMP_ZIP_PATH" 2>/dev/null || echo "N/A")"
 
-if [ $? -ne 0 ]; then
+scp -v "$TEMP_ZIP_PATH" "$GPU_HOST:/tmp/$TEMP_ZIP_NAME"
+SCP_EXIT_CODE=$?
+
+echo "SCP exit code: $SCP_EXIT_CODE"
+
+if [ $SCP_EXIT_CODE -ne 0 ]; then
     echo "ERROR: Failed to transfer zip file to GPU cluster"
+    echo "SCP command failed with exit code: $SCP_EXIT_CODE"
     exit 1
 fi
 
