@@ -515,9 +515,14 @@ class WorkflowOrchestrator:
 
         logger.info(f"Using dataset config: {dataset_config_name}")
 
+        # Load dataset config to extract base_file_path
+        dataset_config = self._load_dataset_config(dataset_config_name)
+        base_file_path = dataset_config.get("base_file_path", "/scratch/local")
+
         # Pass the dataset config name, workflow directory, and mode settings as environment variables
         env_vars = {
             "DATASET_CONFIG": dataset_config_name,
+            "BASE_FILE_PATH": base_file_path,
             "WORKFLOW_DIR": str(self.workflow_logger.workflow_dir)
             if self.workflow_logger
             else "",
@@ -549,9 +554,14 @@ class WorkflowOrchestrator:
 
         logger.info(f"Using dataset config: {dataset_config_name}")
 
+        # Load dataset config to extract base_file_path
+        dataset_config = self._load_dataset_config(dataset_config_name)
+        base_file_path = dataset_config.get("base_file_path", "/scratch/local")
+
         # Pass the dataset config name, workflow directory, and mode settings as environment variables
         env_vars = {
             "DATASET_CONFIG": dataset_config_name,
+            "BASE_FILE_PATH": base_file_path,
             "WORKFLOW_DIR": str(self.workflow_logger.workflow_dir)
             if self.workflow_logger
             else "",
@@ -583,11 +593,16 @@ class WorkflowOrchestrator:
 
         logger.info(f"Using dataset config: {dataset_config_name}")
 
+        # Load dataset config to extract base_file_path
+        dataset_config = self._load_dataset_config(dataset_config_name)
+        base_file_path = dataset_config.get("base_file_path", "/scratch/local")
+
         # Pass the dataset config name, workflow directory, and mode settings as environment variables
         # IMPORTANT: Master job runs on CPU cluster to avoid consuming GPU resources
         # Only the array jobs will use GPU resources
         env_vars = {
             "DATASET_CONFIG": dataset_config_name,
+            "BASE_FILE_PATH": base_file_path,
             "WORKFLOW_DIR": str(self.workflow_logger.workflow_dir)
             if self.workflow_logger
             else "",

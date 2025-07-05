@@ -35,7 +35,7 @@ def generate_paths_from_config(cfg: DictConfig) -> Dict[str, str]:
     dataset_name = cfg.dataset.name
     # Handle missing full_name gracefully
     full_name = cfg.dataset.get("full_name", None)
-    base_file_path = cfg.get("base_file_path", "data/RNA/raw")
+    base_file_path = cfg.get("base_file_path", "/scratch/local")
 
     # Determine if this is a training or test dataset
     is_training = cfg.preprocessing.get("split_dataset", True)
@@ -43,15 +43,16 @@ def generate_paths_from_config(cfg: DictConfig) -> Dict[str, str]:
     # Get the output format from preprocessing config
     output_format = cfg.preprocessing.get("output_format", "zarr")
 
-    # Base directories for processed and embedded data
+    # Base directories for raw, processed and embedded data
+    # All subdirectories are handled consistently from base_file_path
     if is_training:
-        raw_base = f"{base_file_path}/train"
-        processed_base = "data/RNA/processed/train"
-        embed_base = "data/RNA/processed_with_emb/train"
+        raw_base = f"{base_file_path}/raw/train"
+        processed_base = f"{base_file_path}/processed/train"
+        embed_base = f"{base_file_path}/processed_with_emb/train"
     else:
-        raw_base = f"{base_file_path}/test"
-        processed_base = "data/RNA/processed/test"
-        embed_base = "data/RNA/processed_with_emb/test"
+        raw_base = f"{base_file_path}/raw/test"
+        processed_base = f"{base_file_path}/processed/test"
+        embed_base = f"{base_file_path}/processed_with_emb/test"
 
     # Generate paths
     paths = {

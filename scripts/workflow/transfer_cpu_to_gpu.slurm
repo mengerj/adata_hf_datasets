@@ -72,8 +72,31 @@ echo "Working directory: $(pwd)"
 # Define Transfer Paths
 # ─────────────────────────────────────────────────────────────────────────────
 
-SOURCE_PATH="$BASE_FILE_PATH/processed/$DATASET_NAME"
-DEST_PATH="$BASE_FILE_PATH/processed/$DATASET_NAME"
+# Determine if this is a training or test dataset by checking the config
+# We'll do a simplified check here and let the Python code handle the full logic
+python3 -c "
+import sys
+sys.path.insert(0, 'src')
+from omegaconf import OmegaConf
+from adata_hf_datasets.config_utils import apply_all_transformations
+
+try:
+    cfg = OmegaConf.load('conf/$DATASET_CONFIG.yaml')
+    cfg = apply_all_transformations(cfg)
+    is_training = cfg.preprocessing.get('split_dataset', True)
+    train_or_test = 'train' if is_training else 'test'
+    print(train_or_test)
+except:
+    print('train')  # Default fallback
+" > /tmp/dataset_type_$$.txt
+
+DATASET_TYPE=$(cat /tmp/dataset_type_$$.txt)
+rm -f /tmp/dataset_type_$$.txt
+
+echo "Detected dataset type: $DATASET_TYPE"
+
+SOURCE_PATH="$BASE_FILE_PATH/processed/$DATASET_TYPE/$DATASET_NAME"
+DEST_PATH="$BASE_FILE_PATH/processed/$DATASET_TYPE/$DATASET_NAME"
 
 echo "Source path (CPU): $SOURCE_PATH"
 echo "Destination path (GPU): $DEST_PATH"
@@ -117,9 +140,28 @@ def main():
     dataset_name = os.environ.get('DATASET_NAME')
     stats_file = os.environ.get('STATS_FILE')
 
-    # Define paths
-    source_path = f'{base_file_path}/processed/{dataset_name}'
-    dest_path = f'{base_file_path}/processed/{dataset_name}'
+    # Load dataset config to determine if this is a training or test dataset
+    from omegaconf import OmegaConf
+    try:
+        config_path = f'conf/{dataset_config}.yaml'
+        dataset_cfg = OmegaConf.load(config_path)
+        # Apply config transformations to get the complete config
+        from adata_hf_datasets.config_utils import apply_all_transformations
+        dataset_cfg = apply_all_transformations(dataset_cfg)
+
+        # Determine train vs test based on split_dataset setting
+        is_training = dataset_cfg.preprocessing.get('split_dataset', True)
+        train_or_test = 'train' if is_training else 'test'
+
+        print(f'Dataset type: {train_or_test} (split_dataset={is_training})')
+    except Exception as e:
+        print(f'Warning: Could not determine dataset type from config: {e}')
+        print('Defaulting to training dataset structure')
+        train_or_test = 'train'
+
+    # Define paths with correct train/test subdirectory
+    source_path = f'{base_file_path}/processed/{train_or_test}/{dataset_name}'
+    dest_path = f'{base_file_path}/processed/{train_or_test}/{dataset_name}'
 
     print(f'Transfer Details:')
     print(f'  Source: CPU:{source_path}')
