@@ -23,7 +23,12 @@ class SystemMonitor:
         A logger instance to use for logging messages. If not provided, a logger is created.
     """
 
-    def __init__(self, interval=1, gpu_idx=None, logger=None):
+    def __init__(
+        self,
+        interval: int = 1,
+        gpu_idx: int | None = None,
+        logger: logging.Logger | None = None,
+    ):
         self.interval = interval
         self.gpu_indices = [gpu_idx] if isinstance(gpu_idx, int) else gpu_idx
         self.num_cpus = psutil.cpu_count(logical=True)
@@ -114,64 +119,96 @@ class SystemMonitor:
                 self.gpu_available = False
 
     def _monitor(self):
+        """Internal monitoring method that runs in a separate thread."""
+        self.logger.debug("Starting monitoring thread")
         process = psutil.Process()
         prev_disk_io_counters = None
         prev_time = time.time()
-        while not self._stop_event.is_set():
-            timestamp = time.time()
-            interval_duration = timestamp - prev_time
-            prev_time = timestamp
 
-            # Measure CPU usage per core
-            cpu_percents = psutil.cpu_percent(interval=self.interval, percpu=True)
-            total_cpu_usage_percent = sum(cpu_percents)
-            total_cpu_usage_cores = total_cpu_usage_percent / self.num_cpus
-            self.cpu_usage.append((timestamp, total_cpu_usage_percent))
-            self.cpu_per_core.append((timestamp, total_cpu_usage_cores))
+        try:
+            while not self._stop_event.is_set():
+                timestamp = time.time()
+                interval_duration = timestamp - prev_time
+                prev_time = timestamp
 
-            # Measure memory usage
-            mem = psutil.virtual_memory()
-            used_memory_gb = (mem.total - mem.available) / (1024**3)
-            used_memory_gb -= self.baseline_memory
-            self.memory_usage.append((timestamp, used_memory_gb))
+                # Measure CPU usage per core
+                try:
+                    cpu_percents = psutil.cpu_percent(
+                        interval=self.interval, percpu=True
+                    )
+                    total_cpu_usage_percent = sum(cpu_percents)
+                    total_cpu_usage_cores = total_cpu_usage_percent / self.num_cpus
+                    self.cpu_usage.append((timestamp, total_cpu_usage_percent))
+                    self.cpu_per_core.append((timestamp, total_cpu_usage_cores))
+                    self.logger.debug(
+                        f"Collected CPU metrics: {total_cpu_usage_percent:.2f}%"
+                    )
+                except Exception as e:
+                    self.logger.error(f"Error collecting CPU metrics: {e}")
 
-            # Measure disk I/O
-            disk_io_counters = psutil.disk_io_counters()
-            if prev_disk_io_counters is not None:
-                read_bytes = (
-                    disk_io_counters.read_bytes - prev_disk_io_counters.read_bytes
-                )
-                write_bytes = (
-                    disk_io_counters.write_bytes - prev_disk_io_counters.write_bytes
-                )
-                read_rate_mb_s = (
-                    (read_bytes / (1024**2)) / interval_duration
-                    if interval_duration > 0
-                    else 0
-                )
-                write_rate_mb_s = (
-                    (write_bytes / (1024**2)) / interval_duration
-                    if interval_duration > 0
-                    else 0
-                )
-            else:
-                read_rate_mb_s = write_rate_mb_s = 0
+                # Measure memory usage
+                try:
+                    mem = psutil.virtual_memory()
+                    used_memory_gb = (mem.total - mem.available) / (1024**3)
+                    used_memory_gb -= self.baseline_memory
+                    self.memory_usage.append((timestamp, used_memory_gb))
+                    self.logger.debug(
+                        f"Collected memory metrics: {used_memory_gb:.2f} GB"
+                    )
+                except Exception as e:
+                    self.logger.error(f"Error collecting memory metrics: {e}")
 
-            self.disk_io.append((timestamp, read_rate_mb_s, write_rate_mb_s))
-            prev_disk_io_counters = disk_io_counters
+                # Measure disk I/O
+                try:
+                    disk_io_counters = psutil.disk_io_counters()
+                    if prev_disk_io_counters is not None:
+                        read_bytes = (
+                            disk_io_counters.read_bytes
+                            - prev_disk_io_counters.read_bytes
+                        )
+                        write_bytes = (
+                            disk_io_counters.write_bytes
+                            - prev_disk_io_counters.write_bytes
+                        )
+                        read_rate_mb_s = (
+                            (read_bytes / (1024**2)) / interval_duration
+                            if interval_duration > 0
+                            else 0
+                        )
+                        write_rate_mb_s = (
+                            (write_bytes / (1024**2)) / interval_duration
+                            if interval_duration > 0
+                            else 0
+                        )
+                        self.disk_io.append(
+                            (timestamp, read_rate_mb_s, write_rate_mb_s)
+                        )
+                        self.logger.debug(
+                            f"Collected disk I/O metrics - Read: {read_rate_mb_s:.2f} MB/s, Write: {write_rate_mb_s:.2f} MB/s"
+                        )
+                    prev_disk_io_counters = disk_io_counters
+                except Exception as e:
+                    self.logger.error(f"Error collecting disk I/O metrics: {e}")
 
-            # Get number of threads
-            self.num_threads.append((timestamp, process.num_threads()))
-            # self.cpu_affinity.append((timestamp, process.cpu_affinity()))
+                # Get number of threads
+                try:
+                    self.num_threads.append((timestamp, process.num_threads()))
+                except Exception as e:
+                    self.logger.error(f"Error collecting thread metrics: {e}")
 
-            # GPU Monitoring
-            if self.gpu_available:
-                if self.gpu_type == "NVIDIA":
-                    self._monitor_nvidia_gpu(timestamp)
-                elif self.gpu_type == "Apple":
-                    self._monitor_apple_gpu(timestamp)
-                else:
-                    pass  # Unsupported GPU type
+                # GPU Monitoring
+                if self.gpu_available:
+                    if self.gpu_type == "NVIDIA":
+                        self._monitor_nvidia_gpu(timestamp)
+                    elif self.gpu_type == "Apple":
+                        self._monitor_apple_gpu(timestamp)
+
+                time.sleep(max(0, self.interval - (time.time() - timestamp)))
+
+        except Exception as e:
+            self.logger.error(f"Monitoring thread encountered an error: {e}")
+        finally:
+            self.logger.debug("Monitoring thread stopped")
 
     def _monitor_nvidia_gpu(self, timestamp):
         try:
@@ -194,16 +231,23 @@ class SystemMonitor:
 
     def start(self):
         """Start monitoring system resources."""
+        self.logger.info("Starting system monitor")
         self._thread.start()
+        # Give the monitoring thread a moment to start collecting data
+        time.sleep(0.1)
 
     def stop(self):
         """Stop monitoring system resources."""
+        self.logger.info("Stopping system monitor")
         self._stop_event.set()
-        self._thread.join()
+        self._thread.join(timeout=2)  # Wait up to 2 seconds for thread to finish
+        if self._thread.is_alive():
+            self.logger.warning("Monitoring thread did not stop cleanly")
         if self.gpu_available and self.gpu_type == "NVIDIA":
             import pynvml
 
             pynvml.nvmlShutdown()
+        self.logger.debug(f"Collected {len(self.cpu_usage)} CPU measurements")
 
     def summarize(self):
         """
@@ -218,28 +262,48 @@ class SystemMonitor:
 
         # CPU Usage
         total_cpu_usages = [usage for _, usage in self.cpu_usage]
-        summary["cpu_usage_mean"] = sum(total_cpu_usages) / len(total_cpu_usages)
-        summary["cpu_usage_max"] = max(total_cpu_usages)
+        if total_cpu_usages:
+            summary["cpu_usage_mean"] = sum(total_cpu_usages) / len(total_cpu_usages)
+            summary["cpu_usage_max"] = max(total_cpu_usages)
+        else:
+            summary["cpu_usage_mean"] = 0.0
+            summary["cpu_usage_max"] = 0.0
 
         # Core Utilization
         core_utilizations = [cores for _, cores in self.cpu_per_core]
-        summary["core_usage_mean"] = sum(core_utilizations) / len(core_utilizations)
-        summary["core_usage_max"] = max(core_utilizations)
+        if core_utilizations:
+            summary["core_usage_mean"] = sum(core_utilizations) / len(core_utilizations)
+            summary["core_usage_max"] = max(core_utilizations)
+        else:
+            summary["core_usage_mean"] = 0.0
+            summary["core_usage_max"] = 0.0
 
         # Memory Usage
         memory_usages = [usage for _, usage in self.memory_usage]
-        summary["memory_usage_mean"] = sum(memory_usages) / len(memory_usages)
-        summary["memory_usage_max"] = max(memory_usages)
+        if memory_usages:
+            summary["memory_usage_mean"] = sum(memory_usages) / len(memory_usages)
+            summary["memory_usage_max"] = max(memory_usages)
+        else:
+            summary["memory_usage_mean"] = 0.0
+            summary["memory_usage_max"] = 0.0
         summary["total_memory"] = self.total_memory
         summary["baseline_memory"] = self.baseline_memory
 
         # Disk I/O
         read_rates = [read for _, read, _ in self.disk_io]
         write_rates = [write for _, _, write in self.disk_io]
-        summary["disk_read_mb_s_mean"] = sum(read_rates) / len(read_rates)
-        summary["disk_read_mb_s_max"] = max(read_rates)
-        summary["disk_write_mb_s_mean"] = sum(write_rates) / len(write_rates)
-        summary["disk_write_mb_s_max"] = max(write_rates)
+        if read_rates:
+            summary["disk_read_mb_s_mean"] = sum(read_rates) / len(read_rates)
+            summary["disk_read_mb_s_max"] = max(read_rates)
+        else:
+            summary["disk_read_mb_s_mean"] = 0.0
+            summary["disk_read_mb_s_max"] = 0.0
+        if write_rates:
+            summary["disk_write_mb_s_mean"] = sum(write_rates) / len(write_rates)
+            summary["disk_write_mb_s_max"] = max(write_rates)
+        else:
+            summary["disk_write_mb_s_mean"] = 0.0
+            summary["disk_write_mb_s_max"] = 0.0
 
         # GPU Usage
         if self.gpu_available:
