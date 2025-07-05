@@ -92,7 +92,29 @@ def main(cfg: DictConfig):
     # Get the stem of the input file (filename without extension)
     # input_stem = infile.stem
     out_dir = Path(preprocess_cfg.output_dir)
-    out_dir.mkdir(parents=True, exist_ok=True)
+
+    # Debug: Print current working directory and paths
+    import os
+
+    logger.info("Current working directory: %s", os.getcwd())
+    logger.info("Output directory (before creation): %s", out_dir)
+    logger.info("Output directory absolute path: %s", out_dir.absolute())
+
+    # Create output directory with detailed logging
+    try:
+        out_dir.mkdir(parents=True, exist_ok=True)
+        logger.info("✓ Successfully created output directory: %s", out_dir)
+
+        # Verify it exists
+        if out_dir.exists():
+            logger.info("✓ Verified: Output directory exists")
+        else:
+            logger.error("✗ Output directory was not created!")
+
+    except Exception as e:
+        logger.error("✗ Failed to create output directory: %s", e)
+        raise
+
     run_dir = HydraConfig.get().run.dir
     logger.info("Run dir: %s", run_dir)
     monitor = SystemMonitor(logger=logger)

@@ -39,9 +39,17 @@ DATASET_CONFIG="${DATASET_CONFIG:-dataset_cellxgene_pseudo_bulk_3_5k}"
 echo "Starting job"
 echo "Using dataset config: $DATASET_CONFIG"
 echo "Output directory: $BASE_OUT"
+# Ensure we're in the correct working directory
+cd /home/menger/git/adata_hf_datasets
+
 # Source the setup script to ensure the environment is ready
 source .venv/bin/activate
 echo "venv activated"
+
+# Print working directory for debugging
+echo "Current working directory: $(pwd)"
+echo "Checking if data directory exists: $(ls -la data/ 2>/dev/null || echo 'data directory does not exist')"
+
 # Now run your Python script with the dataset config
 python3 scripts/preprocessing/preprocess.py \
     --config-name=$DATASET_CONFIG \
