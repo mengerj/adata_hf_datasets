@@ -3,7 +3,7 @@
 #SBATCH --time=04:00:00
 #SBATCH --mem=8G
 #SBATCH --cpus-per-task=4
-#SBATCH --partition=slurm
+#SBATCH --partition=gpu
 
 # Exit on any error
 set -euo pipefail
@@ -73,7 +73,6 @@ echo "Working directory: $(pwd)"
 # ─────────────────────────────────────────────────────────────────────────────
 
 # Determine if this is a training or test dataset by checking the config
-# We'll do a simplified check here and let the Python code handle the full logic
 python3 -c "
 import sys
 sys.path.insert(0, 'src')
@@ -95,246 +94,194 @@ rm -f /tmp/dataset_type_$$.txt
 
 echo "Detected dataset type: $DATASET_TYPE"
 
-SOURCE_PATH="$BASE_FILE_PATH/processed_with_emb/$DATASET_TYPE/$DATASET_NAME"
-DEST_PATH="$BASE_FILE_PATH/processed_with_emb/$DATASET_TYPE/$DATASET_NAME"
+# For GPU to CPU transfer, we're transferring embeddings back
+# These are typically in the embeddings directory
+SOURCE_PATH="$BASE_FILE_PATH/embeddings/$DATASET_TYPE/$DATASET_NAME"
+DEST_PATH="$BASE_FILE_PATH/embeddings/$DATASET_TYPE/$DATASET_NAME"
+TEMP_ZIP_NAME="embeddings_${DATASET_NAME}_gpu_to_cpu.zip"
+TEMP_ZIP_PATH="/tmp/$TEMP_ZIP_NAME"
 
 echo "Source path (GPU): $SOURCE_PATH"
 echo "Destination path (CPU): $DEST_PATH"
+echo "Temporary zip file: $TEMP_ZIP_PATH"
 
-echo "Checking if GPU embedding has completed..."
+# Validate source directory exists
+if [ ! -d "$SOURCE_PATH" ]; then
+    echo "ERROR: Source directory does not exist: $SOURCE_PATH"
+    echo "This probably means the embedding step failed or hasn't completed yet."
+    exit 1
+fi
+
+# Get directory size for logging
+SOURCE_SIZE=$(du -sh "$SOURCE_PATH" | cut -f1)
+echo "Source directory size: $SOURCE_SIZE"
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Create Zip File Locally
+# ─────────────────────────────────────────────────────────────────────────────
+
+echo "Creating zip file locally on GPU cluster..."
+ZIP_START=$(date +%s)
+
+# Create zip file (maximum compression, preserve directory structure)
+cd "$(dirname "$SOURCE_PATH")"
+zip -r -q -9 "$TEMP_ZIP_PATH" "$(basename "$SOURCE_PATH")"
+
+if [ $? -ne 0 ]; then
+    echo "ERROR: Failed to create zip file"
+    exit 1
+fi
+
+ZIP_END=$(date +%s)
+ZIP_TIME=$((ZIP_END - ZIP_START))
+
+ZIP_SIZE=$(du -sh "$TEMP_ZIP_PATH" | cut -f1)
+echo "Created zip file: $ZIP_SIZE in ${ZIP_TIME}s"
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Transfer to CPU Cluster
+# ─────────────────────────────────────────────────────────────────────────────
+
+echo "Transferring zip file to CPU cluster..."
+TRANSFER_START=$(date +%s)
+
+# Get CPU cluster connection info from config
+CPU_HOST=$(python3 -c "
+import sys
+sys.path.insert(0, 'src')
+from omegaconf import OmegaConf
+try:
+    cfg = OmegaConf.load('conf/workflow_orchestrator.yaml')
+    cpu_login = cfg.workflow.cpu_login
+    print(f'{cpu_login.user}@{cpu_login.host}')
+except Exception as e:
+    print('ERROR: Could not load CPU login info')
+    sys.exit(1)
+")
+
+if [[ "$CPU_HOST" == "ERROR:"* ]]; then
+    echo "$CPU_HOST"
+    exit 1
+fi
+
+echo "CPU host: $CPU_HOST"
+
+# Transfer zip file to CPU cluster
+scp "$TEMP_ZIP_PATH" "$CPU_HOST:/tmp/$TEMP_ZIP_NAME"
+
+if [ $? -ne 0 ]; then
+    echo "ERROR: Failed to transfer zip file to CPU cluster"
+    exit 1
+fi
+
+TRANSFER_END=$(date +%s)
+TRANSFER_TIME=$((TRANSFER_END - TRANSFER_START))
+
+echo "Zip file transferred in ${TRANSFER_TIME}s"
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Unzip on CPU Cluster
+# ─────────────────────────────────────────────────────────────────────────────
+
+echo "Unzipping on CPU cluster..."
+UNZIP_START=$(date +%s)
+
+# Create destination directory on CPU cluster
+ssh "$CPU_HOST" "mkdir -p '$(dirname "$DEST_PATH")'"
+
+# Unzip on CPU cluster
+ssh "$CPU_HOST" "cd '$(dirname "$DEST_PATH")' && unzip -q -o '/tmp/$TEMP_ZIP_NAME'"
+
+if [ $? -ne 0 ]; then
+    echo "ERROR: Failed to unzip file on CPU cluster"
+    exit 1
+fi
+
+# Handle case where extracted directory name doesn't match destination
+ssh "$CPU_HOST" "
+if [ -d '$(dirname "$DEST_PATH")/$(basename "$SOURCE_PATH")' ] && [ '$(dirname "$DEST_PATH")/$(basename "$SOURCE_PATH")' != '$DEST_PATH' ]; then
+    mv '$(dirname "$DEST_PATH")/$(basename "$SOURCE_PATH")' '$DEST_PATH'
+fi
+"
+
+UNZIP_END=$(date +%s)
+UNZIP_TIME=$((UNZIP_END - UNZIP_START))
+
+echo "Unzipped in ${UNZIP_TIME}s"
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Verify Transfer and Cleanup
+# ─────────────────────────────────────────────────────────────────────────────
+
+echo "Verifying transfer..."
+
+# Check if destination directory exists on CPU cluster
+ssh "$CPU_HOST" "test -d '$DEST_PATH'"
+
+if [ $? -ne 0 ]; then
+    echo "ERROR: Transfer verification failed - destination directory not found on CPU cluster"
+    exit 1
+fi
+
+# Get destination directory size for verification
+DEST_SIZE=$(ssh "$CPU_HOST" "du -sh '$DEST_PATH' | cut -f1")
+echo "Destination directory size: $DEST_SIZE"
+
+# Cleanup temporary files
+echo "Cleaning up temporary files..."
+rm -f "$TEMP_ZIP_PATH"
+ssh "$CPU_HOST" "rm -f '/tmp/$TEMP_ZIP_NAME'"
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Calculate and Save Statistics
+# ─────────────────────────────────────────────────────────────────────────────
+
+TOTAL_END=$(date +%s)
+TOTAL_TIME=$((TOTAL_END - ZIP_START))
 
 # Create transfer statistics file
 STATS_FILE="$BASE_OUT/transfer_stats.json"
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Perform Transfer
-# ─────────────────────────────────────────────────────────────────────────────
+cat > "$STATS_FILE" << EOF
+{
+  "timestamp": "$(date -Iseconds)",
+  "dataset_name": "$DATASET_NAME",
+  "source_path": "$SOURCE_PATH",
+  "dest_path": "$DEST_PATH",
+  "transfer_direction": "gpu_to_cpu",
+  "transfer_type": "directory_zip_local",
+  "source_size": "$SOURCE_SIZE",
+  "dest_size": "$DEST_SIZE",
+  "zip_size": "$ZIP_SIZE",
+  "total_time_seconds": $TOTAL_TIME,
+  "zip_time_seconds": $ZIP_TIME,
+  "transfer_time_seconds": $TRANSFER_TIME,
+  "unzip_time_seconds": $UNZIP_TIME,
+  "temp_zip_name": "$TEMP_ZIP_NAME"
+}
+EOF
 
-echo "Starting zip-based directory transfer..."
-
-python3 -c "
-import sys
-import os
-import json
-import time
-from pathlib import Path
-from datetime import datetime
-
-# Add scripts/util to path
-sys.path.insert(0, 'scripts/util')
-
-from adata_hf_datasets.ssh_transfer_utils import SSHTransferUtils, SSHTransferError
-
-def main():
-    # Get configuration from environment
-    dataset_config = os.environ.get('DATASET_CONFIG')
-    base_file_path = os.environ.get('BASE_FILE_PATH')
-    dataset_name = os.environ.get('DATASET_NAME')
-    stats_file = os.environ.get('STATS_FILE')
-
-    # Load dataset config to determine if this is a training or test dataset
-    from omegaconf import OmegaConf
-    try:
-        config_path = f'conf/{dataset_config}.yaml'
-        dataset_cfg = OmegaConf.load(config_path)
-        # Apply config transformations to get the complete config
-        from adata_hf_datasets.config_utils import apply_all_transformations
-        dataset_cfg = apply_all_transformations(dataset_cfg)
-
-        # Determine train vs test based on split_dataset setting
-        is_training = dataset_cfg.preprocessing.get('split_dataset', True)
-        train_or_test = 'train' if is_training else 'test'
-
-        print(f'Dataset type: {train_or_test} (split_dataset={is_training})')
-    except Exception as e:
-        print(f'Warning: Could not determine dataset type from config: {e}')
-        print('Defaulting to training dataset structure')
-        train_or_test = 'train'
-
-    # Define paths with correct train/test subdirectory
-    source_path = f'{base_file_path}/processed_with_emb/{train_or_test}/{dataset_name}'
-    dest_path = f'{base_file_path}/processed_with_emb/{train_or_test}/{dataset_name}'
-
-    print(f'Transfer Details:')
-    print(f'  Source: GPU:{source_path}')
-    print(f'  Destination: CPU:{dest_path}')
-    print(f'  Dataset: {dataset_name}')
-    print('')
-
-    # Initialize transfer utilities with workflow config
-    try:
-        from omegaconf import OmegaConf
-        config = OmegaConf.load('conf/workflow_orchestrator.yaml')
-        cpu_login = OmegaConf.to_container(config.workflow.cpu_login)
-        gpu_login = OmegaConf.to_container(config.workflow.gpu_login)
-
-        transfer_utils = SSHTransferUtils(cpu_login, gpu_login)
-        print('Transfer utilities initialized successfully')
-    except Exception as e:
-        print(f'Failed to initialize transfer utilities: {e}')
-        return 1
-
-    try:
-        # Test connectivity first
-        print('Testing SSH connectivity...')
-        connectivity = transfer_utils.test_ssh_connectivity()
-        if not all(connectivity.values()):
-            print('ERROR: SSH connectivity test failed!')
-            for cluster, status in connectivity.items():
-                print(f'  {cluster}: {\"✓\" if status else \"✗\"}')
-            return 1
-
-        print('✓ SSH connectivity successful')
-
-        # Wait for source directory to exist (GPU embedding might still be running)
-        print('Waiting for GPU embedding to complete...')
-        max_wait_time = 3600  # 1 hour
-        wait_interval = 60    # 1 minute
-        waited_time = 0
-
-        while waited_time < max_wait_time:
-            if transfer_utils.check_file_exists('gpu', source_path):
-                print(f'✓ Source directory found after {waited_time} seconds')
-                break
-
-            print(f'  Waiting for source directory to appear... ({waited_time}/{max_wait_time}s)')
-            time.sleep(wait_interval)
-            waited_time += wait_interval
-        else:
-            print(f'ERROR: Source directory not found after {max_wait_time} seconds')
-            print(f'GPU embedding may have failed or is taking longer than expected')
-            return 1
-
-        # Check disk space on CPU cluster
-        try:
-            print('Checking CPU cluster disk space...')
-            cpu_disk = transfer_utils.get_disk_usage('cpu', base_file_path)
-            available_gb = cpu_disk[\"available\"] // (1024**3)
-            total_gb = cpu_disk[\"total\"] // (1024**3)
-            used_gb = cpu_disk[\"used\"] // (1024**3)
-
-            print(f'CPU cluster disk usage:')
-            print(f'  Total: {total_gb} GB')
-            print(f'  Used: {used_gb} GB')
-            print(f'  Available: {available_gb} GB')
-
-            # Get source directory size for space estimation
-            source_size = transfer_utils.get_directory_size('gpu', source_path)
-            source_gb = source_size // (1024**3)
-            required_gb = source_gb * 2  # 2x for safety (zip + unzip)
-
-            print(f'Source directory size: {source_gb} GB')
-            print(f'Estimated space required: {required_gb} GB')
-
-            if available_gb < required_gb:
-                print(f'WARNING: Low disk space on CPU cluster!')
-                print(f'  Available: {available_gb} GB')
-                print(f'  Required: {required_gb} GB')
-                print('  Proceeding anyway, but transfer may fail...')
-            else:
-                print(f'✓ Sufficient disk space available')
-
-        except Exception as e:
-            print(f'Warning: Could not check disk space: {e}')
-            print('Proceeding with transfer...')
-
-        # Perform zip-based directory transfer
-        print('')
-        print('=== Starting Directory Transfer ===')
-        print(f'Transfer method: ZIP compression')
-        print(f'Temporary zip name: processed_with_emb_{dataset_name}_gpu_to_cpu.zip')
-
-        stats = transfer_utils.transfer_directory_as_zip(
-            'gpu', source_path,
-            'cpu', dest_path,
-            temp_zip_name=f'processed_with_emb_{dataset_name}_gpu_to_cpu.zip'
-        )
-
-        # Log detailed transfer statistics
-        print('')
-        print('=== Transfer Statistics ===')
-        print(f'Total time: {stats[\"total_time_seconds\"]:.2f} seconds')
-        print(f'  Zip creation: {stats[\"zip_time_seconds\"]:.2f} seconds')
-        print(f'  File transfer: {stats[\"download_time_seconds\"] + stats[\"upload_time_seconds\"]:.2f} seconds')
-        print(f'  Unzip extraction: {stats[\"unzip_time_seconds\"]:.2f} seconds')
-        print(f'Compressed size: {stats[\"zip_size_bytes\"] / (1024**2):.1f} MB')
-        if \"compression_ratio\" in stats:
-            print(f'Compression ratio: {stats[\"compression_ratio\"]:.2f}')
-        if \"effective_throughput_mbps\" in stats:
-            print(f'Effective throughput: {stats[\"effective_throughput_mbps\"]:.2f} MB/s')
-        print('')
-
-        # Verify transfer success
-        print('Verifying transfer...')
-        if not transfer_utils.check_file_exists('cpu', dest_path):
-            print('ERROR: Transfer verification failed - destination directory not found')
-            return 1
-
-        # Save statistics to file
-        if stats_file:
-            stats['timestamp'] = datetime.now().isoformat()
-            stats['dataset_name'] = dataset_name
-            stats['source_path'] = source_path
-            stats['dest_path'] = dest_path
-            stats['transfer_direction'] = 'gpu_to_cpu'
-            stats['wait_time_seconds'] = waited_time
-
-            with open(stats_file, 'w') as f:
-                json.dump(stats, f, indent=2)
-            print(f'Transfer statistics saved to: {stats_file}')
-
-        # Optional: Clean up GPU data to save space
-        try:
-            print('Cleaning up GPU data to save space...')
-            # Only remove the processed data (embeddings), keep the original processed folder
-            transfer_utils.cleanup_files('gpu', [f'{base_file_path}/processed_with_emb/{train_or_test}/{dataset_name}'])
-            print('✓ GPU cleanup completed')
-        except Exception as e:
-            print(f'Warning: GPU cleanup failed: {e}')
-            print('  You may want to manually clean up GPU data later')
-
-        print('✓ Transfer completed successfully!')
-        print(f'✓ Embeddings are now available on CPU cluster at: {dest_path}')
-        print('✓ CPU embedding step can now proceed (if enabled)')
-
-        return 0
-
-    except SSHTransferError as e:
-        print(f'ERROR: Transfer failed: {e}')
-        return 1
-    except Exception as e:
-        print(f'ERROR: Unexpected error during transfer: {e}')
-        import traceback
-        traceback.print_exc()
-        return 1
-
-if __name__ == '__main__':
-    exit_code = main()
-    sys.exit(exit_code)
-" STATS_FILE="$STATS_FILE"
-
-TRANSFER_EXIT_CODE=$?
+echo "Transfer statistics saved to: $STATS_FILE"
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Job Completion
 # ─────────────────────────────────────────────────────────────────────────────
 
 echo ""
+echo "=== Transfer Statistics ==="
+echo "Total time: ${TOTAL_TIME}s"
+echo "  Zip creation: ${ZIP_TIME}s"
+echo "  File transfer: ${TRANSFER_TIME}s"
+echo "  Unzip extraction: ${UNZIP_TIME}s"
+echo "Source size: $SOURCE_SIZE"
+echo "Zip size: $ZIP_SIZE"
+echo "Destination size: $DEST_SIZE"
+echo ""
 echo "================================="
-if [ $TRANSFER_EXIT_CODE -eq 0 ]; then
-    echo "=== GPU to CPU Transfer Completed Successfully ==="
-    echo "End Time: $(date)"
-    echo "Next Step: CPU embedding/dataset creation can now proceed with data at $DEST_PATH"
+echo "=== GPU to CPU Transfer Completed Successfully ==="
+echo "End Time: $(date)"
+echo "✓ Embeddings are now available on CPU cluster at: $DEST_PATH"
+echo "✓ Workflow can now proceed with further processing"
 
-    # Create success marker file
-    touch "$BASE_OUT/transfer_success"
-else
-    echo "=== GPU to CPU Transfer Failed ==="
-    echo "End Time: $(date)"
-    echo "Exit code: $TRANSFER_EXIT_CODE"
-    echo "Check logs in: $BASE_OUT"
-
-    # Create failure marker file
-    touch "$BASE_OUT/transfer_failed"
-    exit $TRANSFER_EXIT_CODE
-fi
+# Create success marker file
+touch "$BASE_OUT/transfer_success"
