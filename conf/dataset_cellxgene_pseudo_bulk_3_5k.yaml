@@ -7,6 +7,7 @@ defaults:
 # =============================================================================
 # DATASET METADATA
 # =============================================================================
+base_file_path: "data/RNA"
 dataset:
   name: "cellxgene_pseudo_bulk_3_5k"
   description: "CellxGene pseudo bulk dataset with 3,5k samples. Annotated with natural language descriptions obtained in CellWhisperer Study."
