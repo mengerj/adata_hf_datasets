@@ -83,7 +83,7 @@ class EmbeddingLauncher:
         return env_mode
 
     def _load_config(self) -> DictConfig:
-        """Load and validate the dataset configuration."""
+        """Load and validate the dataset configuration using proper Hydra composition."""
         from hydra import compose, initialize_config_dir
 
         config_path = project_root / "conf"
@@ -96,6 +96,11 @@ class EmbeddingLauncher:
             # Apply transformations
             cfg = apply_all_transformations(cfg)
             logger.info(f"Successfully loaded config for dataset: {cfg.dataset.name}")
+
+            # Debug: Log the base_file_path to verify it's loaded correctly
+            base_path = cfg.get("base_file_path", "NOT_FOUND")
+            logger.info(f"Loaded base_file_path from config: {base_path}")
+
             return cfg
 
         except Exception as e:
@@ -138,13 +143,27 @@ class EmbeddingLauncher:
 
     def _get_input_directories(self) -> List[Tuple[str, Path]]:
         """Get list of input directories to process."""
-        base_dir = Path(self.config.get("data_base_dir", "data/RNA/processed"))
+        # Use base_file_path from config with processed subdirectory
+        # Environment variable takes precedence (passed from workflow orchestrator)
+        env_base_path = os.environ.get("BASE_FILE_PATH")
+        config_base_path = self.config.get("base_file_path", "/scratch/local")
+        base_file_path = env_base_path or config_base_path
+
+        # Debug logging
+        logger.info(f"Environment BASE_FILE_PATH: {env_base_path}")
+        logger.info(f"Config base_file_path: {config_base_path}")
+        logger.info(f"Final base_file_path: {base_file_path}")
+
+        base_dir = Path(base_file_path) / "processed"
         dataset_name = self.config.dataset.name
 
         # Determine if we're processing train or test data
-        train_or_test = (
-            "train" if self.config.preprocessing.get("split_dataset", True) else "test"
-        )
+        split_dataset = self.config.preprocessing.get("split_dataset", True)
+        train_or_test = "train" if split_dataset else "test"
+
+        logger.info(f"Dataset: {dataset_name}")
+        logger.info(f"Split dataset: {split_dataset} -> Looking for: {train_or_test}")
+        logger.info(f"Base directory: {base_dir}")
 
         directories = []
 

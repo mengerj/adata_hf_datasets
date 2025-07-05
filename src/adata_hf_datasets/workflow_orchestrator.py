@@ -1181,18 +1181,24 @@ class WorkflowOrchestrator:
             time.sleep(60)  # Wait 1 minute before checking again
 
     def _load_dataset_config(self, dataset_config_name: str) -> DictConfig:
-        """Load the dataset configuration."""
-        # Load the dataset config using Hydra's config store
-        # This is a simplified approach - in practice, you might want to use
-        # Hydra's config store or load the config file directly
+        """Load the dataset configuration using proper Hydra composition."""
+        from hydra import compose, initialize_config_dir
+
         config_path = Path(__file__).parent.parent.parent / "conf"
         config_file = config_path / f"{dataset_config_name}.yaml"
 
         if not config_file.exists():
             raise ValueError(f"Dataset config file not found: {config_file}")
 
-        # Load the config using OmegaConf
-        config = OmegaConf.load(config_file)
+        # Use Hydra's proper composition to handle defaults inheritance
+        try:
+            with initialize_config_dir(config_dir=str(config_path), version_base=None):
+                config = compose(config_name=dataset_config_name)
+        except Exception as e:
+            logger.error(f"Failed to load config using Hydra composition: {e}")
+            logger.info("Falling back to OmegaConf.load() without defaults")
+            # Fallback to direct loading if Hydra fails
+            config = OmegaConf.load(config_file)
 
         # Apply transformations
         config = apply_all_transformations(config)
