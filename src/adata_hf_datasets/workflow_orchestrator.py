@@ -823,7 +823,11 @@ class WorkflowOrchestrator:
 
         # Step 4a: Transfer CPU→GPU (if GPU embedding and transfers are enabled)
         transfer_cpu_to_gpu_job_id = None
+        logger.info(
+            f"DEBUG: About to check transfer condition - embedding_gpu_enabled: {embedding_gpu_enabled}, transfers_enabled: {transfers_enabled}"
+        )
         if embedding_gpu_enabled and transfers_enabled:
+            logger.info("DEBUG: Transfer condition passed - starting CPU→GPU transfer")
             transfer_cpu_to_gpu_job_id = self.run_transfer_cpu_to_gpu_step(
                 dataset_config_name,
                 dataset_config,
@@ -837,15 +841,25 @@ class WorkflowOrchestrator:
             logger.info(
                 "=== CPU→GPU Transfer Skipped (transfers disabled, using shared filesystem) ==="
             )
+        else:
+            logger.info(
+                f"DEBUG: Transfer condition failed - embedding_gpu_enabled: {embedding_gpu_enabled}, transfers_enabled: {transfers_enabled}"
+            )
 
         # Step 4b: GPU Embedding (depends on CPU→GPU transfer if transfers enabled, otherwise embedding preparation)
         embedding_gpu_job_id = None
+        logger.info(
+            f"DEBUG: About to check GPU embedding condition - embedding_gpu_enabled: {embedding_gpu_enabled}"
+        )
         if embedding_gpu_enabled:
             # Dependency logic: if transfers enabled, depend on transfer; otherwise depend on embedding preparation
             gpu_embedding_dependency = (
                 transfer_cpu_to_gpu_job_id
                 if transfers_enabled
                 else embedding_prepare_job_id
+            )
+            logger.info(
+                f"DEBUG: GPU embedding dependency: {gpu_embedding_dependency}, transfers_enabled: {transfers_enabled}"
             )
 
             embedding_gpu_job_id = self.run_embedding_gpu_step(
@@ -856,6 +870,8 @@ class WorkflowOrchestrator:
             logger.info(
                 f"✓ GPU embedding job {embedding_gpu_job_id} submitted to cluster ({self.gpu_login['host']})"
             )
+        else:
+            logger.info("DEBUG: GPU embedding skipped - embedding_gpu_enabled is False")
 
         # Step 4c: Transfer GPU→CPU (if GPU embedding is enabled, transfers are enabled, and we need results on CPU)
         transfer_gpu_to_cpu_job_id = None
