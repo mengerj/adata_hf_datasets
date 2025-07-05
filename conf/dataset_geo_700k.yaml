@@ -11,7 +11,7 @@ dataset:
   name: "geo_700k" #name of the subset being used
   description: "GEO dataset with 700k samples. Annotated with natural language descriptions obtained in CellWhisperer Study."
   download_url: "https://medical-epigenomics.org/papers/schaefer2024/data/datasets/archs4_geo/full_data.h5ad" # Example URL
-  full_name: "geo_700k" #name of the full dataset
+  full_name: "geo_full" #name of the full dataset
 
 # =============================================================================
 # COMMON KEYS (dataset-specific)
@@ -27,7 +27,7 @@ other_bio_labels: []
 # =============================================================================
 # Download configuration
 download:
-  enabled: false
+  enabled: true
   subset_size: null
 
 # Preprocessing overrides (both dataset-specific and execution parameters)
