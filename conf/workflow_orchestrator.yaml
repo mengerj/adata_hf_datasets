@@ -13,7 +13,7 @@ workflow:
   # Set to true to use local scratch storage with transfers between clusters (faster processing, slower transfers)
   # Set to false to use shared filesystem directly (slower processing, no transfer overhead)
   # This allows performance comparison between local scratch + transfers vs shared filesystem
-  enable_transfers: true
+  enable_transfers: false
 
   # SSH connection settings for CPU cluster
   # Using SSH aliases from ~/.ssh/config (handles ProxyJump automatically)
