@@ -95,34 +95,14 @@ rm -f /tmp/dataset_type_$$.txt
 echo "Detected dataset type: $DATASET_TYPE"
 
 # For GPU to CPU transfer, we're transferring embeddings back
-# Get the actual GPU embedding output directory from config
-GPU_EMBEDDING_OUTPUT_DIR=$(python3 -c "
-import sys
-sys.path.insert(0, '/home/menger/git/adata_hf_datasets/src')
-from omegaconf import OmegaConf
-from adata_hf_datasets.config_utils import apply_all_transformations
+# The GPU embedding output should be in processed_with_emb directory under BASE_FILE_PATH
+echo "Base file path: $BASE_FILE_PATH"
+echo "Dataset type: $DATASET_TYPE"
+echo "Dataset name: $DATASET_NAME"
 
-try:
-    cfg = OmegaConf.load('/home/menger/git/adata_hf_datasets/conf/$DATASET_CONFIG.yaml')
-    cfg = apply_all_transformations(cfg)
-    output_dir = cfg.embedding_gpu.output_dir
-    print(output_dir)
-except Exception as e:
-    # Fallback to default structure if config reading fails
-    # Try to determine dataset type for fallback
-    try:
-        fallback_cfg = OmegaConf.load('/home/menger/git/adata_hf_datasets/conf/$DATASET_CONFIG.yaml')
-        is_training = fallback_cfg.preprocessing.get('split_dataset', True)
-        train_or_test = 'train' if is_training else 'test'
-    except:
-        train_or_test = 'train'  # Default to train
-    print(f'$BASE_FILE_PATH/processed_with_emb/{train_or_test}/$DATASET_NAME')
-")
-
-echo "GPU embedding output directory from config: $GPU_EMBEDDING_OUTPUT_DIR"
-
-SOURCE_PATH="$GPU_EMBEDDING_OUTPUT_DIR"
-DEST_PATH="$GPU_EMBEDDING_OUTPUT_DIR"
+# The GPU embeddings are stored in processed_with_emb directory
+SOURCE_PATH="$BASE_FILE_PATH/processed_with_emb/$DATASET_TYPE/$DATASET_NAME"
+DEST_PATH="$BASE_FILE_PATH/processed_with_emb/$DATASET_TYPE/$DATASET_NAME"
 TEMP_ZIP_NAME="embeddings_${DATASET_NAME}_gpu_to_cpu.zip"
 TEMP_ZIP_PATH="/tmp/$TEMP_ZIP_NAME"
 
