@@ -121,9 +121,20 @@ echo "Source directory size: $SOURCE_SIZE"
 echo "Creating zip file locally on CPU cluster..."
 ZIP_START=$(date +%s)
 
-# Create zip file (maximum compression, preserve directory structure)
+# Create zip file (balanced compression for speed, preserve directory structure)
 cd "$(dirname "$SOURCE_PATH")"
-zip -r -q -9 "$TEMP_ZIP_PATH" "$(basename "$SOURCE_PATH")"
+
+# Try pigz (parallel gzip) with tar first, fallback to zip if not available
+if command -v pigz >/dev/null 2>&1; then
+    echo "Using pigz (parallel gzip) for faster compression..."
+    tar -cf - "$(basename "$SOURCE_PATH")" | pigz -6 -p 4 > "$TEMP_ZIP_PATH.tar.gz"
+    TEMP_ZIP_PATH="$TEMP_ZIP_PATH.tar.gz"
+    TEMP_ZIP_NAME="$TEMP_ZIP_NAME.tar.gz"
+else
+    echo "Using zip with fast compression (pigz not available)..."
+    # Use -1 for fastest compression instead of -9 for maximum compression
+    zip -r -q -1 "$TEMP_ZIP_PATH" "$(basename "$SOURCE_PATH")"
+fi
 
 if [ $? -ne 0 ]; then
     echo "ERROR: Failed to create zip file"
@@ -249,7 +260,13 @@ UNZIP_START=$(date +%s)
 ssh "$GPU_HOST" "mkdir -p '$(dirname "$DEST_PATH")'"
 
 # Unzip on GPU cluster
-ssh "$GPU_HOST" "cd '$(dirname "$DEST_PATH")' && unzip -q -o '/tmp/$TEMP_ZIP_NAME'"
+if [[ "$TEMP_ZIP_NAME" == *.tar.gz ]]; then
+    echo "Extracting tar.gz file..."
+    ssh "$GPU_HOST" "cd '$(dirname "$DEST_PATH")' && tar -xzf '/tmp/$TEMP_ZIP_NAME'"
+else
+    echo "Extracting zip file..."
+    ssh "$GPU_HOST" "cd '$(dirname "$DEST_PATH")' && unzip -q -o '/tmp/$TEMP_ZIP_NAME'"
+fi
 
 if [ $? -ne 0 ]; then
     echo "ERROR: Failed to unzip file on GPU cluster"

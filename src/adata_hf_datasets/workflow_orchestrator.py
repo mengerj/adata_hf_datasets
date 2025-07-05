@@ -61,6 +61,11 @@ class WorkflowLogger:
         # Copy the dataset config
         self._copy_dataset_config()
 
+        # Initialize timing tracking
+        self.workflow_start_time = datetime.now()
+        self.step_timings = {}  # Store start/end times for each step
+        self.step_durations = {}  # Store calculated durations
+
     def _create_workflow_directory(self) -> Path:
         """Create the unified workflow directory structure."""
         date_str = datetime.now().strftime("%Y-%m-%d")
@@ -147,6 +152,10 @@ class WorkflowLogger:
 
     def log_workflow_complete(self):
         """Log workflow completion."""
+        # First log the timing summary
+        self.log_workflow_timing_summary()
+
+        # Then log completion message
         logger.info("=" * 80)
         logger.info("WORKFLOW COMPLETED SUCCESSFULLY")
         logger.info(f"Timestamp: {datetime.now().isoformat()}")
@@ -155,15 +164,106 @@ class WorkflowLogger:
 
     def log_step_start(self, step_name: str, job_id: str, host: str):
         """Log the start of a workflow step."""
-        logger.info(f"Starting {step_name} step (Job ID: {job_id}, Host: {host})")
+        start_time = datetime.now()
+        self.step_timings[step_name] = {
+            "start_time": start_time,
+            "job_id": job_id,
+            "host": host,
+        }
+        logger.info(
+            f"Starting {step_name} step (Job ID: {job_id}, Host: {host}) at {start_time.strftime('%H:%M:%S')}"
+        )
 
     def log_step_complete(self, step_name: str, job_id: str):
         """Log the completion of a workflow step."""
-        logger.info(f"✓ {step_name} step completed (Job ID: {job_id})")
+        end_time = datetime.now()
+        if step_name in self.step_timings:
+            self.step_timings[step_name]["end_time"] = end_time
+            duration = end_time - self.step_timings[step_name]["start_time"]
+            self.step_durations[step_name] = duration
+
+            duration_str = self._format_duration(duration)
+            logger.info(
+                f"✓ {step_name} step completed (Job ID: {job_id}) - Duration: {duration_str}"
+            )
+        else:
+            logger.info(f"✓ {step_name} step completed (Job ID: {job_id})")
 
     def log_step_skipped(self, step_name: str, reason: str):
         """Log when a step is skipped."""
         logger.info(f"⏭ {step_name} step skipped: {reason}")
+
+    def _format_duration(self, duration):
+        """Format a duration timedelta into a readable string."""
+        total_seconds = int(duration.total_seconds())
+        hours = total_seconds // 3600
+        minutes = (total_seconds % 3600) // 60
+        seconds = total_seconds % 60
+
+        if hours > 0:
+            return f"{hours}h {minutes}m {seconds}s"
+        elif minutes > 0:
+            return f"{minutes}m {seconds}s"
+        else:
+            return f"{seconds}s"
+
+    def log_workflow_timing_summary(self):
+        """Log a comprehensive timing summary of the entire workflow."""
+        workflow_end_time = datetime.now()
+        total_workflow_duration = workflow_end_time - self.workflow_start_time
+
+        logger.info("=" * 80)
+        logger.info("WORKFLOW TIMING SUMMARY")
+        logger.info("=" * 80)
+        logger.info(
+            f"Workflow started: {self.workflow_start_time.strftime('%Y-%m-%d %H:%M:%S')}"
+        )
+        logger.info(
+            f"Workflow ended: {workflow_end_time.strftime('%Y-%m-%d %H:%M:%S')}"
+        )
+        logger.info(
+            f"Total workflow duration: {self._format_duration(total_workflow_duration)}"
+        )
+        logger.info("")
+
+        if self.step_durations:
+            logger.info("Step-by-step timing breakdown:")
+            logger.info("-" * 50)
+
+            total_step_time = sum(self.step_durations.values(), datetime.timedelta())
+
+            for step_name, duration in self.step_durations.items():
+                percentage = (
+                    duration.total_seconds() / total_step_time.total_seconds()
+                ) * 100
+                start_time = self.step_timings[step_name]["start_time"]
+                end_time = self.step_timings[step_name]["end_time"]
+                host = self.step_timings[step_name]["host"]
+
+                logger.info(
+                    f"{step_name:20} | {self._format_duration(duration):>10} | {percentage:5.1f}% | {host}"
+                )
+                logger.info(
+                    f"{'':20} | {start_time.strftime('%H:%M:%S')} → {end_time.strftime('%H:%M:%S')}"
+                )
+                logger.info("")
+
+            logger.info("-" * 50)
+            logger.info(
+                f"{'Total step time':20} | {self._format_duration(total_step_time):>10} | 100.0%"
+            )
+
+            # Calculate overhead (time not spent in active processing)
+            overhead = total_workflow_duration - total_step_time
+            if overhead.total_seconds() > 0:
+                overhead_percentage = (
+                    overhead.total_seconds() / total_workflow_duration.total_seconds()
+                ) * 100
+                logger.info(
+                    f"{'Workflow overhead':20} | {self._format_duration(overhead):>10} | {overhead_percentage:5.1f}%"
+                )
+
+        logger.info("=" * 80)
 
 
 class WorkflowOrchestrator:
@@ -715,9 +815,15 @@ class WorkflowOrchestrator:
             dataset_config.dataset_creation, "enabled", True
         )
 
-        # Step 4a: Transfer CPU→GPU (if GPU embedding is enabled)
+        # Check if transfers are enabled
+        transfers_enabled = getattr(workflow_config.workflow, "enable_transfers", True)
+        logger.info(
+            f"Transfer mode: {'Enabled (local scratch + transfers)' if transfers_enabled else 'Disabled (shared filesystem)'}"
+        )
+
+        # Step 4a: Transfer CPU→GPU (if GPU embedding and transfers are enabled)
         transfer_cpu_to_gpu_job_id = None
-        if embedding_gpu_enabled:
+        if embedding_gpu_enabled and transfers_enabled:
             transfer_cpu_to_gpu_job_id = self.run_transfer_cpu_to_gpu_step(
                 dataset_config_name,
                 dataset_config,
@@ -727,23 +833,36 @@ class WorkflowOrchestrator:
             logger.info(
                 f"✓ CPU→GPU transfer job {transfer_cpu_to_gpu_job_id} submitted to cluster ({self.cpu_login['host']})"
             )
+        elif embedding_gpu_enabled and not transfers_enabled:
+            logger.info(
+                "=== CPU→GPU Transfer Skipped (transfers disabled, using shared filesystem) ==="
+            )
 
-        # Step 4b: GPU Embedding (depends on CPU→GPU transfer)
+        # Step 4b: GPU Embedding (depends on CPU→GPU transfer if transfers enabled, otherwise embedding preparation)
         embedding_gpu_job_id = None
         if embedding_gpu_enabled:
+            # Dependency logic: if transfers enabled, depend on transfer; otherwise depend on embedding preparation
+            gpu_embedding_dependency = (
+                transfer_cpu_to_gpu_job_id
+                if transfers_enabled
+                else embedding_prepare_job_id
+            )
+
             embedding_gpu_job_id = self.run_embedding_gpu_step(
                 dataset_config_name,
                 workflow_config,
-                dependency_job_id=transfer_cpu_to_gpu_job_id,
+                dependency_job_id=gpu_embedding_dependency,
             )
             logger.info(
                 f"✓ GPU embedding job {embedding_gpu_job_id} submitted to cluster ({self.gpu_login['host']})"
             )
 
-        # Step 4c: Transfer GPU→CPU (if GPU embedding is enabled and we need results on CPU)
+        # Step 4c: Transfer GPU→CPU (if GPU embedding is enabled, transfers are enabled, and we need results on CPU)
         transfer_gpu_to_cpu_job_id = None
-        if embedding_gpu_enabled and (
-            embedding_cpu_enabled or dataset_creation_enabled
+        if (
+            embedding_gpu_enabled
+            and transfers_enabled
+            and (embedding_cpu_enabled or dataset_creation_enabled)
         ):
             transfer_gpu_to_cpu_job_id = self.run_transfer_gpu_to_cpu_step(
                 dataset_config_name,
@@ -754,16 +873,37 @@ class WorkflowOrchestrator:
             logger.info(
                 f"✓ GPU→CPU transfer job {transfer_gpu_to_cpu_job_id} submitted to cluster ({self.cpu_login['host']})"
             )
+        elif (
+            embedding_gpu_enabled
+            and not transfers_enabled
+            and (embedding_cpu_enabled or dataset_creation_enabled)
+        ):
+            logger.info(
+                "=== GPU→CPU Transfer Skipped (transfers disabled, using shared filesystem) ==="
+            )
 
-        # Step 5: CPU Embedding (depends on embedding preparation or GPU→CPU transfer)
+        # Step 5: CPU Embedding (depends on embedding preparation, GPU→CPU transfer, or GPU embedding directly)
         embedding_cpu_job_id = None
         if embedding_cpu_enabled:
-            # CPU embedding depends on either embedding preparation (if no GPU) or GPU→CPU transfer
-            cpu_embedding_dependency = (
-                transfer_gpu_to_cpu_job_id
-                if transfer_gpu_to_cpu_job_id
-                else embedding_prepare_job_id
-            )
+            # CPU embedding dependency logic:
+            # - If GPU embedding enabled and transfers enabled: depend on GPU→CPU transfer
+            # - If GPU embedding enabled and transfers disabled: depend on GPU embedding directly
+            # - If GPU embedding disabled: depend on embedding preparation
+            if embedding_gpu_enabled and transfers_enabled:
+                cpu_embedding_dependency = (
+                    transfer_gpu_to_cpu_job_id
+                    if transfer_gpu_to_cpu_job_id
+                    else embedding_prepare_job_id
+                )
+            elif embedding_gpu_enabled and not transfers_enabled:
+                cpu_embedding_dependency = (
+                    embedding_gpu_job_id
+                    if embedding_gpu_job_id
+                    else embedding_prepare_job_id
+                )
+            else:
+                cpu_embedding_dependency = embedding_prepare_job_id
+
             embedding_cpu_job_id = self.run_embedding_cpu_step(
                 dataset_config_name,
                 workflow_config,
@@ -933,9 +1073,15 @@ class WorkflowOrchestrator:
             dataset_config.dataset_creation, "enabled", True
         )
 
-        # Step 4a: Transfer CPU→GPU (if GPU embedding is enabled)
+        # Check if transfers are enabled
+        transfers_enabled = getattr(workflow_config.workflow, "enable_transfers", True)
+        logger.info(
+            f"Transfer mode: {'Enabled (local scratch + transfers)' if transfers_enabled else 'Disabled (shared filesystem)'}"
+        )
+
+        # Step 4a: Transfer CPU→GPU (if GPU embedding and transfers are enabled)
         transfer_cpu_to_gpu_job_id = None
-        if embedding_gpu_enabled:
+        if embedding_gpu_enabled and transfers_enabled:
             logger.info("=== Starting CPU→GPU Transfer Step ===")
             transfer_cpu_to_gpu_job_id = self.run_transfer_cpu_to_gpu_step(
                 dataset_config_name,
@@ -954,6 +1100,13 @@ class WorkflowOrchestrator:
             self.workflow_logger.log_step_complete(
                 "CPU→GPU Transfer", transfer_cpu_to_gpu_job_id
             )
+        elif embedding_gpu_enabled and not transfers_enabled:
+            logger.info(
+                "=== CPU→GPU Transfer Step Skipped (transfers disabled, using shared filesystem) ==="
+            )
+            self.workflow_logger.log_step_skipped(
+                "CPU→GPU Transfer", "transfers disabled, using shared filesystem"
+            )
         else:
             logger.info(
                 "=== CPU→GPU Transfer Step Skipped (GPU embedding disabled) ==="
@@ -962,14 +1115,21 @@ class WorkflowOrchestrator:
                 "CPU→GPU Transfer", "GPU embedding disabled"
             )
 
-        # Step 4b: GPU Embedding (depends on CPU→GPU transfer)
+        # Step 4b: GPU Embedding (depends on CPU→GPU transfer if transfers enabled, otherwise embedding preparation)
         embedding_gpu_job_id = None
         if embedding_gpu_enabled:
             logger.info("=== Starting GPU Embedding Step ===")
+            # Dependency logic: if transfers enabled, depend on transfer; otherwise depend on embedding preparation
+            gpu_embedding_dependency = (
+                transfer_cpu_to_gpu_job_id
+                if transfers_enabled
+                else embedding_prepare_job_id
+            )
+
             embedding_gpu_job_id = self.run_embedding_gpu_step(
                 dataset_config_name,
                 workflow_config,
-                dependency_job_id=transfer_cpu_to_gpu_job_id,
+                dependency_job_id=gpu_embedding_dependency,
             )
             logger.info(
                 f"✓ GPU embedding job {embedding_gpu_job_id} submitted to cluster ({self.gpu_login['host']})"
@@ -986,10 +1146,12 @@ class WorkflowOrchestrator:
             logger.info("=== GPU Embedding Step Skipped (disabled) ===")
             self.workflow_logger.log_step_skipped("GPU Embedding", "disabled in config")
 
-        # Step 4c: Transfer GPU→CPU (if GPU embedding is enabled and we need results on CPU)
+        # Step 4c: Transfer GPU→CPU (if GPU embedding is enabled, transfers are enabled, and we need results on CPU)
         transfer_gpu_to_cpu_job_id = None
-        if embedding_gpu_enabled and (
-            embedding_cpu_enabled or dataset_creation_enabled
+        if (
+            embedding_gpu_enabled
+            and transfers_enabled
+            and (embedding_cpu_enabled or dataset_creation_enabled)
         ):
             logger.info("=== Starting GPU→CPU Transfer Step ===")
             transfer_gpu_to_cpu_job_id = self.run_transfer_gpu_to_cpu_step(
@@ -1009,6 +1171,17 @@ class WorkflowOrchestrator:
             self.workflow_logger.log_step_complete(
                 "GPU→CPU Transfer", transfer_gpu_to_cpu_job_id
             )
+        elif (
+            embedding_gpu_enabled
+            and not transfers_enabled
+            and (embedding_cpu_enabled or dataset_creation_enabled)
+        ):
+            logger.info(
+                "=== GPU→CPU Transfer Step Skipped (transfers disabled, using shared filesystem) ==="
+            )
+            self.workflow_logger.log_step_skipped(
+                "GPU→CPU Transfer", "transfers disabled, using shared filesystem"
+            )
         else:
             logger.info(
                 "=== GPU→CPU Transfer Step Skipped (no CPU processing needed) ==="
@@ -1017,16 +1190,29 @@ class WorkflowOrchestrator:
                 "GPU→CPU Transfer", "no CPU processing needed"
             )
 
-        # Step 5: CPU Embedding (depends on embedding preparation or GPU→CPU transfer)
+        # Step 5: CPU Embedding (depends on embedding preparation, GPU→CPU transfer, or GPU embedding directly)
         embedding_cpu_job_id = None
         if embedding_cpu_enabled:
             logger.info("=== Starting CPU Embedding Step ===")
-            # CPU embedding depends on either embedding preparation (if no GPU) or GPU→CPU transfer
-            cpu_embedding_dependency = (
-                transfer_gpu_to_cpu_job_id
-                if transfer_gpu_to_cpu_job_id
-                else embedding_prepare_job_id
-            )
+            # CPU embedding dependency logic:
+            # - If GPU embedding enabled and transfers enabled: depend on GPU→CPU transfer
+            # - If GPU embedding enabled and transfers disabled: depend on GPU embedding directly
+            # - If GPU embedding disabled: depend on embedding preparation
+            if embedding_gpu_enabled and transfers_enabled:
+                cpu_embedding_dependency = (
+                    transfer_gpu_to_cpu_job_id
+                    if transfer_gpu_to_cpu_job_id
+                    else embedding_prepare_job_id
+                )
+            elif embedding_gpu_enabled and not transfers_enabled:
+                cpu_embedding_dependency = (
+                    embedding_gpu_job_id
+                    if embedding_gpu_job_id
+                    else embedding_prepare_job_id
+                )
+            else:
+                cpu_embedding_dependency = embedding_prepare_job_id
+
             embedding_cpu_job_id = self.run_embedding_cpu_step(
                 dataset_config_name,
                 workflow_config,
