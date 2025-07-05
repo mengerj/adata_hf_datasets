@@ -75,12 +75,12 @@ echo "Working directory: $(pwd)"
 # Determine if this is a training or test dataset by checking the config
 python3 -c "
 import sys
-sys.path.insert(0, 'src')
+sys.path.insert(0, '/home/menger/git/adata_hf_datasets/src')
 from omegaconf import OmegaConf
 from adata_hf_datasets.config_utils import apply_all_transformations
 
 try:
-    cfg = OmegaConf.load('conf/$DATASET_CONFIG.yaml')
+    cfg = OmegaConf.load('/home/menger/git/adata_hf_datasets/conf/$DATASET_CONFIG.yaml')
     cfg = apply_all_transformations(cfg)
     is_training = cfg.preprocessing.get('split_dataset', True)
     train_or_test = 'train' if is_training else 'test'
@@ -145,8 +145,14 @@ echo "Created zip file: $ZIP_SIZE in ${ZIP_TIME}s"
 echo "Transferring zip file to CPU cluster..."
 TRANSFER_START=$(date +%s)
 
+# Store the project directory for later use
+PROJECT_DIR="/home/menger/git/adata_hf_datasets"
+CONFIG_FILE="$PROJECT_DIR/conf/workflow_orchestrator.yaml"
+
 # Get CPU cluster connection info from config
 echo "Loading CPU cluster configuration..."
+echo "Project directory: $PROJECT_DIR"
+echo "Config file: $CONFIG_FILE"
 
 # First, let's debug the Python environment
 echo "Debugging Python environment..."
@@ -157,7 +163,8 @@ print('Python version:', sys.version)
 print('Python path:', sys.path)
 print('Current working directory:', os.getcwd())
 print('Files in current directory:', os.listdir('.'))
-if os.path.exists('conf/workflow_orchestrator.yaml'):
+config_file = '$CONFIG_FILE'
+if os.path.exists(config_file):
     print('Config file exists: YES')
 else:
     print('Config file exists: NO')
@@ -173,11 +180,11 @@ except Exception as e:
 echo "Getting CPU host information..."
 CPU_HOST=$(python3 -c "
 import sys
-sys.path.insert(0, 'src')
+sys.path.insert(0, '$PROJECT_DIR/src')
 
 try:
     from omegaconf import OmegaConf
-    cfg = OmegaConf.load('conf/workflow_orchestrator.yaml')
+    cfg = OmegaConf.load('$CONFIG_FILE')
     cpu_login = cfg.workflow.cpu_login
     print(f'{cpu_login.user}@{cpu_login.host}')
 except Exception as e:
@@ -191,10 +198,10 @@ if [[ "$CPU_HOST" == "ERROR" ]]; then
     echo "Let's check the config file structure:"
     python3 -c "
 import sys
-sys.path.insert(0, 'src')
+sys.path.insert(0, '$PROJECT_DIR/src')
 try:
     from omegaconf import OmegaConf
-    cfg = OmegaConf.load('conf/workflow_orchestrator.yaml')
+    cfg = OmegaConf.load('$CONFIG_FILE')
     print('Config structure:')
     print(OmegaConf.to_yaml(cfg))
 except Exception as e:
