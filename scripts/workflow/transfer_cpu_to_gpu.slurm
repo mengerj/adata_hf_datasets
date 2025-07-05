@@ -145,39 +145,61 @@ TRANSFER_START=$(date +%s)
 
 # Get GPU cluster connection info from config
 echo "Loading GPU cluster configuration..."
-GPU_HOST=$(python3 -c "
+
+# First, let's debug the Python environment
+echo "Debugging Python environment..."
+python3 -c "
 import sys
-import traceback
 import os
-sys.path.insert(0, 'src')
-print('Python path:', sys.path, file=sys.stderr)
-print('Current working directory:', os.getcwd(), file=sys.stderr)
+print('Python version:', sys.version)
+print('Python path:', sys.path)
+print('Current working directory:', os.getcwd())
+print('Files in current directory:', os.listdir('.'))
+if os.path.exists('conf/workflow_orchestrator.yaml'):
+    print('Config file exists: YES')
+else:
+    print('Config file exists: NO')
 
 try:
     from omegaconf import OmegaConf
-    print('OmegaConf imported successfully', file=sys.stderr)
-
-    cfg = OmegaConf.load('conf/workflow_orchestrator.yaml')
-    print('Config loaded successfully', file=sys.stderr)
-
-    gpu_login = cfg.workflow.gpu_login
-    print('GPU login config:', gpu_login, file=sys.stderr)
-
-    result = f'{gpu_login.user}@{gpu_login.host}'
-    print('Final result:', result, file=sys.stderr)
-    print(result)
+    print('OmegaConf import: SUCCESS')
 except Exception as e:
-    print('ERROR: Could not load GPU login info:', str(e), file=sys.stderr)
-    traceback.print_exc(file=sys.stderr)
-    print('ERROR: Could not load GPU login info')
-    sys.exit(1)
-" 2>&1)
+    print('OmegaConf import: FAILED -', str(e))
+"
+
+# Now get the GPU host info
+echo "Getting GPU host information..."
+GPU_HOST=$(python3 -c "
+import sys
+sys.path.insert(0, 'src')
+
+try:
+    from omegaconf import OmegaConf
+    cfg = OmegaConf.load('conf/workflow_orchestrator.yaml')
+    gpu_login = cfg.workflow.gpu_login
+    print(f'{gpu_login.user}@{gpu_login.host}')
+except Exception as e:
+    print('ERROR')
+")
 
 echo "GPU_HOST result: '$GPU_HOST'"
 
-if [[ "$GPU_HOST" == "ERROR:"* ]]; then
-    echo "Failed to get GPU host information:"
-    echo "$GPU_HOST"
+if [[ "$GPU_HOST" == "ERROR" ]]; then
+    echo "ERROR: Failed to get GPU host information"
+    echo "Let's check the config file structure:"
+    python3 -c "
+import sys
+sys.path.insert(0, 'src')
+try:
+    from omegaconf import OmegaConf
+    cfg = OmegaConf.load('conf/workflow_orchestrator.yaml')
+    print('Config structure:')
+    print(OmegaConf.to_yaml(cfg))
+except Exception as e:
+    print('Error loading config:', str(e))
+    import traceback
+    traceback.print_exc()
+"
     exit 1
 fi
 
