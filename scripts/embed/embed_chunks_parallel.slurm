@@ -81,7 +81,8 @@ else
     # Fallback to old structure for backward compatibility
     EMBEDDING_SECTION="embedding"
 fi
-
+echo "Node: $SLURMD_NODENAME"
+echo "Partition: $SLURM_JOB_PARTITION"
 # ─────────────────────────────────────────────────────────────────────────────
 # 5) Determine number of CPU cores (local mode only)
 # ─────────────────────────────────────────────────────────────────────────────

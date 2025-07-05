@@ -100,6 +100,23 @@ echo "Base file path: $BASE_FILE_PATH"
 echo "Dataset type: $DATASET_TYPE"
 echo "Dataset name: $DATASET_NAME"
 
+# Debug: Show where we're running and what files exist
+echo "=== DEBUGGING TRANSFER JOB ENVIRONMENT ==="
+echo "Hostname: $(hostname)"
+echo "Node: $SLURMD_NODENAME"
+echo "Partition: $SLURM_JOB_PARTITION"
+echo "Working directory: $(pwd)"
+
+# Check what's in the base path
+echo "Contents of $BASE_FILE_PATH:"
+ls -la "$BASE_FILE_PATH" || echo "BASE_FILE_PATH directory does not exist"
+
+echo "Contents of $BASE_FILE_PATH/processed_with_emb:"
+ls -la "$BASE_FILE_PATH/processed_with_emb" 2>/dev/null || echo "processed_with_emb directory does not exist"
+
+echo "Contents of $BASE_FILE_PATH/processed_with_emb/$DATASET_TYPE:"
+ls -la "$BASE_FILE_PATH/processed_with_emb/$DATASET_TYPE" 2>/dev/null || echo "Dataset type directory does not exist"
+
 # The GPU embeddings are stored in processed_with_emb directory
 SOURCE_PATH="$BASE_FILE_PATH/processed_with_emb/$DATASET_TYPE/$DATASET_NAME"
 DEST_PATH="$BASE_FILE_PATH/processed_with_emb/$DATASET_TYPE/$DATASET_NAME"
