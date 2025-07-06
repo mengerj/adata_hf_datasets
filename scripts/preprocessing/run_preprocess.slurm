@@ -1,6 +1,6 @@
 #!/bin/bash
 #SBATCH --job-name=pp
-#SBATCH --mem=100G               # Request memory
+#SBATCH --mem=250G               # Request memory
 #SBATCH --time=48:00:00         # Max job time
 #SBATCH --partition=slurm
 
