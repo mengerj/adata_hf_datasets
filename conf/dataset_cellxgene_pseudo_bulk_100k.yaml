@@ -54,7 +54,7 @@ embedding_gpu:
 
 # Dataset creation overrides
 dataset_creation:
-  enabled: true
+  enabled: false
   # Dataset-specific parameters
   required_obsm_keys: ["X_pca", "X_scvi_fm", "X_hvg", "X_geneformer"]
   caption_keys: ["caption_key", "annotation_key"]
