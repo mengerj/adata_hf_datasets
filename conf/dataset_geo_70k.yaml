@@ -27,7 +27,7 @@ other_bio_labels: []
 # =============================================================================
 # Download configuration
 download:
-  enabled: false
+  enabled: true
   subset_size: 70000
 
 # Preprocessing overrides (both dataset-specific and execution parameters)
@@ -67,7 +67,8 @@ dataset_creation:
   enabled: true
   # Dataset-specific parameters
   required_obsm_keys: ["X_pca", "X_scvi_fm", "X_hvg", "X_geneformer"]
-  cs_length: 50
+  cs_length: [50, 512] # Multiple cs_length values - will create separate datasets
+  caption_keys: ["caption_key", "annotation_key"] # Multiple caption keys - will resolve to actual values and create separate datasets
   negatives_per_sample: 2
   split_dataset: true # Important for training datasets. Set to false for test datasets.
   dataset_format: "multiplets" # Important for training datasets. Set to "single" for test datasets.

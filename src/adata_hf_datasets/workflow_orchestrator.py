@@ -731,31 +731,108 @@ class WorkflowOrchestrator:
         dataset_config_name: str,
         workflow_config: DictConfig,
         dependency_job_id: Optional[int] = None,
-    ) -> Optional[int]:
-        """Run the dataset creation step and return job ID."""
+    ) -> List[int]:
+        """Run the dataset creation step(s) and return list of job IDs."""
         logger.info("=== Starting Dataset Creation Step ===")
         script_path = Path("scripts/dataset_creation/run_create_ds.slurm")
         dependencies = [dependency_job_id] if dependency_job_id else None
 
         logger.info(f"Using dataset config: {dataset_config_name}")
 
-        # Pass the dataset config name and workflow directory as environment variables
-        env_vars = {
-            "DATASET_CONFIG": dataset_config_name,
-            "WORKFLOW_DIR": str(self.workflow_logger.workflow_dir)
-            if self.workflow_logger
-            else "",
-        }
+        # Load dataset config to check for multiple cs_length and caption_keys values
+        dataset_config = self._load_dataset_config(dataset_config_name)
 
-        job_id = self._submit_slurm_job(
-            self.cpu_login["host"],  # Use CPU cluster for dataset creation
-            script_path,
-            partition=workflow_config.cpu_partition,  # Use CPU partition
-            dependencies=dependencies,
-            env_vars=env_vars,
-            step_name="Dataset Creation",
+        # Extract cs_length configuration
+        cs_length_config = dataset_config.dataset_creation.cs_length
+
+        # Handle both single values and lists (including OmegaConf lists)
+        from omegaconf import ListConfig
+
+        if isinstance(cs_length_config, (list, tuple, ListConfig)):
+            cs_length_values = list(cs_length_config)
+        else:
+            cs_length_values = [cs_length_config]
+
+        # Extract caption_keys configuration
+        caption_keys_config = dataset_config.dataset_creation.get("caption_keys", None)
+
+        if caption_keys_config is not None:
+            # Handle both single values and lists for caption_keys
+            if isinstance(caption_keys_config, (list, tuple, ListConfig)):
+                caption_key_names = list(caption_keys_config)
+            else:
+                caption_key_names = [caption_keys_config]
+
+            # Resolve config parameter names to their actual values
+            caption_key_values = []
+            for key_name in caption_key_names:
+                if hasattr(dataset_config, key_name):
+                    resolved_value = getattr(dataset_config, key_name)
+                    if resolved_value is not None:  # Only add non-null values
+                        caption_key_values.append(resolved_value)
+                        logger.info(f"Resolved {key_name} to '{resolved_value}'")
+                    else:
+                        logger.warning(f"Skipping {key_name} as it resolves to null")
+                else:
+                    logger.warning(f"Config parameter '{key_name}' not found, skipping")
+
+            if not caption_key_values:
+                logger.warning(
+                    "No valid caption keys found, falling back to default caption_key"
+                )
+                caption_key_values = [dataset_config.get("caption_key", None)]
+        else:
+            # No caption_keys specified, use default caption_key
+            caption_key_values = [dataset_config.get("caption_key", None)]
+
+        logger.info(
+            f"Dataset creation will run with cs_length values: {cs_length_values}"
         )
-        return job_id
+        logger.info(
+            f"Dataset creation will run with caption_key values: {caption_key_values}"
+        )
+
+        # Create combinations of cs_length and caption_keys
+        job_ids = []
+        job_counter = 0
+        total_jobs = len(cs_length_values) * len(caption_key_values)
+
+        for cs_length in cs_length_values:
+            for caption_key_value in caption_key_values:
+                job_counter += 1
+
+                # Create a unique step name for each combination
+                step_name = f"Dataset Creation (cs_length={cs_length}, caption_key={caption_key_value or 'none'})"
+                if total_jobs > 1:
+                    step_name += f" [{job_counter}/{total_jobs}]"
+
+                logger.info(
+                    f"Submitting dataset creation job with cs_length={cs_length}, caption_key={caption_key_value}"
+                )
+
+                # Pass the dataset config name, workflow directory, and specific overrides
+                env_vars = {
+                    "DATASET_CONFIG": dataset_config_name,
+                    "WORKFLOW_DIR": str(self.workflow_logger.workflow_dir)
+                    if self.workflow_logger
+                    else "",
+                    "CS_LENGTH_OVERRIDE": str(cs_length),
+                    "CAPTION_KEY_OVERRIDE": str(caption_key_value)
+                    if caption_key_value is not None
+                    else "",
+                }
+
+                job_id = self._submit_slurm_job(
+                    self.cpu_login["host"],  # Use CPU cluster for dataset creation
+                    script_path,
+                    partition=workflow_config.cpu_partition,  # Use CPU partition
+                    dependencies=dependencies,
+                    env_vars=env_vars,
+                    step_name=step_name,
+                )
+                job_ids.append(job_id)
+
+        return job_ids
 
     def run_workflow(
         self, dataset_config_name: str, workflow_config: DictConfig, force: bool = False
@@ -932,14 +1009,19 @@ class WorkflowOrchestrator:
             embedding_dependency = embedding_prepare_job_id
 
         if dataset_creation_enabled:
-            dataset_job_id = self.run_dataset_creation_step(
+            dataset_job_ids = self.run_dataset_creation_step(
                 dataset_config_name,
                 workflow_config,
                 dependency_job_id=embedding_dependency,
             )
-            logger.info(
-                f"✓ Dataset creation job {dataset_job_id} submitted to cluster ({self.cpu_login['host']})"
-            )
+            if len(dataset_job_ids) == 1:
+                logger.info(
+                    f"✓ Dataset creation job {dataset_job_ids[0]} submitted to cluster ({self.cpu_login['host']})"
+                )
+            else:
+                logger.info(
+                    f"✓ Dataset creation jobs {dataset_job_ids} submitted to cluster ({self.cpu_login['host']})"
+                )
 
         logger.info("=== Workflow Complete ===")
         logger.info("All jobs have been submitted to the clusters.")
@@ -1259,20 +1341,30 @@ class WorkflowOrchestrator:
 
         if dataset_creation_enabled:
             logger.info("=== Starting Dataset Creation Step ===")
-            dataset_job_id = self.run_dataset_creation_step(
+            dataset_job_ids = self.run_dataset_creation_step(
                 dataset_config_name,
                 workflow_config,
                 dependency_job_id=embedding_dependency,
             )
-            logger.info(
-                f"✓ Dataset creation job {dataset_job_id} submitted to cluster ({self.cpu_login['host']})"
-            )
+            if len(dataset_job_ids) == 1:
+                logger.info(
+                    f"✓ Dataset creation job {dataset_job_ids[0]} submitted to cluster ({self.cpu_login['host']})"
+                )
+            else:
+                logger.info(
+                    f"✓ Dataset creation jobs {dataset_job_ids} submitted to cluster ({self.cpu_login['host']})"
+                )
 
-            # Wait for dataset creation job to complete
-            self._wait_for_job_completion(
-                self.cpu_login["host"], dataset_job_id, "Dataset Creation"
-            )
-            self.workflow_logger.log_step_complete("Dataset Creation", dataset_job_id)
+            # Wait for all dataset creation jobs to complete
+            for i, dataset_job_id in enumerate(dataset_job_ids):
+                step_name = "Dataset Creation"
+                if len(dataset_job_ids) > 1:
+                    step_name += f" [{i + 1}/{len(dataset_job_ids)}]"
+
+                self._wait_for_job_completion(
+                    self.cpu_login["host"], dataset_job_id, step_name
+                )
+                self.workflow_logger.log_step_complete(step_name, dataset_job_id)
         else:
             logger.info("=== Dataset Creation Step Skipped (disabled) ===")
             self.workflow_logger.log_step_skipped(

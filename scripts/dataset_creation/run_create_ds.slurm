@@ -53,6 +53,26 @@ echo "venv activated"
 #    - Apply path transformations to generate data_dir from dataset metadata
 #    - Extract all necessary parameters from the config
 ###
-python3 scripts/dataset_creation/create_dataset.py \
-    --config-name=$DATASET_CONFIG \
-    ++hydra.run.dir="$BASE_OUT"
+
+# Build the command with overrides
+CMD="python3 scripts/dataset_creation/create_dataset.py --config-name=$DATASET_CONFIG ++hydra.run.dir=\"$BASE_OUT\""
+
+# Check if CS_LENGTH_OVERRIDE is set and add it to the command
+if [[ -n "${CS_LENGTH_OVERRIDE:-}" ]]; then
+    echo "Using cs_length override: $CS_LENGTH_OVERRIDE"
+    CMD="$CMD ++dataset_creation.cs_length=$CS_LENGTH_OVERRIDE"
+else
+    echo "Using cs_length from config file"
+fi
+
+# Check if CAPTION_KEY_OVERRIDE is set and add it to the command
+if [[ -n "${CAPTION_KEY_OVERRIDE:-}" ]]; then
+    echo "Using caption_key override: $CAPTION_KEY_OVERRIDE"
+    CMD="$CMD ++caption_key=\"$CAPTION_KEY_OVERRIDE\""
+else
+    echo "Using caption_key from config file"
+fi
+
+# Execute the command
+echo "Running command: $CMD"
+eval $CMD
