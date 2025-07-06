@@ -21,16 +21,15 @@ class AnnDataSetConstructor:
         Number of negatives per anchor in *multiplets* or *pairs* format.
     dataset_format : {'pairs', 'multiplets', 'single'}, default 'pairs'
         Output layout.
-    negative_sentence_idx : int, default 0
-        Only used with ``dataset_format='multiplets'`` and *sentence-*
-        negatives. 0 corresponds to ``cell_sentence_1``, 1 to
-        ``cell_sentence_2`` and so on.
 
     Notes
     -----
     * Numeric ``obsm`` data are **ignored** – only text columns are kept.
     * You may call :py:meth:`add_anndata` or :py:meth:`add_df` as many times
       as you wish; all data are concatenated in RAM-light dicts.
+    * For 'multiplets' format, negative samples are now stored as sample indices
+      rather than actual content, allowing the model to choose which modality
+      to use at training time.
     """
 
     # ------------------------------------------------------------------ #
@@ -40,7 +39,6 @@ class AnnDataSetConstructor:
         self,
         negatives_per_sample: int = 1,
         dataset_format: str = "pairs",
-        negative_sentence_idx: int = 0,
     ) -> None:
         if dataset_format not in {"pairs", "multiplets", "single"}:
             raise ValueError(
@@ -48,12 +46,9 @@ class AnnDataSetConstructor:
             )
         if negatives_per_sample < 1:
             raise ValueError("negatives_per_sample must be ≥ 1.")
-        if negative_sentence_idx < 0:
-            raise ValueError("negative_sentence_idx must be ≥ 0.")
 
         self.negatives_per_sample = negatives_per_sample
         self.dataset_format = dataset_format
-        self.negative_sentence_idx = negative_sentence_idx
 
         # lightweight per-sample caches
         self._index_to_sentences: Dict[Any, List[str]] = {}
@@ -154,36 +149,36 @@ class AnnDataSetConstructor:
                     records.append(rec)
 
             elif self.dataset_format == "multiplets":
-                negs: Dict[str, str] = {}
+                neg_indices: Dict[str, Any] = {}
                 seen_idxs = set()
                 for i in range(self.negatives_per_sample):
-                    # even i (0-based) → caption negative
+                    # even i (0-based) → caption negative (different caption)
                     if i % 2 == 0:
                         neg_idx = self._get_negative_idx(idx, pos_cap)
                         if neg_idx is None or neg_idx in seen_idxs:
                             # if no valid caption negative is available, skip
                             continue
                         seen_idxs.add(neg_idx)
-                        negs[f"negative_{i + 1}"] = self._index_to_caption[neg_idx]
-                    # odd i → sentence negative
+                        neg_indices[f"negative_{i + 1}_idx"] = neg_idx
+                    # odd i → sentence negative (different sample, any caption)
                     else:
-                        try:
-                            sent_neg = sent_vals[self.negative_sentence_idx]
-                        except IndexError:
-                            logger.warning(
-                                "negative_sentence_idx %d out of range for sample %s; "
-                                "using first sentence as fallback.",
-                                self.negative_sentence_idx,
-                                idx,
-                            )
-                            sent_neg = sent_vals[0]
-                        negs[f"negative_{i + 1}"] = sent_neg
+                        neg_idx = self._get_sentence_negative_idx(idx, seen_idxs)
+                        if neg_idx is None or neg_idx in seen_idxs:
+                            # if no valid sentence negative is available, skip
+                            continue
+                        seen_idxs.add(neg_idx)
+                        neg_indices[f"negative_{i + 1}_idx"] = neg_idx
 
-                if not negs:
+                if not neg_indices:
                     # very rare corner-case: no negatives could be drawn
                     continue
 
-                rec = {"sample_idx": idx, **sentences, "positive": pos_cap, **negs}
+                rec = {
+                    "sample_idx": idx,
+                    **sentences,
+                    "positive": pos_cap,
+                    **neg_indices,
+                }
                 if share:
                     rec["share_link"] = share
                 records.append(rec)
@@ -262,4 +257,26 @@ class AnnDataSetConstructor:
             for i in idxs
         ]
         cross = [i for i in cross if i != anchor_idx]
+        return random.choice(cross) if cross else None
+
+    def _get_sentence_negative_idx(
+        self, anchor_idx: Any, seen_idxs: set
+    ) -> Optional[Any]:
+        """Return an obs index for sentence negatives (different sample, any caption)."""
+        anchor_batch = self._index_to_batch[anchor_idx]
+
+        # same-batch but different sample
+        in_batch = [
+            i
+            for (b, c), idxs in self._batch_caption_map.items()
+            if b == anchor_batch
+            for i in idxs
+        ]
+        in_batch = [i for i in in_batch if i != anchor_idx and i not in seen_idxs]
+        if in_batch:
+            return random.choice(in_batch)
+
+        # cross-batch fallback
+        cross = [i for cap, idxs in self._caption_map.items() for i in idxs]
+        cross = [i for i in cross if i != anchor_idx and i not in seen_idxs]
         return random.choice(cross) if cross else None
