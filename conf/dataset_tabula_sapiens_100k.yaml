@@ -35,7 +35,7 @@ download:
 # Preprocessing overrides (both dataset-specific and execution parameters)
 preprocessing:
   # Dataset-specific parameters
-  enabled: false
+  enabled: true
   chunk_size: 100000
   split_dataset: false # Important for training datasets. Set to false for test datasets. (Similar parameters in dataset_creation)
   count_layer_key: "decontXcounts" # Key in adata.layers with raw counts. If not present, adata.raw.X is checked.
