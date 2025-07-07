@@ -434,14 +434,25 @@ def main(cfg: DictConfig):
     else:
         # No subsetting requested, copy full file to output path
         logger.info("No subsetting requested, copying full file to output path...")
-        try:
-            import shutil
 
-            shutil.copy2(full_file_path, output_path)
-            logger.info(f"Copied full file to: {output_path}")
-        except Exception as e:
-            logger.error(f"Failed to copy file: {e}")
-            sys.exit(1)
+        # Check if paths are the same (avoid copying to itself)
+        full_file_path_resolved = Path(full_file_path).resolve()
+        output_path_resolved = Path(output_path).resolve()
+
+        if full_file_path_resolved == output_path_resolved:
+            logger.info(
+                "Full file path and output path are the same. No copying needed."
+            )
+            logger.info(f"File already at target location: {output_path}")
+        else:
+            try:
+                import shutil
+
+                shutil.copy2(full_file_path, output_path)
+                logger.info(f"Copied full file to: {output_path}")
+            except Exception as e:
+                logger.error(f"Failed to copy file: {e}")
+                sys.exit(1)
 
         # Clean up full file if not requested to keep
         if not keep_full_file:
