@@ -14,7 +14,7 @@ dataset:
     Originally published in Gong Q, Sharma M, Kuan EL, Glass MC, Chander A, Singh M, et al.
     Longitudinal Multi-omic Immune Profiling Reveals Age-Related Immune Cell Dynamics in Healthy Adults.
     bioRxiv. 2024. p. 2024.09.10.612119. doi:10.1101/2024.09.10.612119
-  download_url: https://explore.allenimmunology.org/publication/workspace/download?redirectURI=https://allenimmunology.org/public/publication/download/84792154-cdfb-42d0-8e42-39e210e980b4/filesets/207ce6a9-dfcd-4f04-95a0-dbac1be4a267/human_immune_health_atlas_full.h5ad
+  download_url: https://allenimmunology.org/public/publication/download/84792154-cdfb-42d0-8e42-39e210e980b4/filesets/207ce6a9-dfcd-4f04-95a0-dbac1be4a267/human_immune_health_atlas_full.h5ad
   full_name: "human_immune_health_atlas_full"
 
 # =============================================================================
