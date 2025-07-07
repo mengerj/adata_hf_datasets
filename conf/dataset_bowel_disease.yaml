@@ -8,19 +8,23 @@ defaults:
 # DATASET METADATA
 # =============================================================================
 dataset:
-  name: "example_dataset"
-  description: "Example dataset for demonstration"
-  download_url: "https://example.com/data.h5ad"
-  full_name: "example_dataset_full"
+  name: "bowel_disease"
+  description: |
+    A dataset of bowel disease samples from Schaefer et al. 2024.
+    Originally published in Parikh, Kaushal, Agne Antanaviciute, David Fawkner-Corbett, Marta Jagielowicz, Anna Aulicino,
+    Christoffer Lagerholm, Simon Davis, et al. 2019.
+    Colonic Epithelial Cell Diversity in Health and Inflammatory Bowel Disease. Nature 567 (7746): 49–55.
+  download_url: "https://medical-epigenomics.org/papers/schaefer2024/data/datasets/bowel_disease/cellxgene.h5ad"
+  full_name: "bowel_disease"
 
 # =============================================================================
 # COMMON KEYS (dataset-specific)
 # =============================================================================
-batch_key: "dataset_title"
-annotation_key: "cell_type"
-caption_key: "natural_language_annotation"
-instrument_key: "assay"
-other_bio_labels: ["tissue", "disease"]
+batch_key: "sample_id"
+annotation_key: "cluster_label" # An annotation done by the authors
+caption_key: null
+instrument_key: null
+other_bio_labels: []
 
 # =============================================================================
 # DATASET-SPECIFIC OVERRIDES
@@ -28,36 +32,36 @@ other_bio_labels: ["tissue", "disease"]
 # Download configuration
 download:
   enabled: true
-  subset_size: 5000
+  subset_size: null
 
 # Preprocessing overrides (both dataset-specific and execution parameters)
 preprocessing:
   # Dataset-specific parameters
-  enabled: false
-  split_dataset: true # Important for training datasets. Set to false for test datasets. (Similar parameters in dataset_creation)
-  count_layer_key: "counts" # Key in adata.layers with raw counts. If not present, adata.raw.X is checked.
+  enabled: true
+  split_dataset: false # Important for training datasets. Set to false for test datasets. (Similar parameters in dataset_creation)
+  count_layer_key: null # Key in adata.layers with raw counts. If not present, adata.raw.X is checked.
 
 embedding_preparation:
-  enabled: false
+  enabled: true
   methods: ["geneformer"]
 
 # Embedding overrides (both dataset-specific and execution parameters)
 embedding_cpu:
   # Dataset-specific parameters
-  enabled: false
+  enabled: true
   methods: ["hvg", "pca", "scvi_fm"]
 
 embedding_gpu:
-  enabled: false
+  enabled: true
   methods: ["geneformer"]
 
 # Dataset creation overrides
 dataset_creation:
   # Dataset-specific parameters
-  enabled: false
+  enabled: true
   use_nextcloud: true
   required_obsm_keys: ["X_pca", "X_scvi_fm", "X_hvg", "X_geneformer"]
   cs_length: [50, 512]
   negatives_per_sample: 3
   split_dataset: true # Important for training datasets. Set to false for test datasets.
-  dataset_format: "pairs" # Important for training datasets. Set to "single" for test datasets.
+  dataset_format: "single" # "pairs" or "multiplets" for training datasets. Set to "single" for test datasets.

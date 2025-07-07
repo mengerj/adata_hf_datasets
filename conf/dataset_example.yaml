@@ -64,6 +64,11 @@ preprocessing:
   sra_chunk_size: null
   sra_extra_cols: [null]
 
+# Embedding preparation overrides
+embedding_preparation:
+  enabled: true
+  methods: ["geneformer"]
+
 # =============================================================================
 # CPU EMBEDDING CONFIGURATION
 # =============================================================================
