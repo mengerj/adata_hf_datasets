@@ -346,6 +346,14 @@ def ensure_raw_counts_layer(
             raise ValueError(msg)
         return
 
+    # Convert to int32 if not already in that format
+    if "counts" in adata.layers and adata.layers["counts"].dtype != np.int32:
+        logger.info(
+            "Converting adata.layers['counts'] from %s to int32",
+            adata.layers["counts"].dtype,
+        )
+        adata.layers["counts"] = adata.layers["counts"].astype(np.int32)
+
     # 4) Re‑validate that 'counts' really contains integer counts
     if "counts" in adata.layers and not is_raw_counts(adata.layers["counts"]):
         logger.error(
