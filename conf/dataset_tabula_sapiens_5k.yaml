@@ -8,49 +8,41 @@ defaults:
 # DATASET METADATA
 # =============================================================================
 dataset:
-  name: "geo_700k" #name of the subset being used
-  description: "GEO dataset with 700k samples. Annotated with natural language descriptions obtained in CellWhisperer Study."
-  download_url: "https://medical-epigenomics.org/papers/schaefer2024/data/datasets/archs4_geo/full_data.h5ad" # Example URL
-  full_name: "geo_full" #name of the full dataset
+  name: "tabula_sapiens_5k"
+  description: "Tabula Sapiens dataset from cellxgene browser."
+  download_url: https://datasets.cellxgene.cziscience.com/9daa676b-07ec-4cea-80aa-daa49200aa64.h5ad
+  full_name: "tabula_sapiens_full"
+  # file_path will be auto-generated as: data/RNA/raw/test/tabula_sapiens_bone_marrow_10k.h5ad
 
 # =============================================================================
 # COMMON KEYS (dataset-specific)
 # =============================================================================
-batch_key: "study"
-annotation_key: null
-caption_key: "natural_language_annotation"
-instrument_key: "instrument_model"
-other_bio_labels: []
+batch_key: "_scvi_batch"
+annotation_key: cell_type
+caption_key: null
+instrument_key: assay
+other_bio_labels: [tissue]
 
 # =============================================================================
 # DATASET-SPECIFIC OVERRIDES
 # =============================================================================
 # Download configuration
 download:
-  enabled: false
-  subset_size: null
+  enabled: true
+  preserve_proportions: true
+  subset_size: 5000
 
 # Preprocessing overrides (both dataset-specific and execution parameters)
 preprocessing:
   # Dataset-specific parameters
-  enabled: false
-  chunk_size: 50000
-  split_dataset: true # Important for training datasets. Set to false for test datasets. (Similar parameters in dataset_creation)
-  count_layer_key: "counts" # Key in adata.layers with raw counts. If not present, adata.raw.X is checked.
-  # Bimodal splitting (for specific datasets)
-  split_bimodal: true
-  bimodal_col: readsaligned
-
-  # SRA metadata fetching (dataset-specific)
-  skip_sra_fetch: false
-  sra_max_retries: 3
-  sra_continue_on_fail: true
-  sra_chunk_size: 10000
-  sra_extra_cols: ["instrument_model", "library_layout"]
+  enabled: true
+  chunk_size: 100000
+  split_dataset: false # Important for training datasets. Set to false for test datasets. (Similar parameters in dataset_creation)
+  count_layer_key: "decontXcounts" # Key in adata.layers with raw counts. If not present, adata.raw.X is checked.
 
 # Embedding preparation overrides
 embedding_preparation:
-  enabled: false # Set to false to skip embedding preparation
+  enabled: true # Set to false to skip embedding preparation
   methods: ["geneformer"] #run the prepare step on cpu to save gpu time
 
 # Embedding overrides (both dataset-specific and execution parameters)
@@ -59,15 +51,16 @@ embedding_cpu:
   methods: ["hvg", "pca", "scvi_fm"]
 
 embedding_gpu:
-  enabled: false
+  enabled: true
   methods: ["geneformer"]
 
 # Dataset creation overrides
 dataset_creation:
   enabled: true
+  use_nextcloud: true
   # Dataset-specific parameters
   required_obsm_keys: ["X_pca", "X_scvi_fm", "X_hvg", "X_geneformer"]
   cs_length: [50, 200]
   negatives_per_sample: 2
-  split_dataset: true # Important for training datasets. Set to false for test datasets.
-  dataset_format: "multiplets" # Important for training datasets. Set to "single" for test datasets.
+  split_dataset: false # Important for training datasets. Set to false for test datasets.
+  dataset_format: "single" # Important for training datasets. Set to "single" for test datasets.

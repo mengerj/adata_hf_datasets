@@ -848,6 +848,39 @@ class WorkflowOrchestrator:
         dataset_config = self._load_dataset_config(dataset_config_name)
         logger.info(f"Dataset name: {dataset_config.dataset.name}")
 
+        # Check if transfers are enabled - if so, stop execution
+        # Handle both cases: workflow_config could be the full config or just the workflow section
+        if hasattr(workflow_config, "workflow"):
+            transfers_enabled = getattr(
+                workflow_config.workflow, "enable_transfers", True
+            )
+        else:
+            transfers_enabled = getattr(workflow_config, "enable_transfers", True)
+
+        if transfers_enabled:
+            logger.error("=" * 80)
+            logger.error("WORKFLOW STOPPED: Transfer mode is enabled but not supported")
+            logger.error("=" * 80)
+            logger.error(
+                "The file transfer implementation between CPU and GPU clusters is not working correctly."
+            )
+            logger.error(
+                "Please disable transfers in your workflow configuration and use a shared filesystem instead."
+            )
+            logger.error("")
+            logger.error(
+                "To fix this, set 'enable_transfers: false' in your workflow configuration."
+            )
+            logger.error(
+                "This will use the shared filesystem for data access across CPU and GPU clusters."
+            )
+            logger.error("=" * 80)
+            raise RuntimeError(
+                "Transfer mode is enabled but not supported. Please use shared filesystem mode instead."
+            )
+
+        logger.info("Transfer mode: Disabled (using shared filesystem)")
+
         # Step 1: Download (if enabled)
         download_job_id = None
         download_enabled = getattr(dataset_config.download, "enabled", True)
@@ -885,49 +918,32 @@ class WorkflowOrchestrator:
                 f"✓ Embedding preparation job {embedding_prepare_job_id} submitted to cluster ({self.cpu_login['host']})"
             )
 
-        # Check if GPU embedding is enabled to determine if we need transfers
+        # Check if GPU embedding is enabled to determine step dependencies
         embedding_gpu_enabled = getattr(dataset_config.embedding_gpu, "enabled", True)
         embedding_cpu_enabled = getattr(dataset_config.embedding_cpu, "enabled", True)
         dataset_creation_enabled = getattr(
             dataset_config.dataset_creation, "enabled", True
         )
 
-        # Check if transfers are enabled
-        # Handle both cases: workflow_config could be the full config or just the workflow section
-        if hasattr(workflow_config, "workflow"):
-            transfers_enabled = getattr(
-                workflow_config.workflow, "enable_transfers", True
-            )
-        else:
-            transfers_enabled = getattr(workflow_config, "enable_transfers", True)
-        logger.info(
-            f"Transfer mode: {'Enabled (local scratch + transfers)' if transfers_enabled else 'Disabled (shared filesystem)'}"
-        )
-
-        # Step 4a: Transfer CPU→GPU (if GPU embedding and transfers are enabled)
-        transfer_cpu_to_gpu_job_id = None
-        if embedding_gpu_enabled and transfers_enabled:
-            transfer_cpu_to_gpu_job_id = self.run_transfer_cpu_to_gpu_step(
+        # Step 4a: CPU Embedding (depends on embedding preparation)
+        embedding_cpu_job_id = None
+        if embedding_cpu_enabled:
+            embedding_cpu_job_id = self.run_embedding_cpu_step(
                 dataset_config_name,
-                dataset_config,
                 workflow_config,
                 dependency_job_id=embedding_prepare_job_id,
             )
             logger.info(
-                f"✓ CPU→GPU transfer job {transfer_cpu_to_gpu_job_id} submitted to cluster ({self.cpu_login['host']})"
-            )
-        elif embedding_gpu_enabled and not transfers_enabled:
-            logger.info(
-                "=== CPU→GPU Transfer Skipped (transfers disabled, using shared filesystem) ==="
+                f"✓ CPU embedding job {embedding_cpu_job_id} submitted to cluster ({self.cpu_login['host']})"
             )
 
-        # Step 4b: GPU Embedding (depends on CPU→GPU transfer if transfers enabled, otherwise embedding preparation)
+        # Step 4b: GPU Embedding (depends on CPU embedding if enabled, otherwise embedding preparation)
         embedding_gpu_job_id = None
         if embedding_gpu_enabled:
-            # Dependency logic: if transfers enabled, depend on transfer; otherwise depend on embedding preparation
+            # Dependency logic: depend on CPU embedding if enabled, otherwise embedding preparation
             gpu_embedding_dependency = (
-                transfer_cpu_to_gpu_job_id
-                if transfers_enabled
+                embedding_cpu_job_id
+                if embedding_cpu_enabled
                 else embedding_prepare_job_id
             )
 
@@ -940,71 +956,13 @@ class WorkflowOrchestrator:
                 f"✓ GPU embedding job {embedding_gpu_job_id} submitted to cluster ({self.gpu_login['host']})"
             )
 
-        # Step 4c: Transfer GPU→CPU (if GPU embedding is enabled, transfers are enabled, and we need results on CPU)
-        transfer_gpu_to_cpu_job_id = None
-        if (
-            embedding_gpu_enabled
-            and transfers_enabled
-            and (embedding_cpu_enabled or dataset_creation_enabled)
-        ):
-            transfer_gpu_to_cpu_job_id = self.run_transfer_gpu_to_cpu_step(
-                dataset_config_name,
-                dataset_config,
-                workflow_config,
-                dependency_job_id=embedding_gpu_job_id,
-            )
-            logger.info(
-                f"✓ GPU→CPU transfer job {transfer_gpu_to_cpu_job_id} submitted to cluster ({self.cpu_login['host']})"
-            )
-        elif (
-            embedding_gpu_enabled
-            and not transfers_enabled
-            and (embedding_cpu_enabled or dataset_creation_enabled)
-        ):
-            logger.info(
-                "=== GPU→CPU Transfer Skipped (transfers disabled, using shared filesystem) ==="
-            )
-
-        # Step 5: CPU Embedding (depends on embedding preparation, GPU→CPU transfer, or GPU embedding directly)
-        embedding_cpu_job_id = None
-        if embedding_cpu_enabled:
-            # CPU embedding dependency logic:
-            # - If GPU embedding enabled and transfers enabled: depend on GPU→CPU transfer
-            # - If GPU embedding enabled and transfers disabled: depend on GPU embedding directly
-            # - If GPU embedding disabled: depend on embedding preparation
-            if embedding_gpu_enabled and transfers_enabled:
-                cpu_embedding_dependency = (
-                    transfer_gpu_to_cpu_job_id
-                    if transfer_gpu_to_cpu_job_id
-                    else embedding_prepare_job_id
-                )
-            elif embedding_gpu_enabled and not transfers_enabled:
-                cpu_embedding_dependency = (
-                    embedding_gpu_job_id
-                    if embedding_gpu_job_id
-                    else embedding_prepare_job_id
-                )
-            else:
-                cpu_embedding_dependency = embedding_prepare_job_id
-
-            embedding_cpu_job_id = self.run_embedding_cpu_step(
-                dataset_config_name,
-                workflow_config,
-                dependency_job_id=cpu_embedding_dependency,
-            )
-            logger.info(
-                f"✓ CPU embedding job {embedding_cpu_job_id} submitted to cluster ({self.cpu_login['host']})"
-            )
-
-        # Step 6: Dataset Creation (depends on final embedding results)
+        # Step 5: Dataset Creation (depends on final embedding results)
         # Use the last completed embedding job for dependency
         embedding_dependency = None
-        if embedding_cpu_job_id:
-            embedding_dependency = embedding_cpu_job_id
-        elif transfer_gpu_to_cpu_job_id:
-            embedding_dependency = transfer_gpu_to_cpu_job_id
-        elif embedding_gpu_job_id:
+        if embedding_gpu_job_id:
             embedding_dependency = embedding_gpu_job_id
+        elif embedding_cpu_job_id:
+            embedding_dependency = embedding_cpu_job_id
         elif embedding_prepare_job_id:
             embedding_dependency = embedding_prepare_job_id
 
@@ -1078,6 +1036,39 @@ class WorkflowOrchestrator:
         self.workflow_logger.log_workflow_start(dataset_config)
 
         logger.info(f"Dataset name: {dataset_config.dataset.name}")
+
+        # Check if transfers are enabled - if so, stop execution
+        # Handle both cases: workflow_config could be the full config or just the workflow section
+        if hasattr(workflow_config, "workflow"):
+            transfers_enabled = getattr(
+                workflow_config.workflow, "enable_transfers", True
+            )
+        else:
+            transfers_enabled = getattr(workflow_config, "enable_transfers", True)
+
+        if transfers_enabled:
+            logger.error("=" * 80)
+            logger.error("WORKFLOW STOPPED: Transfer mode is enabled but not supported")
+            logger.error("=" * 80)
+            logger.error(
+                "The file transfer implementation between CPU and GPU clusters is not working correctly."
+            )
+            logger.error(
+                "Please disable transfers in your workflow configuration and use a shared filesystem instead."
+            )
+            logger.error("")
+            logger.error(
+                "To fix this, set 'enable_transfers: false' in your workflow configuration."
+            )
+            logger.error(
+                "This will use the shared filesystem for data access across CPU and GPU clusters."
+            )
+            logger.error("=" * 80)
+            raise RuntimeError(
+                "Transfer mode is enabled but not supported. Please use shared filesystem mode instead."
+            )
+
+        logger.info("Transfer mode: Disabled (using shared filesystem)")
 
         # Step 1: Download (if enabled)
         download_job_id = None
@@ -1154,69 +1145,45 @@ class WorkflowOrchestrator:
                 "Embedding Preparation", "disabled in config"
             )
 
-        # Check if GPU embedding is enabled to determine if we need transfers
+        # Check if GPU embedding is enabled to determine step dependencies
         embedding_gpu_enabled = getattr(dataset_config.embedding_gpu, "enabled", True)
         embedding_cpu_enabled = getattr(dataset_config.embedding_cpu, "enabled", True)
         dataset_creation_enabled = getattr(
             dataset_config.dataset_creation, "enabled", True
         )
 
-        # Check if transfers are enabled
-        # Handle both cases: workflow_config could be the full config or just the workflow section
-        if hasattr(workflow_config, "workflow"):
-            transfers_enabled = getattr(
-                workflow_config.workflow, "enable_transfers", True
-            )
-        else:
-            transfers_enabled = getattr(workflow_config, "enable_transfers", True)
-        logger.info(
-            f"Transfer mode: {'Enabled (local scratch + transfers)' if transfers_enabled else 'Disabled (shared filesystem)'}"
-        )
-
-        # Step 4a: Transfer CPU→GPU (if GPU embedding and transfers are enabled)
-        transfer_cpu_to_gpu_job_id = None
-        if embedding_gpu_enabled and transfers_enabled:
-            logger.info("=== Starting CPU→GPU Transfer Step ===")
-            transfer_cpu_to_gpu_job_id = self.run_transfer_cpu_to_gpu_step(
+        # Step 4a: CPU Embedding (depends on embedding preparation)
+        embedding_cpu_job_id = None
+        if embedding_cpu_enabled:
+            logger.info("=== Starting CPU Embedding Step ===")
+            embedding_cpu_job_id = self.run_embedding_cpu_step(
                 dataset_config_name,
-                dataset_config,
                 workflow_config,
                 dependency_job_id=embedding_prepare_job_id,
             )
             logger.info(
-                f"✓ CPU→GPU transfer job {transfer_cpu_to_gpu_job_id} submitted to cluster ({self.cpu_login['host']})"
+                f"✓ CPU embedding job {embedding_cpu_job_id} submitted to cluster ({self.cpu_login['host']})"
             )
 
-            # Wait for transfer to complete
+            # Wait for CPU embedding job to complete
             self._wait_for_job_completion(
-                self.cpu_login["host"], transfer_cpu_to_gpu_job_id, "CPU→GPU Transfer"
+                self.cpu_login["host"], embedding_cpu_job_id, "CPU Embedding"
             )
             self.workflow_logger.log_step_complete(
-                "CPU→GPU Transfer", transfer_cpu_to_gpu_job_id
-            )
-        elif embedding_gpu_enabled and not transfers_enabled:
-            logger.info(
-                "=== CPU→GPU Transfer Step Skipped (transfers disabled, using shared filesystem) ==="
-            )
-            self.workflow_logger.log_step_skipped(
-                "CPU→GPU Transfer", "transfers disabled, using shared filesystem"
+                "CPU Embedding", embedding_cpu_job_id
             )
         else:
-            logger.info(
-                "=== CPU→GPU Transfer Step Skipped (GPU embedding disabled) ==="
-            )
-            self.workflow_logger.log_step_skipped(
-                "CPU→GPU Transfer", "GPU embedding disabled"
-            )
+            logger.info("=== CPU Embedding Step Skipped (disabled) ===")
+            self.workflow_logger.log_step_skipped("CPU Embedding", "disabled in config")
 
-        # Step 4b: GPU Embedding (depends on CPU→GPU transfer if transfers enabled, otherwise embedding preparation)
+        # Step 4b: GPU Embedding (depends on CPU embedding if enabled, otherwise embedding preparation)
         embedding_gpu_job_id = None
         if embedding_gpu_enabled:
             logger.info("=== Starting GPU Embedding Step ===")
-            # Dependency logic: if transfers enabled, depend on transfer; otherwise depend on embedding preparation
+            # Dependency logic: depend on CPU embedding if enabled, otherwise embedding preparation
             gpu_embedding_dependency = (
-                transfer_cpu_to_gpu_job_id
-                if transfers_enabled
+                embedding_cpu_job_id
+                if embedding_cpu_enabled
                 else embedding_prepare_job_id
             )
 
@@ -1240,102 +1207,13 @@ class WorkflowOrchestrator:
             logger.info("=== GPU Embedding Step Skipped (disabled) ===")
             self.workflow_logger.log_step_skipped("GPU Embedding", "disabled in config")
 
-        # Step 4c: Transfer GPU→CPU (if GPU embedding is enabled, transfers are enabled, and we need results on CPU)
-        transfer_gpu_to_cpu_job_id = None
-        if (
-            embedding_gpu_enabled
-            and transfers_enabled
-            and (embedding_cpu_enabled or dataset_creation_enabled)
-        ):
-            logger.info("=== Starting GPU→CPU Transfer Step ===")
-            transfer_gpu_to_cpu_job_id = self.run_transfer_gpu_to_cpu_step(
-                dataset_config_name,
-                dataset_config,
-                workflow_config,
-                dependency_job_id=embedding_gpu_job_id,
-            )
-            logger.info(
-                f"✓ GPU→CPU transfer job {transfer_gpu_to_cpu_job_id} submitted to cluster ({self.cpu_login['host']})"
-            )
-
-            # Wait for transfer to complete
-            self._wait_for_job_completion(
-                self.cpu_login["host"], transfer_gpu_to_cpu_job_id, "GPU→CPU Transfer"
-            )
-            self.workflow_logger.log_step_complete(
-                "GPU→CPU Transfer", transfer_gpu_to_cpu_job_id
-            )
-        elif (
-            embedding_gpu_enabled
-            and not transfers_enabled
-            and (embedding_cpu_enabled or dataset_creation_enabled)
-        ):
-            logger.info(
-                "=== GPU→CPU Transfer Step Skipped (transfers disabled, using shared filesystem) ==="
-            )
-            self.workflow_logger.log_step_skipped(
-                "GPU→CPU Transfer", "transfers disabled, using shared filesystem"
-            )
-        else:
-            logger.info(
-                "=== GPU→CPU Transfer Step Skipped (no CPU processing needed) ==="
-            )
-            self.workflow_logger.log_step_skipped(
-                "GPU→CPU Transfer", "no CPU processing needed"
-            )
-
-        # Step 5: CPU Embedding (depends on embedding preparation, GPU→CPU transfer, or GPU embedding directly)
-        embedding_cpu_job_id = None
-        if embedding_cpu_enabled:
-            logger.info("=== Starting CPU Embedding Step ===")
-            # CPU embedding dependency logic:
-            # - If GPU embedding enabled and transfers enabled: depend on GPU→CPU transfer
-            # - If GPU embedding enabled and transfers disabled: depend on GPU embedding directly
-            # - If GPU embedding disabled: depend on embedding preparation
-            if embedding_gpu_enabled and transfers_enabled:
-                cpu_embedding_dependency = (
-                    transfer_gpu_to_cpu_job_id
-                    if transfer_gpu_to_cpu_job_id
-                    else embedding_prepare_job_id
-                )
-            elif embedding_gpu_enabled and not transfers_enabled:
-                cpu_embedding_dependency = (
-                    embedding_gpu_job_id
-                    if embedding_gpu_job_id
-                    else embedding_prepare_job_id
-                )
-            else:
-                cpu_embedding_dependency = embedding_prepare_job_id
-
-            embedding_cpu_job_id = self.run_embedding_cpu_step(
-                dataset_config_name,
-                workflow_config,
-                dependency_job_id=cpu_embedding_dependency,
-            )
-            logger.info(
-                f"✓ CPU embedding job {embedding_cpu_job_id} submitted to cluster ({self.cpu_login['host']})"
-            )
-
-            # Wait for CPU embedding job to complete
-            self._wait_for_job_completion(
-                self.cpu_login["host"], embedding_cpu_job_id, "CPU Embedding"
-            )
-            self.workflow_logger.log_step_complete(
-                "CPU Embedding", embedding_cpu_job_id
-            )
-        else:
-            logger.info("=== CPU Embedding Step Skipped (disabled) ===")
-            self.workflow_logger.log_step_skipped("CPU Embedding", "disabled in config")
-
-        # Step 6: Dataset Creation (depends on final embedding results)
+        # Step 5: Dataset Creation (depends on final embedding results)
         # Use the last completed embedding job for dependency
         embedding_dependency = None
-        if embedding_cpu_job_id:
-            embedding_dependency = embedding_cpu_job_id
-        elif transfer_gpu_to_cpu_job_id:
-            embedding_dependency = transfer_gpu_to_cpu_job_id
-        elif embedding_gpu_job_id:
+        if embedding_gpu_job_id:
             embedding_dependency = embedding_gpu_job_id
+        elif embedding_cpu_job_id:
+            embedding_dependency = embedding_cpu_job_id
         elif embedding_prepare_job_id:
             embedding_dependency = embedding_prepare_job_id
 
