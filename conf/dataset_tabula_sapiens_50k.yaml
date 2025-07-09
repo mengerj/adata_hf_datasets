@@ -8,29 +8,29 @@ defaults:
 # DATASET METADATA
 # =============================================================================
 dataset:
-  name: "tabula_sapiens_100k"
-  description: "Tabula Sapiens dataset from cellxgene browser."
-  download_url: https://datasets.cellxgene.cziscience.com/9daa676b-07ec-4cea-80aa-daa49200aa64.h5ad
-  full_name: "tabula_sapiens_full"
+  name: "tabula_sapiens_50k"
+  description: "Tabula Sapiens dataset as used in schafer et al."
+  download_url: https://medical-epigenomics.org/papers/schaefer2024/data/datasets/tabula_sapiens/cellxgene.h5ad
+  full_name: "tabula_sapiens_schafer"
   # file_path will be auto-generated as: data/RNA/raw/test/tabula_sapiens_bone_marrow_10k.h5ad
 
 # =============================================================================
 # COMMON KEYS (dataset-specific)
 # =============================================================================
-batch_key: "_scvi_batch"
-annotation_key: cell_type
+batch_key: "donor"
+annotation_key: cell_ontology_class
 caption_key: null
 instrument_key: assay
-other_bio_labels: [tissue]
+other_bio_labels: [organ_tissue, cluster_label]
 
 # =============================================================================
 # DATASET-SPECIFIC OVERRIDES
 # =============================================================================
 # Download configuration
 download:
-  enabled: false
+  enabled: true
   preserve_proportions: true
-  subset_size: 100000
+  subset_size: 50000
 
 # Preprocessing overrides (both dataset-specific and execution parameters)
 preprocessing:
@@ -60,7 +60,7 @@ dataset_creation:
   use_nextcloud: true
   # Dataset-specific parameters
   required_obsm_keys: ["X_pca", "X_scvi_fm", "X_hvg", "X_geneformer"]
-  cs_length: [50, 512]
+  cs_length: [50, 150]
   negatives_per_sample: 2
   split_dataset: false # Important for training datasets. Set to false for test datasets.
   dataset_format: "single" # Important for training datasets. Set to "single" for test datasets.
