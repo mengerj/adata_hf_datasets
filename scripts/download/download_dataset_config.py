@@ -348,19 +348,12 @@ def main(cfg: DictConfig):
         logger.info("Download is disabled. Skipping download step.")
         return
 
-    # Check if download URL is provided
-    if not dataset_cfg.download_url:
-        logger.warning(
-            "Download is enabled but no download_url provided. Skipping download step."
-        )
-        return
-
     # Get paths
     full_file_path = download_cfg.full_file_path
     output_path = download_cfg.output_path
     url = dataset_cfg.download_url
 
-    logger.info(f"Download URL: {url}")
+    logger.info(f"Download URL: {url if url else 'None (using existing file)'}")
     logger.info(f"Full file path: {full_file_path}")
     logger.info(f"Output path: {output_path}")
 
@@ -394,6 +387,14 @@ def main(cfg: DictConfig):
 
     # Step 3: Download full file if needed
     if not full_file_available:
+        # Check if we have a URL to download from
+        if not url:
+            logger.error(
+                "No download URL provided and full file does not exist. "
+                f"Cannot proceed. Expected file at: {full_file_path}"
+            )
+            sys.exit(1)
+
         logger.info("Downloading full file...")
         success = download_dataset(url, full_file_path)
         if not success:
