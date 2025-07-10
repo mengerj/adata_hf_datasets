@@ -6,11 +6,12 @@
 #SBATCH --mem=32G              # Memory request - adjust based on file sizes
 #SBATCH --cpus-per-task=4      # Number of CPU cores
 
-# Usage: sbatch run_clean_layers_obsm.slurm [input_path] [output_path] [layers] [obsm_keys] [hvg] [n_top_genes] [batch_key] [min_genes_per_cell] [min_cells_per_gene] [rename_obs_from] [rename_obs_to]
+# Usage: sbatch run_clean_layers_obsm.slurm [input_path] [output_path] [layers] [obsm_keys] [hvg] [n_top_genes] [batch_key] [min_genes_per_cell] [min_cells_per_gene] [rename_obs_from] [rename_obs_to] [set_var_index]
 # Examples:
-#   sbatch run_clean_layers_obsm.slurm data/ "" "layer1,layer2" "X_pca,X_umap" false 2000 "" 200 3 "" ""
-#   sbatch run_clean_layers_obsm.slurm file.h5ad processed/ "counts" "X_pca" true 3000 batch 100 5 "" ""
-#   sbatch run_clean_layers_obsm.slurm file.h5ad "" "" "" false 2000 "" 200 3 "old_col1,old_col2" "new_col1,new_col2"
+#   sbatch run_clean_layers_obsm.slurm data/ "" "layer1,layer2" "X_pca,X_umap" false 2000 "" 200 3 "" "" ""
+#   sbatch run_clean_layers_obsm.slurm file.h5ad processed/ "counts" "X_pca" true 3000 batch 100 5 "" "" ""
+#   sbatch run_clean_layers_obsm.slurm file.h5ad "" "" "" false 2000 "" 200 3 "old_col1,old_col2" "new_col1,new_col2" ""
+#   sbatch run_clean_layers_obsm.slurm file.h5ad "" "" "" false 2000 "" 200 3 "" "" "gene_symbols"
 
 echo "=========================================="
 echo "Starting clean_layers_obsm job"
@@ -30,18 +31,19 @@ MIN_GENES_PER_CELL=${8:-"200"}
 MIN_CELLS_PER_GENE=${9:-"3"}
 RENAME_OBS_FROM=${10:-""}
 RENAME_OBS_TO=${11:-""}
+SET_VAR_INDEX=${12:-""}
 
 # Check if input path is provided
 if [ -z "$INPUT_PATH" ]; then
     echo "Error: Input path is required"
-    echo "Usage: sbatch run_clean_layers_obsm.slurm [input_path] [output_path] [layers] [obsm_keys] [hvg] [n_top_genes] [batch_key] [min_genes_per_cell] [min_cells_per_gene] [rename_obs_from] [rename_obs_to]"
+    echo "Usage: sbatch run_clean_layers_obsm.slurm [input_path] [output_path] [layers] [obsm_keys] [hvg] [n_top_genes] [batch_key] [min_genes_per_cell] [min_cells_per_gene] [rename_obs_from] [rename_obs_to] [set_var_index]"
     exit 1
 fi
 
 # Check if at least one operation is specified
-if [ -z "$LAYERS" ] && [ -z "$OBSM_KEYS" ] && [ "$HVG" != "true" ] && [ -z "$RENAME_OBS_FROM" ]; then
-    echo "Error: At least one of layers, obsm_keys, HVG selection, or column renaming must be specified"
-    echo "Usage: sbatch run_clean_layers_obsm.slurm [input_path] [output_path] [layers] [obsm_keys] [hvg] [n_top_genes] [batch_key] [min_genes_per_cell] [min_cells_per_gene] [rename_obs_from] [rename_obs_to]"
+if [ -z "$LAYERS" ] && [ -z "$OBSM_KEYS" ] && [ "$HVG" != "true" ] && [ -z "$RENAME_OBS_FROM" ] && [ -z "$SET_VAR_INDEX" ]; then
+    echo "Error: At least one of layers, obsm_keys, HVG selection, column renaming, or var index setting must be specified"
+    echo "Usage: sbatch run_clean_layers_obsm.slurm [input_path] [output_path] [layers] [obsm_keys] [hvg] [n_top_genes] [batch_key] [min_genes_per_cell] [min_cells_per_gene] [rename_obs_from] [rename_obs_to] [set_var_index]"
     exit 1
 fi
 
@@ -67,6 +69,7 @@ echo "Min genes per cell: $MIN_GENES_PER_CELL"
 echo "Min cells per gene: $MIN_CELLS_PER_GENE"
 echo "Rename obs from: $RENAME_OBS_FROM"
 echo "Rename obs to: $RENAME_OBS_TO"
+echo "Set var index: $SET_VAR_INDEX"
 echo "=========================================="
 
 # Source the setup script to ensure the environment is ready
@@ -114,6 +117,10 @@ fi
 
 if [ ! -z "$RENAME_OBS_TO" ]; then
     CMD="$CMD --rename-obs-to $RENAME_OBS_TO"
+fi
+
+if [ ! -z "$SET_VAR_INDEX" ]; then
+    CMD="$CMD --set-var-index $SET_VAR_INDEX"
 fi
 
 echo "Running command: $CMD"
