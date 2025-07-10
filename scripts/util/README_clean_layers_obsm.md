@@ -193,3 +193,27 @@ When HVG selection is enabled, the script automatically performs robust preproce
 - HVG selection adds computational overhead, especially with batch correction
 - Processing time depends on file size, number of files, and whether HVG selection is enabled
 - Batch-aware HVG selection may require additional memory for large datasets
+
+## Troubleshooting
+
+### Common HVG Selection Issues
+
+**Problem**: "n_top_genes > number of normalized dispersions" warning followed by IndexError
+
+- **Cause**: Requesting more highly variable genes than available in the data
+- **Solution**: Reduce `--n-top-genes` parameter (try 1000 or 500 instead of 2000)
+- **Note**: The script will automatically adjust if `n_top_genes` is too high, but very poor quality data may still cause issues
+
+**Problem**: "index -1 is out of bounds for axis 0 with size 0" error
+
+- **Cause**: No highly variable genes found after filtering
+- **Solutions**:
+  - Check data quality (may need better samples)
+  - Reduce filtering thresholds (`--min-cells-per-gene` and `--min-genes-per-cell`)
+  - Try without batch correction first (omit `--batch-key`)
+  - Ensure data is properly formatted and contains valid expression values
+
+**Problem**: "Batch key not found" errors
+
+- **Cause**: Specified batch key doesn't exist in the data
+- **Solution**: Check available columns in your data's `.obs` and use the correct column name

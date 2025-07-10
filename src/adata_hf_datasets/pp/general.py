@@ -16,7 +16,7 @@ def pp_adata_general(
     adata: AnnData,
     min_cells: int = 10,
     min_genes: int = 200,
-    batch_key: str = "batch",
+    batch_key: str | None = None,
     n_top_genes: int = 1000,
     categories: list[str] | None = None,
     category_threshold: int = 1,

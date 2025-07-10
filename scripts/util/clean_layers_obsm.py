@@ -134,8 +134,7 @@ def preprocess_for_hvg(
     min_cells_per_gene: int = 3,
     batch_key: Optional[str] = None,
     n_top_genes: int = 2000,
-    dry_run: bool = False,
-) -> bool:
+) -> Optional[ad.AnnData]:
     """
     Preprocess data using existing pipeline functions before HVG selection.
 
@@ -151,44 +150,20 @@ def preprocess_for_hvg(
         Key in adata.obs for batch-aware processing
     n_top_genes : int, default 2000
         Number of top highly variable genes to keep
-    dry_run : bool, default False
-        If True, only show what would be done without actually doing it
 
     Returns
     -------
-    bool
-        True if preprocessing was successful, False otherwise
+    Optional[anndata.AnnData]
+        Preprocessed AnnData object, or None if preprocessing failed
     """
     try:
         original_n_obs = adata.n_obs
         original_n_vars = adata.n_vars
 
-        if dry_run:
-            logger.info(
-                "Would perform preprocessing using existing pipeline functions:"
-            )
-            logger.info(
-                "  - Quality control filtering (outlier detection, mitochondrial filtering)"
-            )
-            logger.info(f"  - Filter genes expressed in < {min_cells_per_gene} cells")
-            logger.info(f"  - Filter cells with < {min_genes_per_cell} genes")
-            logger.info("  - Normalization and log transformation")
-            logger.info("  - Handle infinite/NaN values")
-            if batch_key:
-                logger.info(
-                    f"  - Batch-aware HVG selection with batch_key='{batch_key}'"
-                )
-            else:
-                logger.info("  - Standard HVG selection (no batch correction)")
-            logger.info(f"  - Select top {n_top_genes} highly variable genes")
-            return True
-
         logger.info("Running quality control preprocessing...")
-        # Use existing QC function
         adata = pp_quality_control(adata)
 
         logger.info("Running general preprocessing...")
-        # Use existing general preprocessing function with error handling
 
         # Validate and potentially adjust n_top_genes based on available genes
         max_possible_genes = min(adata.n_vars, 10000)  # reasonable upper limit
@@ -199,56 +174,25 @@ def preprocess_for_hvg(
                 f"Adjusting n_top_genes from {n_top_genes} to {adjusted_n_top_genes} based on available genes ({adata.n_vars})"
             )
 
-        try:
-            adata = pp_adata_general(
-                adata,
-                min_cells=min_cells_per_gene,
-                min_genes=min_genes_per_cell,
-                batch_key=batch_key or "batch",  # fallback to "batch" if None
-                n_top_genes=adjusted_n_top_genes,
-                categories=None,  # no category consolidation in this context
-                category_threshold=1,
-                remove=True,
-            )
-        except IndexError as e:
-            if "index -1 is out of bounds" in str(e):
-                logger.error(
-                    "HVG selection failed due to insufficient highly variable genes"
-                )
-                logger.error(
-                    f"Current data has {adata.n_vars} genes, requested {adjusted_n_top_genes} HVGs"
-                )
-                logger.error("Try reducing n_top_genes or check data quality")
-                logger.error("Suggestions:")
-                logger.error(
-                    f"  - Try --n-top-genes {min(500, adata.n_vars // 4)} (much smaller)"
-                )
-                logger.error(
-                    "  - Try --min-cells-per-gene 1 (less strict gene filtering)"
-                )
-                logger.error(
-                    "  - Try --min-genes-per-cell 100 (less strict cell filtering)"
-                )
-                if batch_key:
-                    logger.error(
-                        "  - Try without batch correction (remove --batch-key)"
-                    )
-                return False
-            else:
-                raise e
-        except Exception as e:
-            logger.error(f"General preprocessing failed: {str(e)}")
-            return False
+        adata = pp_adata_general(
+            adata,
+            min_cells=min_cells_per_gene,
+            min_genes=min_genes_per_cell,
+            batch_key=batch_key,
+            n_top_genes=adjusted_n_top_genes,
+            categories=None,  # no category consolidation in this context
+            category_threshold=1,
+            remove=True,
+        )
 
         logger.info(
             f"Preprocessing complete: {original_n_obs} -> {adata.n_obs} cells, {original_n_vars} -> {adata.n_vars} genes"
         )
-
-        return True
+        return adata
 
     except Exception as e:
         logger.error(f"Error during preprocessing: {str(e)}")
-        return False
+        return None
 
 
 def perform_hvg_selection(
@@ -257,8 +201,7 @@ def perform_hvg_selection(
     batch_key: Optional[str] = None,
     min_genes_per_cell: int = 200,
     min_cells_per_gene: int = 3,
-    dry_run: bool = False,
-) -> bool:
+) -> Optional[ad.AnnData]:
     """
     Perform preprocessing and highly variable gene selection using existing pipeline functions.
 
@@ -274,13 +217,11 @@ def perform_hvg_selection(
         Minimum number of genes per cell for preprocessing
     min_cells_per_gene : int, default 3
         Minimum number of cells per gene for preprocessing
-    dry_run : bool, default False
-        If True, only show what would be done without actually doing it
 
     Returns
     -------
-    bool
-        True if HVG selection was performed successfully, False otherwise
+    Optional[anndata.AnnData]
+        Processed AnnData object with HVG selection, or None if failed
     """
     try:
         original_n_genes = adata.n_vars
@@ -289,37 +230,30 @@ def perform_hvg_selection(
         )
 
         # Use existing preprocessing pipeline which includes HVG selection
-        preprocess_success = preprocess_for_hvg(
+        adata = preprocess_for_hvg(
             adata,
             min_genes_per_cell,
             min_cells_per_gene,
             batch_key,
             n_top_genes,
-            dry_run,
         )
-        if not preprocess_success:
+        if adata is None:
             logger.error("Preprocessing failed")
-            return False
-
-        if dry_run:
-            logger.info(
-                "Dry run complete - preprocessing and HVG selection would be performed"
-            )
-            return True
+            return None
 
         # Check if HVG selection was successful
         if "highly_variable" not in adata.var.columns:
             logger.error(
                 "HVG selection failed - 'highly_variable' column not found in adata.var"
             )
-            return False
+            return None
 
         n_hvg = adata.var["highly_variable"].sum()
         logger.info(f"Found {n_hvg} highly variable genes")
 
         if n_hvg == 0:
             logger.error("No highly variable genes found")
-            return False
+            return None
 
         # Subset to highly variable genes
         logger.info("Subsetting to highly variable genes...")
@@ -328,11 +262,11 @@ def perform_hvg_selection(
         logger.info(
             f"Successfully reduced from {original_n_genes} to {adata.n_vars} genes"
         )
-        return True
+        return adata
 
     except Exception as e:
         logger.error(f"Error during HVG selection: {str(e)}")
-        return False
+        return None
 
 
 def process_file(
@@ -345,7 +279,6 @@ def process_file(
     batch_key: Optional[str] = None,
     min_genes_per_cell: int = 200,
     min_cells_per_gene: int = 3,
-    dry_run: bool = False,
 ) -> bool:
     """
     Process a single file (h5ad or zarr).
@@ -370,8 +303,6 @@ def process_file(
         Minimum number of genes per cell for preprocessing
     min_cells_per_gene : int, default 3
         Minimum number of cells per gene for preprocessing
-    dry_run : bool, default False
-        If True, only show what would be done without actually doing it
 
     Returns
     -------
@@ -401,21 +332,18 @@ def process_file(
 
         # Clean the data
         removed_layers, removed_obsm = clean_adata(
-            adata, layers_to_remove, obsm_to_remove, dry_run
+            adata, layers_to_remove, obsm_to_remove, dry_run=False
         )
 
-        # Perform HVG selection if requested
-        hvg_success = True
         if perform_hvg:
-            hvg_success = perform_hvg_selection(
+            adata = perform_hvg_selection(
                 adata,
                 n_top_genes,
                 batch_key,
                 min_genes_per_cell,
                 min_cells_per_gene,
-                dry_run,
             )
-            if not hvg_success:
+            if adata is None:
                 logger.error("HVG selection failed")
                 return False
 
@@ -428,11 +356,9 @@ def process_file(
             if save_path.is_dir():
                 save_path = save_path / file_path.name
 
-        # Save if not dry run and something was done
-        something_changed = (
-            removed_layers or removed_obsm or (perform_hvg and hvg_success)
-        )
-        if not dry_run and something_changed:
+        # Save if something was done
+        something_changed = removed_layers or removed_obsm or perform_hvg
+        if something_changed:
             logger.info(f"Saving processed data to: {save_path}")
 
             # Create output directory if it doesn't exist
@@ -448,10 +374,6 @@ def process_file(
                 adata.write_h5ad(save_path)
 
             logger.info(f"Successfully saved processed data to: {save_path}")
-        elif dry_run:
-            logger.info(f"Dry run complete for: {file_path}")
-            if output_path:
-                logger.info(f"Would save to: {save_path}")
         else:
             logger.info(f"No changes needed for: {file_path}")
 
@@ -464,6 +386,18 @@ def process_file(
 
 def main():
     """Main function to parse arguments and run the cleaning process."""
+    # Default values for IDE debugging (when no command line arguments are provided)
+    # These correspond to the shell script defaults:
+    DEFAULT_INPUT_PATH = "data/RNA/raw/train/cellxgene_pseudo_bulk_3_5k.h5ad"
+    DEFAULT_OUTPUT_PATH = "data/RNA/raw/train/cellxgene_pseudo_bulk_3_5k_cleaned.h5ad"
+    DEFAULT_LAYERS = "replicate_1,replicate_2,replicate_3,replicate_4,replicate_5"
+    DEFAULT_OBSM_KEYS = "natural_language_annotation_replicates"
+    DEFAULT_HVG = True
+    DEFAULT_N_TOP_GENES = 2000
+    DEFAULT_BATCH_KEY = ""
+    DEFAULT_MIN_GENES_PER_CELL = 200
+    DEFAULT_MIN_CELLS_PER_GENE = 3
+
     parser = argparse.ArgumentParser(
         description="Clean layers and obsm entries from h5ad/zarr files with optional HVG selection",
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -483,73 +417,90 @@ Examples:
 
     # Clean layers and perform HVG selection
     python clean_layers_obsm.py --input data/ --layers counts --obsm X_pca --hvg --n-top-genes 2000
-
-    # Dry run to see what would be done
-    python clean_layers_obsm.py --input data/ --layers layer1 --obsm obsm1 --hvg --dry-run
         """,
     )
 
-    parser.add_argument(
-        "--input",
-        "-i",
-        type=str,
-        required=True,
-        help="Path to h5ad file or directory containing zarr files",
-    )
+    # Check if we're running without command line arguments (IDE debugging)
+    use_defaults = len(sys.argv) == 1
 
-    parser.add_argument(
-        "--layers", "-l", type=str, help="Comma-separated list of layer names to remove"
-    )
+    if use_defaults:
+        logger.info("No command line arguments provided - using IDE debugging defaults")
 
-    parser.add_argument(
-        "--obsm", "-o", type=str, help="Comma-separated list of obsm keys to remove"
-    )
+        # Create a mock args object with defaults
+        class MockArgs:
+            def __init__(self):
+                self.input = DEFAULT_INPUT_PATH
+                self.output = DEFAULT_OUTPUT_PATH
+                self.layers = DEFAULT_LAYERS
+                self.obsm = DEFAULT_OBSM_KEYS
+                self.hvg = DEFAULT_HVG
+                self.n_top_genes = DEFAULT_N_TOP_GENES
+                self.batch_key = DEFAULT_BATCH_KEY if DEFAULT_BATCH_KEY else None
+                self.min_genes_per_cell = DEFAULT_MIN_GENES_PER_CELL
+                self.min_cells_per_gene = DEFAULT_MIN_CELLS_PER_GENE
 
-    parser.add_argument(
-        "--output",
-        "-out",
-        type=str,
-        help="Output path for processed files. If not specified, files are saved in place. "
-        + "Can be a file path or directory path.",
-    )
+        args = MockArgs()
+    else:
+        # Normal command line argument parsing
+        parser.add_argument(
+            "--input",
+            "-i",
+            type=str,
+            required=True,
+            help="Path to h5ad file or directory containing zarr files",
+        )
 
-    parser.add_argument(
-        "--hvg", action="store_true", help="Perform highly variable gene selection"
-    )
+        parser.add_argument(
+            "--layers",
+            "-l",
+            type=str,
+            help="Comma-separated list of layer names to remove",
+        )
 
-    parser.add_argument(
-        "--n-top-genes",
-        type=int,
-        default=2000,
-        help="Number of top highly variable genes to keep (default: 2000)",
-    )
+        parser.add_argument(
+            "--obsm", "-o", type=str, help="Comma-separated list of obsm keys to remove"
+        )
 
-    parser.add_argument(
-        "--batch-key", type=str, help="Key in adata.obs for batch-aware HVG selection"
-    )
+        parser.add_argument(
+            "--output",
+            "-out",
+            type=str,
+            help="Output path for processed files. If not specified, files are saved in place. "
+            + "Can be a file path or directory path.",
+        )
 
-    parser.add_argument(
-        "--min-genes-per-cell",
-        type=int,
-        default=200,
-        help="Minimum number of genes per cell for preprocessing (default: 200)",
-    )
+        parser.add_argument(
+            "--hvg", action="store_true", help="Perform highly variable gene selection"
+        )
 
-    parser.add_argument(
-        "--min-cells-per-gene",
-        type=int,
-        default=3,
-        help="Minimum number of cells per gene for preprocessing (default: 3)",
-    )
+        parser.add_argument(
+            "--n-top-genes",
+            type=int,
+            default=2000,
+            help="Number of top highly variable genes to keep (default: 2000)",
+        )
 
-    parser.add_argument(
-        "--dry-run",
-        "-d",
-        action="store_true",
-        help="Show what would be done without actually doing it",
-    )
+        parser.add_argument(
+            "--batch-key",
+            type=str,
+            help="Key in adata.obs for batch-aware HVG selection",
+        )
 
-    args = parser.parse_args()
+        parser.add_argument(
+            "--min-genes-per-cell",
+            type=int,
+            default=200,
+            help="Minimum number of genes per cell for preprocessing (default: 200)",
+        )
+
+        parser.add_argument(
+            "--min-cells-per-gene",
+            type=int,
+            default=3,
+            help="Minimum number of cells per gene for preprocessing (default: 3)",
+        )
+
+        args = parser.parse_args()
 
     # Parse input path
     input_path = Path(args.input)
@@ -587,7 +538,6 @@ Examples:
     if args.hvg:
         logger.info(f"  Top genes: {args.n_top_genes}")
         logger.info(f"  Batch key: {args.batch_key or 'None'}")
-    logger.info(f"  Dry run: {args.dry_run}")
 
     # Process files
     files_to_process = []
@@ -637,7 +587,6 @@ Examples:
             args.batch_key,
             args.min_genes_per_cell,
             args.min_cells_per_gene,
-            args.dry_run,
         ):
             success_count += 1
 
