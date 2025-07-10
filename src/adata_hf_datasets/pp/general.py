@@ -18,7 +18,7 @@ def pp_adata_general(
     min_genes: int = 200,
     batch_key: str | None = None,
     n_top_genes: int = 1000,
-    categories: list[str] | None = None,
+    categories: str | list[str] | None = None,
     category_threshold: int = 1,
     remove: bool = True,
 ) -> AnnData:
