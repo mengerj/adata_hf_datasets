@@ -39,7 +39,8 @@ from typing import List, Optional, Set
 
 # Add the src directory to the path to import utility functions
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "src"))
-from adata_hf_datasets.utils import setup_logging, consolidate_low_frequency_categories
+from adata_hf_datasets.utils import setup_logging
+from adata_hf_datasets.pp.utils import consolidate_low_frequency_categories
 
 logger = setup_logging()
 

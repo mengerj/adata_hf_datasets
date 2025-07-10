@@ -19,13 +19,13 @@ echo "Start time: $(date)"
 echo "=========================================="
 
 # Parse arguments
-INPUT_PATH=${1:-""}
-OUTPUT_PATH=${2:-""}
-LAYERS=${3:-""}
-OBSM_KEYS=${4:-""}
-HVG=${5:-"false"}
+INPUT_PATH=${1:-"/scratch/global/menger/data/RNA/raw/train/cellxgene_pseudo_bulk_3_5k.h5ad"}
+OUTPUT_PATH=${2:-"/scratch/global/menger/data/RNA/raw/train/cellxgene_pseudo_bulk_3_5k_cleaned.h5ad"}
+LAYERS=${3:-"replicate_1,replicate_2,replicate_3,replicate_4,replicate_5"}
+OBSM_KEYS=${4:-"natural_language_annotation_replicates"}
+HVG=${5:-"true"}
 N_TOP_GENES=${6:-"2000"}
-BATCH_KEY=${7:-""}
+BATCH_KEY=${7:-"dataset_title"}
 DRY_RUN=${8:-"false"}
 
 # Check if input path is provided
