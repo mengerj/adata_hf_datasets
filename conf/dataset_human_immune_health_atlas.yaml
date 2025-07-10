@@ -8,7 +8,7 @@ defaults:
 # DATASET METADATA
 # =============================================================================
 dataset:
-  name: "human_immune_health_atlas_20k"
+  name: "human_immune_health_atlas_pp_20k"
   description: |
     A dataset of 100k human immune health atlas samples from the Human Cell Atlas.
     Originally published in Gong Q, Sharma M, Kuan EL, Glass MC, Chander A, Singh M, et al.
