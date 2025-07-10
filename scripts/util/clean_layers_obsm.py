@@ -235,8 +235,8 @@ def preprocess_for_hvg(
             min_genes=min_genes_per_cell,
             batch_key=batch_key,
             n_top_genes=adjusted_n_top_genes,
-            categories=None,  # no category consolidation in this context
-            category_threshold=1,
+            categories=batch_key,  # remove low frequency categories
+            category_threshold=5,
             remove=True,
         )
 
@@ -460,7 +460,7 @@ def main():
     DEFAULT_OBSM_KEYS = "natural_language_annotation_replicates"
     DEFAULT_HVG = True
     DEFAULT_N_TOP_GENES = 2000
-    DEFAULT_BATCH_KEY = ""
+    DEFAULT_BATCH_KEY = "dataset_title"
     DEFAULT_MIN_GENES_PER_CELL = 200
     DEFAULT_MIN_CELLS_PER_GENE = 3
     DEFAULT_RENAME_OBS_FROM = "cell_type"
