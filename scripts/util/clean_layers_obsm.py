@@ -174,7 +174,7 @@ def rename_obs_columns(
                 )
 
             # Rename the column (will overwrite if new_name already exists)
-            adata.obs = adata.obs.rename(columns={old_name: new_name})
+            adata.obs[new_name] = adata.obs[old_name]
             logger.info(f"Renamed obs column: '{old_name}' -> '{new_name}'")
             renamed_columns.add(old_name)
         else:
@@ -463,8 +463,8 @@ def main():
     DEFAULT_BATCH_KEY = ""
     DEFAULT_MIN_GENES_PER_CELL = 200
     DEFAULT_MIN_CELLS_PER_GENE = 3
-    DEFAULT_RENAME_OBS_FROM = ""
-    DEFAULT_RENAME_OBS_TO = ""
+    DEFAULT_RENAME_OBS_FROM = "cell_type"
+    DEFAULT_RENAME_OBS_TO = "celltype"
 
     parser = argparse.ArgumentParser(
         description="Clean layers and obsm entries from h5ad/zarr files with optional HVG selection",
