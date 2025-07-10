@@ -188,17 +188,57 @@ def preprocess_for_hvg(
         adata = pp_quality_control(adata)
 
         logger.info("Running general preprocessing...")
-        # Use existing general preprocessing function
-        adata = pp_adata_general(
-            adata,
-            min_cells=min_cells_per_gene,
-            min_genes=min_genes_per_cell,
-            batch_key=batch_key or "batch",  # fallback to "batch" if None
-            n_top_genes=n_top_genes,
-            categories=None,  # no category consolidation in this context
-            category_threshold=1,
-            remove=True,
-        )
+        # Use existing general preprocessing function with error handling
+
+        # Validate and potentially adjust n_top_genes based on available genes
+        max_possible_genes = min(adata.n_vars, 10000)  # reasonable upper limit
+        adjusted_n_top_genes = min(n_top_genes, max_possible_genes)
+
+        if adjusted_n_top_genes != n_top_genes:
+            logger.warning(
+                f"Adjusting n_top_genes from {n_top_genes} to {adjusted_n_top_genes} based on available genes ({adata.n_vars})"
+            )
+
+        try:
+            adata = pp_adata_general(
+                adata,
+                min_cells=min_cells_per_gene,
+                min_genes=min_genes_per_cell,
+                batch_key=batch_key or "batch",  # fallback to "batch" if None
+                n_top_genes=adjusted_n_top_genes,
+                categories=None,  # no category consolidation in this context
+                category_threshold=1,
+                remove=True,
+            )
+        except IndexError as e:
+            if "index -1 is out of bounds" in str(e):
+                logger.error(
+                    "HVG selection failed due to insufficient highly variable genes"
+                )
+                logger.error(
+                    f"Current data has {adata.n_vars} genes, requested {adjusted_n_top_genes} HVGs"
+                )
+                logger.error("Try reducing n_top_genes or check data quality")
+                logger.error("Suggestions:")
+                logger.error(
+                    f"  - Try --n-top-genes {min(500, adata.n_vars // 4)} (much smaller)"
+                )
+                logger.error(
+                    "  - Try --min-cells-per-gene 1 (less strict gene filtering)"
+                )
+                logger.error(
+                    "  - Try --min-genes-per-cell 100 (less strict cell filtering)"
+                )
+                if batch_key:
+                    logger.error(
+                        "  - Try without batch correction (remove --batch-key)"
+                    )
+                return False
+            else:
+                raise e
+        except Exception as e:
+            logger.error(f"General preprocessing failed: {str(e)}")
+            return False
 
         logger.info(
             f"Preprocessing complete: {original_n_obs} -> {adata.n_obs} cells, {original_n_vars} -> {adata.n_vars} genes"
