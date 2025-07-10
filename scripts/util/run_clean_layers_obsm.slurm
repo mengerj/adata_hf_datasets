@@ -6,11 +6,11 @@
 #SBATCH --mem=32G              # Memory request - adjust based on file sizes
 #SBATCH --cpus-per-task=4      # Number of CPU cores
 
-# Usage: sbatch run_clean_layers_obsm.slurm [input_path] [output_path] [layers] [obsm_keys] [hvg] [n_top_genes] [batch_key] [dry_run]
+# Usage: sbatch run_clean_layers_obsm.slurm [input_path] [output_path] [layers] [obsm_keys] [hvg] [n_top_genes] [batch_key] [min_genes_per_cell] [min_cells_per_gene] [dry_run]
 # Examples:
-#   sbatch run_clean_layers_obsm.slurm data/ "" "layer1,layer2" "X_pca,X_umap" false 2000 "" false
-#   sbatch run_clean_layers_obsm.slurm file.h5ad processed/ "counts" "X_pca" true 3000 batch false
-#   sbatch run_clean_layers_obsm.slurm data/ "" "" "" true 2000 "" true
+#   sbatch run_clean_layers_obsm.slurm data/ "" "layer1,layer2" "X_pca,X_umap" false 2000 "" 200 3 false
+#   sbatch run_clean_layers_obsm.slurm file.h5ad processed/ "counts" "X_pca" true 3000 batch 100 5 false
+#   sbatch run_clean_layers_obsm.slurm data/ "" "" "" true 2000 "" 200 3 true
 
 echo "=========================================="
 echo "Starting clean_layers_obsm job"
@@ -26,19 +26,21 @@ OBSM_KEYS=${4:-"natural_language_annotation_replicates"}
 HVG=${5:-"true"}
 N_TOP_GENES=${6:-"2000"}
 BATCH_KEY=${7:-"dataset_title"}
-DRY_RUN=${8:-"false"}
+MIN_GENES_PER_CELL=${8:-"200"}
+MIN_CELLS_PER_GENE=${9:-"3"}
+DRY_RUN=${10:-"false"}
 
 # Check if input path is provided
 if [ -z "$INPUT_PATH" ]; then
     echo "Error: Input path is required"
-    echo "Usage: sbatch run_clean_layers_obsm.slurm [input_path] [output_path] [layers] [obsm_keys] [hvg] [n_top_genes] [batch_key] [dry_run]"
+    echo "Usage: sbatch run_clean_layers_obsm.slurm [input_path] [output_path] [layers] [obsm_keys] [hvg] [n_top_genes] [batch_key] [min_genes_per_cell] [min_cells_per_gene] [dry_run]"
     exit 1
 fi
 
 # Check if at least one operation is specified
 if [ -z "$LAYERS" ] && [ -z "$OBSM_KEYS" ] && [ "$HVG" != "true" ]; then
     echo "Error: At least one of layers, obsm_keys, or HVG selection must be specified"
-    echo "Usage: sbatch run_clean_layers_obsm.slurm [input_path] [output_path] [layers] [obsm_keys] [hvg] [n_top_genes] [batch_key] [dry_run]"
+    echo "Usage: sbatch run_clean_layers_obsm.slurm [input_path] [output_path] [layers] [obsm_keys] [hvg] [n_top_genes] [batch_key] [min_genes_per_cell] [min_cells_per_gene] [dry_run]"
     exit 1
 fi
 
@@ -49,6 +51,8 @@ echo "Obsm keys to remove: $OBSM_KEYS"
 echo "HVG selection: $HVG"
 echo "N top genes: $N_TOP_GENES"
 echo "Batch key: $BATCH_KEY"
+echo "Min genes per cell: $MIN_GENES_PER_CELL"
+echo "Min cells per gene: $MIN_CELLS_PER_GENE"
 echo "Dry run: $DRY_RUN"
 echo "=========================================="
 
@@ -81,6 +85,14 @@ fi
 
 if [ ! -z "$BATCH_KEY" ]; then
     CMD="$CMD --batch-key $BATCH_KEY"
+fi
+
+if [ ! -z "$MIN_GENES_PER_CELL" ]; then
+    CMD="$CMD --min-genes-per-cell $MIN_GENES_PER_CELL"
+fi
+
+if [ ! -z "$MIN_CELLS_PER_GENE" ]; then
+    CMD="$CMD --min-cells-per-gene $MIN_CELLS_PER_GENE"
 fi
 
 if [ "$DRY_RUN" = "true" ]; then
