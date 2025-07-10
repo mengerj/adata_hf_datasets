@@ -135,7 +135,7 @@ def ensure_ensembl_index(
     first = adata.var_names[0]
     if isinstance(first, str) and first.startswith("ENS"):
         logger.info(
-            "AnnData.var.index already Ensembl IDs; checking for version numbers."
+            "AnnData.var.index already Ensembl IDs; checking for version numbers and validity."
         )
         # Check if any Ensembl IDs contain version numbers (dots) and remove them
         names = adata.var_names.astype(str)
@@ -145,6 +145,18 @@ def ensure_ensembl_index(
             )
             clean_names = pd.Series(names).str.split(".").str[0]
             adata.var.index = clean_names
+            names = adata.var_names.astype(str)
+
+        # Verify all gene names start with "ENS" and remove invalid ones
+        invalid_mask = ~pd.Series(names).str.startswith("ENS")
+        if invalid_mask.any():
+            invalid_genes = names[invalid_mask]
+            n_invalid = int(invalid_mask.sum())
+            logger.warning(
+                f"Removing {n_invalid} genes with invalid Ensembl IDs (not starting with 'ENS'): "
+                f"{list(invalid_genes)}"
+            )
+            adata._inplace_subset_var(~invalid_mask)
     else:
         # 2) Try existing var[ensembl_col]
         if ensembl_col in adata.var.columns:
@@ -161,11 +173,26 @@ def ensure_ensembl_index(
                 f"var['{ensembl_col}'] present, and no add_fn supplied."
             )
 
-        # Verify
-        if not adata.var_names[0].startswith("ENS"):
-            raise ValueError(
-                "After reindexing, AnnData.var.index does not start with 'ENS'."
+        # Verify all gene names start with "ENS"
+        names = adata.var_names.astype(str)
+        invalid_mask = ~pd.Series(names).str.startswith("ENS")
+        if invalid_mask.any():
+            invalid_genes = names[invalid_mask]
+            n_invalid = int(invalid_mask.sum())
+            logger.warning(
+                f"Removing {n_invalid} genes with invalid Ensembl IDs (not starting with 'ENS'): "
+                f"{list(invalid_genes)}"
             )
+            adata._inplace_subset_var(~invalid_mask)
+
+            # Update names after filtering
+            names = adata.var_names.astype(str)
+
+            # Final check - if we still have genes, verify they're valid
+            if len(names) > 0 and not names[0].startswith("ENS"):
+                raise ValueError(
+                    "After filtering, AnnData.var.index still contains invalid Ensembl IDs."
+                )
 
     # --- CLEANUP DUPLICATES & EMPTIES ------------------------------------------------
 
