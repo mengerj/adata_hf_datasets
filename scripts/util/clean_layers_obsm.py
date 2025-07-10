@@ -183,6 +183,77 @@ def rename_obs_columns(
     return renamed_columns
 
 
+def set_var_index_from_column(
+    adata: ad.AnnData,
+    column_name: Optional[str] = None,
+) -> bool:
+    """
+    Set a var column as the new var.index.
+
+    Parameters
+    ----------
+    adata : anndata.AnnData
+        The AnnData object to modify
+    column_name : str, optional
+        Name of the var column to set as index
+
+    Returns
+    -------
+    bool
+        True if index was successfully set, False otherwise
+    """
+    if not column_name:
+        return False
+
+    if column_name not in adata.var.columns:
+        logger.warning(f"Column '{column_name}' not found in adata.var")
+        return False
+
+    # Check for missing values
+    missing_values = adata.var[column_name].isna().sum()
+    if missing_values > 0:
+        logger.warning(
+            f"Column '{column_name}' has {missing_values} missing values. "
+            f"These will be filled with the current index values."
+        )
+        # Fill missing values with current index
+        adata.var[column_name] = adata.var[column_name].fillna(adata.var.index)
+
+    # Check for duplicates
+    duplicates = adata.var[column_name].duplicated().sum()
+    if duplicates > 0:
+        logger.warning(
+            f"Column '{column_name}' has {duplicates} duplicate values. "
+            f"Making them unique by appending suffixes."
+        )
+        # Make values unique
+        adata.var[column_name] = adata.var[column_name].astype(str)
+        duplicated_mask = adata.var[column_name].duplicated(keep=False)
+        for i, (idx, row) in enumerate(adata.var[duplicated_mask].iterrows()):
+            suffix_count = adata.var[column_name][
+                : adata.var.index.get_loc(idx) + 1
+            ].value_counts()[row[column_name]]
+            if suffix_count > 1:
+                adata.var.loc[idx, column_name] = (
+                    f"{row[column_name]}_{suffix_count - 1}"
+                )
+
+    # Store the old index as a column if it doesn't already exist
+    old_index_name = "previous_index"
+    if old_index_name not in adata.var.columns:
+        adata.var[old_index_name] = adata.var.index
+        logger.info(f"Stored previous index in var column '{old_index_name}'")
+
+    # Set the new index
+    adata.var.index = adata.var[column_name].astype(str)
+    logger.info(f"Set var.index to column '{column_name}'")
+
+    # Remove the column since it's now the index
+    adata.var.drop(columns=[column_name], inplace=True)
+
+    return True
+
+
 def preprocess_for_hvg(
     adata: ad.AnnData,
     min_genes_per_cell: int = 200,
@@ -336,6 +407,7 @@ def process_file(
     min_cells_per_gene: int = 3,
     rename_obs_from: Optional[List[str]] = None,
     rename_obs_to: Optional[List[str]] = None,
+    set_var_index: Optional[str] = None,
 ) -> bool:
     """
     Process a single file (h5ad or zarr).
@@ -364,6 +436,8 @@ def process_file(
         List of obs column names to rename
     rename_obs_to : List[str], optional
         List of new obs column names (must match length of rename_obs_from)
+    set_var_index : str, optional
+        Name of var column to set as the new var.index
 
     Returns
     -------
@@ -394,6 +468,9 @@ def process_file(
         # Rename obs columns if requested
         renamed_columns = rename_obs_columns(adata, rename_obs_from, rename_obs_to)
 
+        # Set var index from column if requested
+        var_index_changed = set_var_index_from_column(adata, set_var_index)
+
         # Clean the data
         removed_layers, removed_obsm = clean_adata(
             adata, layers_to_remove, obsm_to_remove, dry_run=False
@@ -422,7 +499,11 @@ def process_file(
 
         # Save if something was done
         something_changed = (
-            removed_layers or removed_obsm or perform_hvg or renamed_columns
+            removed_layers
+            or removed_obsm
+            or perform_hvg
+            or renamed_columns
+            or var_index_changed
         )
         if something_changed:
             logger.info(f"Saving processed data to: {save_path}")
@@ -465,6 +546,7 @@ def main():
     DEFAULT_MIN_CELLS_PER_GENE = 3
     DEFAULT_RENAME_OBS_FROM = "cell_type"
     DEFAULT_RENAME_OBS_TO = "celltype"
+    DEFAULT_SET_VAR_INDEX = ""
 
     parser = argparse.ArgumentParser(
         description="Clean layers and obsm entries from h5ad/zarr files with optional HVG selection",
@@ -488,6 +570,9 @@ Examples:
 
     # Rename observation columns
     python clean_layers_obsm.py --input file.h5ad --rename-obs-from old_col1,old_col2 --rename-obs-to new_col1,new_col2
+
+    # Set var index from column (e.g., switch from gene IDs to gene symbols)
+    python clean_layers_obsm.py --input file.h5ad --set-var-index gene_symbols
         """,
     )
 
@@ -511,6 +596,7 @@ Examples:
                 self.min_cells_per_gene = DEFAULT_MIN_CELLS_PER_GENE
                 self.rename_obs_from = DEFAULT_RENAME_OBS_FROM
                 self.rename_obs_to = DEFAULT_RENAME_OBS_TO
+                self.set_var_index = DEFAULT_SET_VAR_INDEX
 
         args = MockArgs()
     else:
@@ -585,6 +671,12 @@ Examples:
             help="Comma-separated list of new obs column names (must match length of --rename-obs-from)",
         )
 
+        parser.add_argument(
+            "--set-var-index",
+            type=str,
+            help="Name of var column to set as the new var.index (e.g., 'gene_symbols')",
+        )
+
         args = parser.parse_args()
 
     # Parse input path
@@ -622,6 +714,9 @@ Examples:
             name.strip() for name in args.rename_obs_to.split(",") if name.strip()
         ]
 
+    # Parse set var index
+    set_var_index = args.set_var_index.strip() if args.set_var_index else None
+
     # Validate rename arguments
     if rename_obs_from and not rename_obs_to:
         logger.error("--rename-obs-to must be provided when --rename-obs-from is used")
@@ -642,9 +737,10 @@ Examples:
         and not obsm_to_remove
         and not args.hvg
         and not rename_obs_from
+        and not set_var_index
     ):
         logger.error(
-            "No layers, obsm keys, HVG selection, or column renaming specified"
+            "No layers, obsm keys, HVG selection, column renaming, or var index setting specified"
         )
         sys.exit(1)
 
@@ -661,6 +757,8 @@ Examples:
         logger.info(
             f"  Rename obs columns: {dict(zip(rename_obs_from, rename_obs_to))}"
         )
+    if set_var_index:
+        logger.info(f"  Set var index from column: {set_var_index}")
 
     # Process files
     files_to_process = []
@@ -712,6 +810,7 @@ Examples:
             args.min_cells_per_gene,
             rename_obs_from,
             rename_obs_to,
+            set_var_index,
         ):
             success_count += 1
 
