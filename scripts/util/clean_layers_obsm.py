@@ -167,13 +167,13 @@ def rename_obs_columns(
 
     for old_name, new_name in zip(old_names, new_names):
         if old_name in adata.obs.columns:
+            # Check if we're overwriting an existing column
             if new_name in adata.obs.columns and new_name != old_name:
                 logger.warning(
-                    f"Column '{new_name}' already exists in adata.obs. Skipping rename of '{old_name}'"
+                    f"Column '{new_name}' already exists in adata.obs. Overwriting with '{old_name}'"
                 )
-                continue
 
-            # Rename the column
+            # Rename the column (will overwrite if new_name already exists)
             adata.obs = adata.obs.rename(columns={old_name: new_name})
             logger.info(f"Renamed obs column: '{old_name}' -> '{new_name}'")
             renamed_columns.add(old_name)
