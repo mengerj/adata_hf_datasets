@@ -9,12 +9,12 @@ This script can work with:
 For each file, it will:
 - Load the anndata object
 - Remove specified layers and obsm keys
-- Optionally perform data preprocessing (filtering genes/cells, removing inf/NaN values)
+- Optionally perform robust data preprocessing using existing pipeline functions (quality control, normalization, filtering)
 - Optionally perform highly variable gene selection (batch-aware or standard)
 - Save the modified file to specified output location or original location
 
-The script includes automatic preprocessing when HVG selection is enabled to avoid common
-errors like "infinity in bins" by filtering out problematic genes and cells.
+The script uses the existing `pp_quality_control` and `pp_adata_general` preprocessing functions
+to ensure robust data processing and avoid common errors in HVG selection.
 
 Usage:
     # Clean a single h5ad file
@@ -38,13 +38,13 @@ import os
 import sys
 from pathlib import Path
 import anndata as ad
-import scanpy as sc
-import numpy as np
 from typing import List, Optional, Set
 
 # Add the src directory to the path to import utility functions
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "src"))
-from adata_hf_datasets.utils import setup_logging, consolidate_low_frequency_categories
+from adata_hf_datasets.utils import setup_logging
+from adata_hf_datasets.pp.qc import pp_quality_control
+from adata_hf_datasets.pp.general import pp_adata_general
 
 logger = setup_logging()
 
@@ -132,10 +132,12 @@ def preprocess_for_hvg(
     adata: ad.AnnData,
     min_genes_per_cell: int = 200,
     min_cells_per_gene: int = 3,
+    batch_key: Optional[str] = None,
+    n_top_genes: int = 2000,
     dry_run: bool = False,
 ) -> bool:
     """
-    Preprocess data to prepare for HVG selection by filtering and cleaning.
+    Preprocess data using existing pipeline functions before HVG selection.
 
     Parameters
     ----------
@@ -145,6 +147,10 @@ def preprocess_for_hvg(
         Minimum number of genes per cell
     min_cells_per_gene : int, default 3
         Minimum number of cells per gene
+    batch_key : str, optional
+        Key in adata.obs for batch-aware processing
+    n_top_genes : int, default 2000
+        Number of top highly variable genes to keep
     dry_run : bool, default False
         If True, only show what would be done without actually doing it
 
@@ -158,35 +164,41 @@ def preprocess_for_hvg(
         original_n_vars = adata.n_vars
 
         if dry_run:
-            logger.info("Would perform preprocessing for HVG selection:")
-            logger.info("  - Filter genes with infinite/NaN values")
+            logger.info(
+                "Would perform preprocessing using existing pipeline functions:"
+            )
+            logger.info(
+                "  - Quality control filtering (outlier detection, mitochondrial filtering)"
+            )
             logger.info(f"  - Filter genes expressed in < {min_cells_per_gene} cells")
             logger.info(f"  - Filter cells with < {min_genes_per_cell} genes")
+            logger.info("  - Normalization and log transformation")
+            logger.info("  - Handle infinite/NaN values")
+            if batch_key:
+                logger.info(
+                    f"  - Batch-aware HVG selection with batch_key='{batch_key}'"
+                )
+            else:
+                logger.info("  - Standard HVG selection (no batch correction)")
+            logger.info(f"  - Select top {n_top_genes} highly variable genes")
             return True
 
-        # Remove genes with infinite or NaN values
-        if hasattr(adata.X, "data"):
-            # Sparse matrix
-            mask_inf = np.isinf(adata.X.data)
-            mask_nan = np.isnan(adata.X.data)
-            if mask_inf.any() or mask_nan.any():
-                logger.info("Removing genes with infinite or NaN values")
-                # Set inf and nan to 0
-                adata.X.data[mask_inf | mask_nan] = 0
-                adata.X.eliminate_zeros()
-        else:
-            # Dense matrix
-            mask_inf = np.isinf(adata.X)
-            mask_nan = np.isnan(adata.X)
-            if mask_inf.any() or mask_nan.any():
-                logger.info("Removing genes with infinite or NaN values")
-                adata.X[mask_inf | mask_nan] = 0
+        logger.info("Running quality control preprocessing...")
+        # Use existing QC function
+        adata = pp_quality_control(adata)
 
-        # Filter genes (expressed in at least min_cells_per_gene cells)
-        sc.pp.filter_genes(adata, min_cells=min_cells_per_gene)
-
-        # Filter cells (at least min_genes_per_cell genes)
-        sc.pp.filter_cells(adata, min_genes=min_genes_per_cell)
+        logger.info("Running general preprocessing...")
+        # Use existing general preprocessing function
+        adata = pp_adata_general(
+            adata,
+            min_cells=min_cells_per_gene,
+            min_genes=min_genes_per_cell,
+            batch_key=batch_key or "batch",  # fallback to "batch" if None
+            n_top_genes=n_top_genes,
+            categories=None,  # no category consolidation in this context
+            category_threshold=1,
+            remove=True,
+        )
 
         logger.info(
             f"Preprocessing complete: {original_n_obs} -> {adata.n_obs} cells, {original_n_vars} -> {adata.n_vars} genes"
@@ -208,7 +220,7 @@ def perform_hvg_selection(
     dry_run: bool = False,
 ) -> bool:
     """
-    Perform highly variable gene selection on an AnnData object.
+    Perform preprocessing and highly variable gene selection using existing pipeline functions.
 
     Parameters
     ----------
@@ -232,57 +244,28 @@ def perform_hvg_selection(
     """
     try:
         original_n_genes = adata.n_vars
-        logger.info(f"Starting HVG selection with {original_n_genes} genes")
+        logger.info(
+            f"Starting preprocessing and HVG selection with {original_n_genes} genes"
+        )
 
-        # Preprocess data to remove problematic values
+        # Use existing preprocessing pipeline which includes HVG selection
         preprocess_success = preprocess_for_hvg(
-            adata, min_genes_per_cell, min_cells_per_gene, dry_run
+            adata,
+            min_genes_per_cell,
+            min_cells_per_gene,
+            batch_key,
+            n_top_genes,
+            dry_run,
         )
         if not preprocess_success:
             logger.error("Preprocessing failed")
             return False
 
         if dry_run:
-            logger.info(f"Would perform HVG selection with n_top_genes={n_top_genes}")
-            if batch_key:
-                if batch_key in adata.obs.columns:
-                    logger.info(
-                        f"Would use batch-aware HVG selection with batch_key='{batch_key}'"
-                    )
-                else:
-                    logger.warning(f"Batch key '{batch_key}' not found in adata.obs")
-            else:
-                logger.info(
-                    "Would perform standard HVG selection (no batch correction)"
-                )
-            return True
-
-        # Perform HVG selection
-        if batch_key:
-            if batch_key not in adata.obs.columns:
-                logger.error(f"Batch key '{batch_key}' not found in adata.obs.columns")
-                return False
-
-            adata = consolidate_low_frequency_categories(
-                adata, batch_key, 5, remove=True
-            )
-
             logger.info(
-                f"Performing batch-aware HVG selection with batch_key='{batch_key}'"
+                "Dry run complete - preprocessing and HVG selection would be performed"
             )
-            sc.pp.highly_variable_genes(
-                adata,
-                n_top_genes=n_top_genes,
-                batch_key=batch_key,
-                subset=False,  # Don't subset yet, just mark
-            )
-        else:
-            logger.info("Performing standard HVG selection")
-            sc.pp.highly_variable_genes(
-                adata,
-                n_top_genes=n_top_genes,
-                subset=False,  # Don't subset yet, just mark
-            )
+            return True
 
         # Check if HVG selection was successful
         if "highly_variable" not in adata.var.columns:
@@ -299,6 +282,7 @@ def perform_hvg_selection(
             return False
 
         # Subset to highly variable genes
+        logger.info("Subsetting to highly variable genes...")
         adata._inplace_subset_var(adata.var["highly_variable"])
 
         logger.info(
