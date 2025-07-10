@@ -9,6 +9,7 @@ This script can work with:
 For each file, it will:
 - Load the anndata object
 - Remove specified layers and obsm keys
+- Optionally rename observation columns
 - Optionally perform robust data preprocessing using existing pipeline functions (quality control, normalization, filtering)
 - Optionally perform highly variable gene selection (batch-aware or standard)
 - Save the modified file to specified output location or original location
@@ -126,6 +127,60 @@ def clean_adata(
             logger.warning(f"Obsm key '{obsm_key}' not found in adata.obsm")
 
     return removed_layers, removed_obsm
+
+
+def rename_obs_columns(
+    adata: ad.AnnData,
+    old_names: Optional[List[str]] = None,
+    new_names: Optional[List[str]] = None,
+) -> Set[str]:
+    """
+    Rename observation columns in an AnnData object.
+
+    Parameters
+    ----------
+    adata : anndata.AnnData
+        The AnnData object to modify
+    old_names : List[str], optional
+        List of current column names to rename
+    new_names : List[str], optional
+        List of new column names (must match length of old_names)
+
+    Returns
+    -------
+    Set[str]
+        Set of successfully renamed columns
+    """
+    old_names = old_names or []
+    new_names = new_names or []
+
+    if len(old_names) != len(new_names):
+        logger.error(
+            f"Length mismatch: old_names has {len(old_names)} items, new_names has {len(new_names)} items"
+        )
+        return set()
+
+    if not old_names:
+        return set()
+
+    renamed_columns = set()
+
+    for old_name, new_name in zip(old_names, new_names):
+        if old_name in adata.obs.columns:
+            if new_name in adata.obs.columns and new_name != old_name:
+                logger.warning(
+                    f"Column '{new_name}' already exists in adata.obs. Skipping rename of '{old_name}'"
+                )
+                continue
+
+            # Rename the column
+            adata.obs = adata.obs.rename(columns={old_name: new_name})
+            logger.info(f"Renamed obs column: '{old_name}' -> '{new_name}'")
+            renamed_columns.add(old_name)
+        else:
+            logger.warning(f"Column '{old_name}' not found in adata.obs")
+
+    return renamed_columns
 
 
 def preprocess_for_hvg(
@@ -279,6 +334,8 @@ def process_file(
     batch_key: Optional[str] = None,
     min_genes_per_cell: int = 200,
     min_cells_per_gene: int = 3,
+    rename_obs_from: Optional[List[str]] = None,
+    rename_obs_to: Optional[List[str]] = None,
 ) -> bool:
     """
     Process a single file (h5ad or zarr).
@@ -303,6 +360,10 @@ def process_file(
         Minimum number of genes per cell for preprocessing
     min_cells_per_gene : int, default 3
         Minimum number of cells per gene for preprocessing
+    rename_obs_from : List[str], optional
+        List of obs column names to rename
+    rename_obs_to : List[str], optional
+        List of new obs column names (must match length of rename_obs_from)
 
     Returns
     -------
@@ -329,6 +390,9 @@ def process_file(
             logger.info(f"Available layers: {list(adata.layers.keys())}")
         if adata.obsm:
             logger.info(f"Available obsm keys: {list(adata.obsm.keys())}")
+
+        # Rename obs columns if requested
+        renamed_columns = rename_obs_columns(adata, rename_obs_from, rename_obs_to)
 
         # Clean the data
         removed_layers, removed_obsm = clean_adata(
@@ -357,7 +421,9 @@ def process_file(
                 save_path = save_path / file_path.name
 
         # Save if something was done
-        something_changed = removed_layers or removed_obsm or perform_hvg
+        something_changed = (
+            removed_layers or removed_obsm or perform_hvg or renamed_columns
+        )
         if something_changed:
             logger.info(f"Saving processed data to: {save_path}")
 
@@ -397,6 +463,8 @@ def main():
     DEFAULT_BATCH_KEY = ""
     DEFAULT_MIN_GENES_PER_CELL = 200
     DEFAULT_MIN_CELLS_PER_GENE = 3
+    DEFAULT_RENAME_OBS_FROM = ""
+    DEFAULT_RENAME_OBS_TO = ""
 
     parser = argparse.ArgumentParser(
         description="Clean layers and obsm entries from h5ad/zarr files with optional HVG selection",
@@ -417,6 +485,9 @@ Examples:
 
     # Clean layers and perform HVG selection
     python clean_layers_obsm.py --input data/ --layers counts --obsm X_pca --hvg --n-top-genes 2000
+
+    # Rename observation columns
+    python clean_layers_obsm.py --input file.h5ad --rename-obs-from old_col1,old_col2 --rename-obs-to new_col1,new_col2
         """,
     )
 
@@ -438,6 +509,8 @@ Examples:
                 self.batch_key = DEFAULT_BATCH_KEY if DEFAULT_BATCH_KEY else None
                 self.min_genes_per_cell = DEFAULT_MIN_GENES_PER_CELL
                 self.min_cells_per_gene = DEFAULT_MIN_CELLS_PER_GENE
+                self.rename_obs_from = DEFAULT_RENAME_OBS_FROM
+                self.rename_obs_to = DEFAULT_RENAME_OBS_TO
 
         args = MockArgs()
     else:
@@ -500,6 +573,18 @@ Examples:
             help="Minimum number of cells per gene for preprocessing (default: 3)",
         )
 
+        parser.add_argument(
+            "--rename-obs-from",
+            type=str,
+            help="Comma-separated list of obs column names to rename",
+        )
+
+        parser.add_argument(
+            "--rename-obs-to",
+            type=str,
+            help="Comma-separated list of new obs column names (must match length of --rename-obs-from)",
+        )
+
         args = parser.parse_args()
 
     # Parse input path
@@ -524,9 +609,43 @@ Examples:
     if args.obsm:
         obsm_to_remove = [o.strip() for o in args.obsm.split(",") if o.strip()]
 
+    # Parse rename obs columns
+    rename_obs_from = []
+    if args.rename_obs_from:
+        rename_obs_from = [
+            name.strip() for name in args.rename_obs_from.split(",") if name.strip()
+        ]
+
+    rename_obs_to = []
+    if args.rename_obs_to:
+        rename_obs_to = [
+            name.strip() for name in args.rename_obs_to.split(",") if name.strip()
+        ]
+
+    # Validate rename arguments
+    if rename_obs_from and not rename_obs_to:
+        logger.error("--rename-obs-to must be provided when --rename-obs-from is used")
+        sys.exit(1)
+    if rename_obs_to and not rename_obs_from:
+        logger.error("--rename-obs-from must be provided when --rename-obs-to is used")
+        sys.exit(1)
+    if len(rename_obs_from) != len(rename_obs_to):
+        logger.error(
+            f"Length mismatch: rename-obs-from has {len(rename_obs_from)} items, "
+            f"rename-obs-to has {len(rename_obs_to)} items"
+        )
+        sys.exit(1)
+
     # Check if we have anything to do
-    if not layers_to_remove and not obsm_to_remove and not args.hvg:
-        logger.error("No layers, obsm keys, or HVG selection specified")
+    if (
+        not layers_to_remove
+        and not obsm_to_remove
+        and not args.hvg
+        and not rename_obs_from
+    ):
+        logger.error(
+            "No layers, obsm keys, HVG selection, or column renaming specified"
+        )
         sys.exit(1)
 
     logger.info("Starting processing with:")
@@ -538,6 +657,10 @@ Examples:
     if args.hvg:
         logger.info(f"  Top genes: {args.n_top_genes}")
         logger.info(f"  Batch key: {args.batch_key or 'None'}")
+    if rename_obs_from:
+        logger.info(
+            f"  Rename obs columns: {dict(zip(rename_obs_from, rename_obs_to))}"
+        )
 
     # Process files
     files_to_process = []
@@ -587,6 +710,8 @@ Examples:
             args.batch_key,
             args.min_genes_per_cell,
             args.min_cells_per_gene,
+            rename_obs_from,
+            rename_obs_to,
         ):
             success_count += 1
 
