@@ -132,26 +132,40 @@ def ensure_ensembl_index(
         still does not consist of valid Ensembl IDs.
     """
 
-    # Step 1: Check if there's already some ensembl id in the index (not necessarily valid)
+    # Step 1: Compare Ensembl ID quality between index and column
     names = adata.var_names.astype(str)
-    has_ensembl_in_index = pd.Series(names).str.contains(r"^ENS", na=False).any()
+    ensembl_count_index = pd.Series(names).str.contains(r"^ENS", na=False).sum()
 
-    if has_ensembl_in_index:
-        logger.info("AnnData.var.index contains Ensembl IDs; will use index as source.")
+    ensembl_count_column = 0
+    if ensembl_col in adata.var.columns:
+        col_values = adata.var[ensembl_col].astype(str)
+        ensembl_count_column = (
+            pd.Series(col_values).str.contains(r"^ENS", na=False).sum()
+        )
+
+    logger.info(
+        f"Found {ensembl_count_index} Ensembl IDs in index, {ensembl_count_column} in column '{ensembl_col}'"
+    )
+
+    # Step 2: Choose the best source of Ensembl IDs
+    if ensembl_count_index > 0 and ensembl_count_index >= ensembl_count_column:
+        logger.info("Using index as source (has more/equal Ensembl IDs).")
+        # Index already contains the data, no need to reassign
+    elif ensembl_count_column > 0:
+        logger.info(f"Using column '{ensembl_col}' as source (has more Ensembl IDs).")
+        adata.var.index = adata.var[ensembl_col].astype(str)
     else:
-        # Step 2: Check if ensembl ids are stored in a column and put them in the index
-        if ensembl_col in adata.var.columns:
-            logger.info(f"Reindexing from var['{ensembl_col}'].")
-            adata.var.index = adata.var[ensembl_col].astype(str)
         # Step 3: Fallback: call add_fn
-        elif add_fn is not None:
-            logger.info(f"Calling {add_fn.__name__} to populate '{ensembl_col}'.")
+        if add_fn is not None:
+            logger.info(
+                f"No Ensembl IDs found in index or column. Calling {add_fn.__name__} to populate '{ensembl_col}'."
+            )
             add_fn(adata, ensembl_col=ensembl_col)
             adata.var.index = adata.var[ensembl_col].astype(str)
         else:
             raise ValueError(
                 "Cannot ensure Ensembl index: neither index nor "
-                f"var['{ensembl_col}'] present, and no add_fn supplied."
+                f"var['{ensembl_col}'] contain Ensembl IDs, and no add_fn supplied."
             )
 
     # Step 4: Filter out version endings and invalid IDs
