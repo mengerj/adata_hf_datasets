@@ -1,0 +1,129 @@
+# Example dataset configuration demonstrating all possible parameters
+# Inherits directly from dataset_default.yaml
+defaults:
+  - dataset_default.yaml
+  - _self_
+
+# =============================================================================
+# DATASET METADATA
+# =============================================================================
+dataset:
+  name: "example_dataset"
+  description: "Example dataset for demonstration"
+  download_url: "https://example.com/data.h5ad"
+  full_name: "example_dataset_full"
+
+# =============================================================================
+# COMMON KEYS (dataset-specific)
+# =============================================================================
+batch_key: "dataset_title"
+annotation_key: "cell_type"
+caption_key: "natural_language_annotation"
+instrument_key: "assay"
+other_bio_labels: ["tissue", "disease"]
+
+# =============================================================================
+# DOWNLOAD CONFIGURATION
+# =============================================================================
+# Download configuration
+download:
+  enabled: true
+  subset_size: 5000
+  seed: 42
+
+# Preprocessing overrides (both dataset-specific and execution parameters)
+preprocessing:
+  # Dataset-specific parameters
+  min_cells: 15
+  min_genes: 150
+  n_top_genes: 512
+  category_threshold: 5
+  remove_low_frequency: true
+  split_dataset: true # Set directly here instead of using intermediate defaults
+  count_layer_key: "counts" # Key in adata.layers with raw counts. If not present, adata.raw.X is checked.
+
+  # Execution parameters (can be overridden if needed)
+  chunk_size: 100000 # Smaller chunks for this dataset
+  output_format: "zarr"
+  geneformer_pp: true
+  train_split: 0.8 # Different train/val split
+  random_seed: 123 # Different random seed
+  metrics_of_interest:
+    - "n_genes_by_counts"
+    - "total_counts"
+    - "pct_counts_mt"
+
+  # Bimodal splitting (for specific datasets)
+  split_bimodal: false
+  bimodal_col: null
+
+  # SRA metadata fetching (dataset-specific)
+  skip_sra_fetch: false
+  sra_max_retries: 3
+  sra_continue_on_fail: true
+  sra_chunk_size: null
+  sra_extra_cols: [null]
+
+# Embedding preparation overrides
+embedding_preparation:
+  enabled: true
+  methods: ["geneformer"]
+
+# =============================================================================
+# CPU EMBEDDING CONFIGURATION
+# =============================================================================
+embedding_cpu:
+  enabled: true
+  methods: ["hvg", "pca", "scvi_fm"] # CPU-only methods
+  batch_size: 128
+  embedding_dim_map:
+    scvi_fm: 50
+    geneformer: 512
+    pca: 50
+    hvg: 512
+  input_format: "auto"
+  output_format: "zarr"
+  overwrite: false
+  chunk_rows: 16384
+
+# =============================================================================
+# GPU EMBEDDING CONFIGURATION
+# =============================================================================
+embedding_gpu:
+  enabled: true
+  methods: ["geneformer"] # GPU-required methods
+  batch_size: 128
+  embedding_dim_map:
+    scvi_fm: 50
+    geneformer: 512
+    pca: 50
+    hvg: 512
+  input_format: "auto"
+  output_format: "zarr"
+  overwrite: false
+  chunk_rows: 16384
+
+# =============================================================================
+# DATASET CREATION CONFIGURATION
+# =============================================================================
+dataset_creation:
+  enabled: true
+  sentence_keys:
+    - "sample_id_og"
+    - "cell_sentence"
+    - "semantic_true"
+    - "semantic_similar"
+  required_obsm_keys: ["X_pca", "X_scvi_fm", "X_hvg", "X_geneformer"]
+  gene_name_column: "gene_name"
+  include_label_prob: 0
+  cs_length: 10
+  negatives_per_sample: 2
+  output_dir: "data/hf_datasets"
+  push_to_hub: true
+  base_repo_id: "jo-mengr"
+  use_nextcloud: false
+  nextcloud_config:
+    url: "NEXTCLOUD_URL"
+    username: "NEXTCLOUD_USER"
+    password: "NEXTCLOUD_PASSWORD"
+    remote_path: ""

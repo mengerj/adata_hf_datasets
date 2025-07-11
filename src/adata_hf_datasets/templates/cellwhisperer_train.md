@@ -14,11 +14,14 @@ task_categories:
 
 ## Description
 
-This dataset contains **RNA sequencing data** (or actually references to anndata files stored on a cloud) and text descriptions.
+This dataset contains a representation of **RNA sequencing data** and text descriptions.
 $dataset_type_explanation
 
 The **RNA sequencing data** used for training was originally gathered and annotated in the **CellWhisperer** project. It is derived from
 **CellxGene** and **GEO**. Detailed information on the gathering and annotation of the data can be read in the CellWhisperer Manuscript.
+
+The processed .h5ad files used to create this dataset can be found here.
+$share_info
 
 The Test data is partly taken from the cellwhisperer project (bowel disease dataset) and from Luecken et. al.
 It was processed and converted into a Hugging Face dataset using the [adata_hf_datasets](https://github.com/mengerj/adata_hf_datasets) Python package.
