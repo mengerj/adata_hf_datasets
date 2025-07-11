@@ -992,7 +992,10 @@ class SCVIEmbedder(BaseEmbedder):
         query_adata.X = query_adata.layers["counts"].copy()
 
         # Set batch key as expected from training data
-        query_adata.obs["batch"] = query_adata.obs[self.batch_key].astype("category")
+        # Convert to string first to ensure consistent data types, then to categorical
+        query_adata.obs["batch"] = (
+            query_adata.obs[self.batch_key].astype(str).astype("category")
+        )
 
         # Clear varm to prevent dimension mismatch errors during SCVI preparation
         # The varm field may contain PCA components or other variable-level metadata
