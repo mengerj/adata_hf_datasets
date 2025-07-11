@@ -209,15 +209,20 @@ def set_var_index_from_column(
         logger.warning(f"Column '{column_name}' not found in adata.var")
         return False
 
-    # Check for missing values
+    # Check for missing values and remove rows with missing values
     missing_values = adata.var[column_name].isna().sum()
     if missing_values > 0:
         logger.warning(
             f"Column '{column_name}' has {missing_values} missing values. "
-            f"These will be filled with the current index values."
+            f"Removing {missing_values} genes with missing {column_name}."
         )
-        # Fill missing values with current index
-        adata.var[column_name] = adata.var[column_name].fillna(adata.var.index)
+        # Remove rows with missing values
+        valid_mask = ~adata.var[column_name].isna()
+        adata._inplace_subset_var(valid_mask)
+        logger.info(
+            f"Removed {missing_values} genes with missing {column_name}. "
+            f"Remaining genes: {adata.n_vars}"
+        )
 
     # Check for duplicates
     duplicates = adata.var[column_name].duplicated().sum()
