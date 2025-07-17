@@ -1,6 +1,6 @@
 #!/bin/bash
 #SBATCH --job-name=create_ds
-#SBATCH --time=12:00:00
+#SBATCH --time=72:00:00
 
 # ─────────────────────────────────────────────────────────────────────────────
 # 0) Define a unified RUN_ID: real job ID under SLURM, or a timestamp locally
