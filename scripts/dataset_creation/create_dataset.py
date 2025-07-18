@@ -229,7 +229,26 @@ def main(cfg: DictConfig):
     data_dir = Path(to_absolute_path(dataset_cfg.data_dir)).expanduser()
     data_name = data_dir.name
     if not data_dir.exists():
-        raise FileNotFoundError(f"data_dir not found: {data_dir}")
+        logger.warning(f"data_dir not found: {data_dir}")
+        if len(dataset_cfg.required_obsm_keys) == 0:
+            logger.info(
+                "No required_obsm_keys specified; attempting to use 'processed' directory as fallback (embedding step was skipped)."
+            )
+            # TODO: Do not hardcode the path replacement here; make this configurable in the future.
+            fallback_data_dir = Path(
+                str(data_dir).replace("processed_with_emb", "processed")
+            )
+            if fallback_data_dir.exists():
+                data_dir = fallback_data_dir
+                logger.info(
+                    f"Using processed data instead of processed_with_emb: {data_dir}"
+                )
+            else:
+                raise FileNotFoundError(
+                    f"Neither data_dir '{data_dir}' nor fallback '{fallback_data_dir}' found."
+                )
+        else:
+            raise FileNotFoundError(f"data_dir not found: {data_dir}")
 
     sentence_keys: List[str] = dataset_cfg.sentence_keys
     caption_key: str | None = (
