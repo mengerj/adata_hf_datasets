@@ -8,7 +8,7 @@ defaults:
 # DATASET METADATA
 # =============================================================================
 dataset:
-  name: "human_immune_health_atlas_20k"
+  name: "human_immune_health_atlas_20k_3k"
   description: |
     A dataset of 100k human immune health atlas samples from the Human Cell Atlas.
     Originally published in Gong Q, Sharma M, Kuan EL, Glass MC, Chander A, Singh M, et al.
@@ -37,7 +37,8 @@ download:
 # Preprocessing overrides (both dataset-specific and execution parameters)
 preprocessing:
   # Dataset-specific parameters
-  enabled: false
+  enabled: true
+  n_top_genes: 3000
   split_dataset: false # Important for training datasets. Set to false for test datasets. (Similar parameters in dataset_creation)
   count_layer_key: "counts" # Key in adata.layers with raw counts. If not present, adata.raw.X is checked.
 
@@ -60,8 +61,8 @@ dataset_creation:
   # Dataset-specific parameters
   enabled: true
   use_nextcloud: true
-  required_obsm_keys: ["X_pca", "X_scvi_fm", "X_hvg", "X_geneformer"]
-  cs_length: [50, 150]
+  required_obsm_keys: [] #["X_pca", "X_scvi_fm", "X_hvg", "X_geneformer"]
+  cs_length: [2000]
   negatives_per_sample: 2
   split_dataset: false # Important for training datasets. Set to false for test datasets.
   dataset_format: single # Important for training datasets. Set to "single" for test datasets.
