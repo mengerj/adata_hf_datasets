@@ -31,7 +31,7 @@ other_bio_labels: ["AIFI_L1", "AIFI_L2", "AIFI_L3"]
 # =============================================================================
 # Download configuration
 download:
-  enabled: false
+  enabled: true
   subset_size: 5000
 
 # Preprocessing overrides (both dataset-specific and execution parameters)
