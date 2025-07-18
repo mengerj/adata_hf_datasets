@@ -8,7 +8,7 @@ defaults:
 # DATASET METADATA
 # =============================================================================
 dataset:
-  name: "human_immune_health_atlas_20k_3k"
+  name: "human_immune_health_atlas_5k_3k"
   description: |
     A dataset of 100k human immune health atlas samples from the Human Cell Atlas.
     Originally published in Gong Q, Sharma M, Kuan EL, Glass MC, Chander A, Singh M, et al.
@@ -32,7 +32,7 @@ other_bio_labels: ["AIFI_L1", "AIFI_L2", "AIFI_L3"]
 # Download configuration
 download:
   enabled: false
-  subset_size: 20000
+  subset_size: 5000
 
 # Preprocessing overrides (both dataset-specific and execution parameters)
 preprocessing:
