@@ -122,6 +122,7 @@ embedding_cpu:
     geneformer: 512
     pca: 50
     hvg: 512
+    gs: 8000
 
   # Execution parameters (accessed by embedding script)
   input_format: "auto" # Input format detection
