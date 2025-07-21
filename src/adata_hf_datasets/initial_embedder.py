@@ -1352,6 +1352,249 @@ class SCVIEmbedderFM(SCVIEmbedder):
         super().__init__(embedding_dim=embedding_dim, **default_kwargs)
 
 
+class GeneSelectEmbedder(BaseEmbedder):
+    """
+    Gene selection embedder that uses the same gene set as the scVI foundation model
+    but returns the raw expression values instead of scVI embeddings.
+
+    This embedder leverages the scVI foundation model's gene selection and preprocessing
+    pipeline to ensure consistent gene sets across datasets, but simply returns the
+    processed gene expression matrix (X) as the embedding.
+    """
+
+    def __init__(self, embedding_dim: int = None, **init_kwargs):
+        """
+        Initialize the GeneSelect embedder with scVI FM defaults.
+
+        Parameters
+        ----------
+        embedding_dim : int, optional
+            Will be dynamically determined by the number of genes in the scVI model.
+            If provided, it will be ignored with a warning.
+        init_kwargs : dict
+            Additional keyword arguments including cache directories.
+        """
+        if embedding_dim is not None:
+            logger.warning(
+                "GeneSelectEmbedder embedding_dim is determined by the scVI model's gene set. "
+                f"Ignoring provided value: {embedding_dim}"
+            )
+
+        # Initialize with a placeholder - will be updated after loading the model
+        super().__init__(embedding_dim=0)
+
+        # Use the same default configuration as SCVIEmbedderFM
+        app_name = "adata_hf_datasets"
+        default_cache_root = user_cache_dir(app_name)
+
+        default_model_cache = os.path.join(
+            default_cache_root, "models", "scvi_cellxgene"
+        )
+        default_data_cache = os.path.join(default_cache_root, "reference_data", "scvi")
+
+        os.makedirs(default_model_cache, exist_ok=True)
+        os.makedirs(default_data_cache, exist_ok=True)
+
+        cache_dir = init_kwargs.pop("cache_dir", default_model_cache)
+        file_cache_dir = init_kwargs.pop("file_cache_dir", default_data_cache)
+
+        self.default_kwargs = {
+            "reference_s3_bucket": "cellxgene-contrib-public",
+            "reference_s3_path": "models/scvi/2024-02-12/homo_sapiens/modelhub",
+            "reference_adata_url": "https://cellxgene-contrib-public.s3.amazonaws.com/models/scvi/2024-02-12/homo_sapiens/adata-spinal-cord-minified.h5ad",
+            "cache_dir": cache_dir,
+            "file_cache_dir": file_cache_dir,
+        }
+        self.default_kwargs.update(init_kwargs)
+
+        self.scvi_model = None
+        logger.info(f"Using model cache directory: {cache_dir}")
+        logger.info(f"Using reference data cache directory: {file_cache_dir}")
+
+    def prepare(
+        self,
+        adata: anndata.AnnData | None = None,
+        adata_path: str | None = None,
+        **kwargs,
+    ):
+        """
+        Load the scVI foundation model to determine the gene set.
+
+        Parameters
+        ----------
+        adata : anndata.AnnData, optional
+            Not used for preparation, but kept for interface consistency.
+        adata_path : str, optional
+            Not used for preparation, but kept for interface consistency.
+        **kwargs : dict
+            Additional configuration merged with default_kwargs.
+        """
+        logger.info("Preparing GeneSelect embedder by loading scVI foundation model...")
+
+        # Merge kwargs with defaults
+        config = self.default_kwargs.copy()
+        config.update(kwargs)
+
+        # Load the model using the same logic as SCVIEmbedder
+        reference_s3_bucket = config.get("reference_s3_bucket")
+        reference_s3_path = config.get("reference_s3_path")
+        reference_adata_url = config.get("reference_adata_url")
+        cache_dir = config.get("cache_dir")
+        file_cache_dir = config.get("file_cache_dir")
+
+        # Load model from S3
+        if reference_s3_bucket is not None and reference_s3_path is not None:
+            logger.info(
+                "Loading scVI model from S3 bucket %s, path %s",
+                reference_s3_bucket,
+                reference_s3_path,
+            )
+            import botocore
+
+            model = HubModel.pull_from_s3(
+                s3_bucket=reference_s3_bucket,
+                s3_path=reference_s3_path,
+                pull_anndata=False,
+                config=botocore.config.Config(signature_version=botocore.UNSIGNED),
+                cache_dir=Path(cache_dir),
+            )
+        else:
+            raise ValueError("No valid scVI loading parameters provided.")
+
+        # Load reference AnnData if needed
+        if reference_adata_url is not None:
+            if file_cache_dir is None:
+                save_dir = tempfile.TemporaryDirectory()
+            else:
+                if not file_cache_dir.endswith("/"):
+                    file_cache_dir += "/"
+                save_dir = Path(file_cache_dir)
+            ref_adata_path = os.path.join(save_dir, "cellxgene_reference_adata.h5ad")
+            logger.info("Reading reference adata from URL %s", reference_adata_url)
+            reference_adata = sc.read(ref_adata_path, backup_url=reference_adata_url)
+        else:
+            try:
+                reference_adata = model.adata
+            except AttributeError as e:
+                raise ValueError(
+                    "No reference AnnData available in model or via URL."
+                ) from e
+
+        # Set up the scVI model with reference data
+        self.scvi_model = self._setup_model_with_ref(model, reference_adata)
+
+        # Update embedding dimension based on the number of genes in the model
+        self.embedding_dim = self.scvi_model.adata.n_vars
+        logger.info(
+            f"GeneSelect embedder prepared. Gene set contains {self.embedding_dim} genes."
+        )
+
+    def _setup_model_with_ref(self, model, reference_adata):
+        """Set up the scVI model with the reference AnnData (same as SCVIEmbedder)."""
+        if SCVIEmbedder._is_shared_path(Path(model.local_dir)):
+            logger.info(
+                "Copying scVI weight file to a worker-unique temp dir to avoid NFS races."
+            )
+            model = SCVIEmbedder._localize_hubmodel(model)
+
+        logger.info("Preparing scVI model with reference data...")
+        try:
+            del reference_adata.uns["_scvi_adata_minify_type"]
+        except KeyError:
+            pass
+        if "is_primary_data" in reference_adata.obs:
+            model.load_model(
+                adata=reference_adata[reference_adata.obs["is_primary_data"]].copy()
+            )
+        else:
+            model.load_model(adata=reference_adata.copy())
+        scvi_model = model.model
+        return scvi_model
+
+    def embed(
+        self,
+        adata: anndata.AnnData | None = None,
+        adata_path: str | None = None,
+        obsm_key: str = "X_gs",
+        batch_key: str = "batch",
+        **kwargs,
+    ) -> np.ndarray:
+        """
+        Apply gene selection and return the processed gene expression matrix.
+
+        Parameters
+        ----------
+        adata : anndata.AnnData, optional
+            The query dataset to be processed.
+        adata_path : str, optional
+            Path to the AnnData file (.h5ad).
+        obsm_key : str
+            The key in `adata.obsm` under which to store the gene-selected matrix.
+        batch_key : str
+            The batch key in `adata.obs` to use for batch information.
+        **kwargs : dict
+            Additional keyword arguments (unused).
+
+        Returns
+        -------
+        np.ndarray
+            The gene-selected expression matrix of shape (n_cells, n_selected_genes).
+        """
+        adata = _check_load_adata(adata, adata_path)
+
+        if self.scvi_model is None:
+            raise ValueError("scVI model is not prepared. Call `prepare(...)` first.")
+
+        logger.info("Applying gene selection using scVI foundation model gene set...")
+
+        # Prepare query data using the same logic as SCVIEmbedder
+        if "counts" not in adata.layers:
+            raise ValueError(
+                "No 'counts' layer found in adata. Run preprocessing first."
+            )
+
+        ensure_ensembl_index(
+            adata,
+            ensembl_col=self.default_kwargs.get("ensembl_col", "ensembl_id"),
+            add_fn=add_ensembl_ids,
+        )
+
+        # Keep a backup of the original data
+        adata_backup = adata.copy()
+        adata.X = adata.layers["counts"].copy()
+
+        # Set batch key as expected from training data
+        adata.obs["batch"] = adata.obs[batch_key].astype(str).astype("category")
+
+        # Clear varm to prevent dimension mismatch errors
+        if len(adata.varm) > 0:
+            logger.info(
+                "Clearing varm field to prevent dimension mismatch during gene selection"
+            )
+            adata.varm.clear()
+
+        # Apply scVI gene selection and preprocessing
+        SCVI.prepare_query_anndata(adata, self.scvi_model)
+
+        # Fix non-numerics
+        fix_non_numeric_nans(adata)
+
+        # Get the processed expression matrix
+        X = adata.X.toarray() if sp.issparse(adata.X) else adata.X
+        embedding_matrix = X.copy()
+
+        # Store in adata for compatibility
+        adata.obsm[obsm_key] = embedding_matrix
+
+        logger.info(
+            f"Gene selection complete. Selected {embedding_matrix.shape[1]} genes "
+            f"from {adata_backup.shape[1]} original genes. "
+            f"Stored in adata.obsm[{obsm_key}]."
+        )
+
+        return embedding_matrix
+
+
 class InitialEmbedder:
     """
     Manager for creating embeddings of single-cell data.
@@ -1367,6 +1610,7 @@ class InitialEmbedder:
         - "geneformer"
         - "pca"
         - "hvg"
+        - "gs" (gene select)
     embedding_dim : int, default=64
         Dimensionality of the output embedding.
     **init_kwargs
@@ -1385,6 +1629,7 @@ class InitialEmbedder:
             "geneformer": GeneformerEmbedder,
             "pca": PCAEmbedder,
             "hvg": HighlyVariableGenesEmbedder,
+            "gs": GeneSelectEmbedder,
         }
         if method not in embedder_classes:
             raise ValueError(f"Unknown embedding method: {method}")
