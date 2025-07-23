@@ -88,6 +88,9 @@ embedding_preparation:
   prepare_only: true # Always true for preparation step
   mode: "slurm" # Use CPU partition for preparation
 
+  # SLURM resource allocation
+  memory_gb: 60 # Memory allocation in GB (default: 60GB). Increase for larger datasets (e.g., 80, 120)
+
   # Execution parameters (accessed by embedding preparation script)
   input_format: "auto" # Input format detection
   output_format: "zarr" # Output format preference
@@ -113,6 +116,9 @@ embedding_cpu:
 
   # CPU embedding methods to apply
   methods: ["hvg", "pca", "scvi_fm"] # CPU-only methods: ["scvi_fm", "pca", "hvg"]
+
+  # SLURM resource allocation
+  memory_gb: 60 # Memory allocation in GB (default: 60GB). Increase for larger datasets (e.g., 80, 120)
 
   # Method-specific parameters
   batch_size: 128 # Used by geneformer
@@ -140,6 +146,9 @@ embedding_gpu:
 
   # GPU embedding methods to apply
   methods: ["geneformer"] # GPU-required methods: ["geneformer"]
+
+  # SLURM resource allocation
+  memory_gb: 60 # Memory allocation in GB (default: 60GB). Increase for larger datasets (e.g., 80, 120)
 
   # Method-specific parameters
   batch_size: 128 # Used by geneformer

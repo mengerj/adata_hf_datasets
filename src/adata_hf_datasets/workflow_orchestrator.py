@@ -365,8 +365,32 @@ class WorkflowOrchestrator:
         dependencies: Optional[List[int]] = None,
         env_vars: Optional[Dict[str, str]] = None,
         step_name: str = "unknown",
+        memory_gb: Optional[int] = None,
     ) -> int:
-        """Submit a SLURM job using ssh command."""
+        """Submit a SLURM job using ssh command.
+
+        Parameters
+        ----------
+        host : str
+            SSH host to submit the job to
+        script_path : Path
+            Path to the SLURM script to execute
+        partition : str
+            SLURM partition to submit to
+        dependencies : Optional[List[int]]
+            List of job IDs this job depends on
+        env_vars : Optional[Dict[str, str]]
+            Environment variables to pass to the job
+        step_name : str
+            Human-readable name for the step (for logging)
+        memory_gb : Optional[int]
+            Memory allocation in GB (e.g., 60 for 60GB)
+
+        Returns
+        -------
+        int
+            SLURM job ID of the submitted job
+        """
         project_dir = "/home/menger/git/adata_hf_datasets"
 
         # Build the sbatch command with proper environment setup
@@ -375,6 +399,10 @@ class WorkflowOrchestrator:
 
         # Add partition
         sbatch_cmd.extend(["--partition", partition])
+
+        # Add memory allocation if specified
+        if memory_gb is not None:
+            sbatch_cmd.extend(["--mem", f"{memory_gb}G"])
 
         # Add dependencies if specified
         if dependencies:
@@ -394,7 +422,9 @@ class WorkflowOrchestrator:
         ssh_cmd = f"bash -l -c 'cd {project_dir} && {' '.join(sbatch_cmd)}'"
         cmd = ["ssh", host, ssh_cmd]
 
-        logger.info(f"Submitting {script_path.name} ➜ {' '.join(cmd)}")
+        # Log submission with memory info if specified
+        memory_info = f" (Memory: {memory_gb}GB)" if memory_gb else ""
+        logger.info(f"Submitting {script_path.name}{memory_info} ➜ {' '.join(cmd)}")
 
         # Execute the command
         try:
@@ -615,9 +645,13 @@ class WorkflowOrchestrator:
 
         logger.info(f"Using dataset config: {dataset_config_name}")
 
-        # Load dataset config to extract base_file_path
+        # Load dataset config to extract base_file_path and memory settings
         dataset_config = self._load_dataset_config(dataset_config_name)
         base_file_path = dataset_config.get("base_file_path", "/scratch/local")
+
+        # Extract memory setting from embedding_preparation config (default: 60GB)
+        memory_gb = getattr(dataset_config.embedding_preparation, "memory_gb", 60)
+        logger.info(f"Using {memory_gb}GB memory for embedding preparation")
 
         # Pass the dataset config name, workflow directory, and mode settings as environment variables
         env_vars = {
@@ -638,6 +672,7 @@ class WorkflowOrchestrator:
             dependencies=dependencies,
             env_vars=env_vars,
             step_name="Embedding Preparation",
+            memory_gb=memory_gb,
         )
         return job_id
 
@@ -654,9 +689,13 @@ class WorkflowOrchestrator:
 
         logger.info(f"Using dataset config: {dataset_config_name}")
 
-        # Load dataset config to extract base_file_path
+        # Load dataset config to extract base_file_path and memory settings
         dataset_config = self._load_dataset_config(dataset_config_name)
         base_file_path = dataset_config.get("base_file_path", "/scratch/local")
+
+        # Extract memory setting from embedding_cpu config (default: 60GB)
+        memory_gb = getattr(dataset_config.embedding_cpu, "memory_gb", 60)
+        logger.info(f"Using {memory_gb}GB memory for CPU embedding")
 
         # Pass the dataset config name, workflow directory, and mode settings as environment variables
         env_vars = {
@@ -677,6 +716,7 @@ class WorkflowOrchestrator:
             dependencies=dependencies,
             env_vars=env_vars,
             step_name="CPU Embedding",
+            memory_gb=memory_gb,
         )
         return job_id
 
@@ -693,9 +733,13 @@ class WorkflowOrchestrator:
 
         logger.info(f"Using dataset config: {dataset_config_name}")
 
-        # Load dataset config to extract base_file_path
+        # Load dataset config to extract base_file_path and memory settings
         dataset_config = self._load_dataset_config(dataset_config_name)
         base_file_path = dataset_config.get("base_file_path", "/scratch/local")
+
+        # Extract memory setting from embedding_gpu config (default: 60GB)
+        memory_gb = getattr(dataset_config.embedding_gpu, "memory_gb", 60)
+        logger.info(f"Using {memory_gb}GB memory for GPU embedding")
 
         # Pass the dataset config name, workflow directory, and mode settings as environment variables
         # IMPORTANT: Master job runs on CPU cluster to avoid consuming GPU resources
@@ -723,6 +767,7 @@ class WorkflowOrchestrator:
             dependencies=dependencies,
             env_vars=env_vars,
             step_name="GPU Embedding",
+            memory_gb=memory_gb,
         )
         return job_id
 
