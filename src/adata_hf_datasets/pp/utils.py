@@ -15,6 +15,49 @@ from anndata import AnnData
 logger = logging.getLogger(__name__)
 
 
+def delete_layers(adata: AnnData, layers_to_delete: list[str] | None = None) -> AnnData:
+    """Delete specified layers from an AnnData object.
+
+    This function removes specified layers from adata.layers to reduce memory usage
+    and file sizes. Useful for removing temporary or unwanted layers like replicates.
+
+    Parameters
+    ----------
+    adata : AnnData
+        Annotated data matrix.
+    layers_to_delete : list[str] | None, optional
+        List of layer names to delete from adata.layers. If None, no layers are deleted.
+
+    Returns
+    -------
+    AnnData
+        The AnnData object with specified layers removed.
+    """
+    if layers_to_delete is None or len(layers_to_delete) == 0:
+        logger.info("No layers specified for deletion")
+        return adata
+
+    # Ensure the object is loaded into memory if it's in backed mode
+    if adata.isbacked:
+        adata = adata.to_memory()
+
+    adata_processed = adata.copy()
+
+    deleted_count = 0
+    for layer_name in layers_to_delete:
+        if layer_name in adata_processed.layers:
+            del adata_processed.layers[layer_name]
+            deleted_count += 1
+            logger.info(f"Deleted layer: {layer_name}")
+        else:
+            logger.warning(f"Layer '{layer_name}' not found in adata.layers, skipping")
+
+    logger.info(
+        f"Successfully deleted {deleted_count} out of {len(layers_to_delete)} specified layers"
+    )
+    return adata_processed
+
+
 def consolidate_low_frequency_categories(
     adata: AnnData, columns: list | str, threshold: int, remove=False
 ):

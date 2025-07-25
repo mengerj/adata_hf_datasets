@@ -271,6 +271,7 @@ def main(cfg: DictConfig):
                 bimodal_col=preprocess_cfg.get("bimodal_col", None),
                 split_bimodal=bool(preprocess_cfg.get("split_bimodal", False)),
                 output_format=output_format,
+                layers_to_delete=preprocess_cfg.get("layers_to_delete", None),
             )
             logger.info("Preprocessing %s → %s", path_in, out_dir_split)
 

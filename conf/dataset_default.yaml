@@ -55,6 +55,9 @@ preprocessing:
   category_threshold: 5 # Remove categories with fewer than this many samples
   remove_low_frequency: false # Whether to remove low frequency categories
 
+  # Layer management
+  layers_to_delete: null # List of layer names to delete from adata.layers (e.g., ["replicate_1", "replicate_2"])
+
   # Bimodal splitting (for specific datasets)
   split_bimodal: false
   bimodal_col: null

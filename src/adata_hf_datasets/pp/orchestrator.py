@@ -4,7 +4,11 @@ from pathlib import Path
 from .qc import pp_quality_control
 from .general import pp_adata_general
 from .geneformer import pp_adata_geneformer
-from .utils import ensure_raw_counts_layer, prepend_instrument_to_description
+from .utils import (
+    ensure_raw_counts_layer,
+    prepend_instrument_to_description,
+    delete_layers,
+)
 from .bimodal import split_if_bimodal
 from .sra import maybe_add_sra_metadata
 from .loader import BatchChunkLoader
@@ -39,6 +43,7 @@ def preprocess_h5ad(
     bimodal_col: str | None = None,
     split_bimodal: bool = False,
     output_format: str = "zarr",
+    layers_to_delete: list[str] | None = None,
 ) -> None:
     """
     Preprocess a large AnnData file in chunks and write a concatenated output.
@@ -96,6 +101,8 @@ def preprocess_h5ad(
         If True, splits the data into two bimodal distributions.
     output_format : str, default="zarr"
         Format to write the output file. Must be either "zarr" or "h5ad".
+    layers_to_delete : list[str] | None, optional
+        List of layer names to delete from adata.layers. If None, no layers are deleted.
 
     References
     ----------
@@ -124,6 +131,9 @@ def preprocess_h5ad(
             logger.info("Preprocessing chunk %d", i)
             # Make sure X contains raw counts, and "counts" layer is set
             ensure_raw_counts_layer(adata, raw_layer_key=count_layer_key)
+
+            # Delete specified layers early in the process
+            adata = delete_layers(adata, layers_to_delete)
 
             processed_splits = []
             if split_bimodal and bimodal_col in adata.obs:
