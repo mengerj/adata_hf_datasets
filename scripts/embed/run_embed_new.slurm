@@ -209,6 +209,22 @@ if [[ -f "$job_file" ]]; then
 
                     echo "🔍 DEBUG: Raw array_states output: '$array_states'"
 
+                    # Additional debugging - let's see what sacct actually shows for this job
+                    echo "🔍 DEBUG: Full sacct output for job $array_job_id (no filtering):"
+                    if [[ "$cluster_type" == "gpu" && "$cluster_host" != "local" ]]; then
+                        ssh "$cluster_host" "sacct -j $array_job_id --format=JobID,State,JobName --noheader --parsable2 2>/dev/null" || echo "🔍 DEBUG: sacct failed"
+                    else
+                        sacct -j "$array_job_id" --format=JobID,State,JobName --noheader --parsable2 2>/dev/null || echo "🔍 DEBUG: sacct failed"
+                    fi
+
+                    # Also check what squeue shows
+                    echo "🔍 DEBUG: squeue output for job $array_job_id:"
+                    if [[ "$cluster_type" == "gpu" && "$cluster_host" != "local" ]]; then
+                        ssh "$cluster_host" "squeue -j $array_job_id --format='%.10i %.40j %.8t %.10M %.6D %R' 2>/dev/null" || echo "🔍 DEBUG: squeue shows no job"
+                    else
+                        squeue -j "$array_job_id" --format="%.10i %.40j %.8t %.10M %.6D %R" 2>/dev/null || echo "🔍 DEBUG: squeue shows no job"
+                    fi
+
                     if [[ -z "$array_states" ]]; then
                         # No array tasks found yet, wait a bit
                         echo "🔍 DEBUG: No array tasks found yet for job $array_job_id, waiting... (iteration $wait_iterations)"
@@ -220,6 +236,30 @@ if [[ -f "$job_file" ]]; then
                             main_job_check=$(sacct -j "$array_job_id" --format=JobID,State --noheader --parsable2 2>/dev/null | head -1 || echo "")
                         fi
                         echo "🔍 DEBUG: Main job check result: '$main_job_check'"
+
+                        # IMPROVED: Check squeue to see if any array tasks are still running
+                        # If no array tasks in squeue, they might have completed but not yet in sacct
+                        echo "🔍 DEBUG: Checking squeue for running array tasks..."
+                        if [[ "$cluster_type" == "gpu" && "$cluster_host" != "local" ]]; then
+                            # Look for any jobs with pattern like 7528531_*
+                            squeue_output=$(ssh "$cluster_host" "squeue --noheader --format='%.10i' 2>/dev/null" || echo "")
+                            echo "🔍 DEBUG: Full squeue output: '$squeue_output'"
+                            running_array_tasks=$(echo "$squeue_output" | grep "^${array_job_id}_" | wc -l || echo "0")
+                        else
+                            # Look for any jobs with pattern like 7528531_*
+                            squeue_output=$(squeue --noheader --format='%.10i' 2>/dev/null || echo "")
+                            echo "🔍 DEBUG: Full squeue output: '$squeue_output'"
+                            running_array_tasks=$(echo "$squeue_output" | grep "^${array_job_id}_" | wc -l || echo "0")
+                        fi
+                        echo "🔍 DEBUG: Looking for pattern '^${array_job_id}_' in squeue output"
+                        echo "🔍 DEBUG: Number of running array tasks in squeue: $running_array_tasks"
+
+                        # If no tasks are running in squeue, and we've waited a reasonable time, assume completion
+                        if [[ $running_array_tasks -eq 0 && $wait_iterations -gt 5 ]]; then
+                            echo "🔍 DEBUG: No array tasks in squeue after $wait_iterations iterations - assuming completion"
+                            echo "  Array job $array_job_id appears to have completed (not visible in squeue)"
+                            break
+                        fi
 
                         sleep 30
                         continue
