@@ -141,6 +141,12 @@ hours=$(( elapsed/3600 ))
 mins=$(( (elapsed%3600)/60 ))
 secs=$(( elapsed%60 ))
 
+# Write completion status to temp file for main job tracking
+completion_file="/scratch/global/menger/tmp/array_job_completed_${ARRAY_JOB_ID}_${TASK_ID}.txt"
+echo "Writing completion status to: $completion_file"
+mkdir -p "/scratch/global/menger/tmp"
+echo "COMPLETED:${ARRAY_JOB_ID}:${TASK_ID}:${embedding_exit_code}:$(date):${elapsed}" > "$completion_file"
+
 echo "================================="
 echo "=== SLURM Array Task Complete ==="
 echo "Array Job ID: $ARRAY_JOB_ID"

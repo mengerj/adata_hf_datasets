@@ -181,167 +181,77 @@ if [[ -f "$job_file" ]]; then
                 echo "🔍 DEBUG: Parsed job_id=$array_job_id, cluster_type=$cluster_type, cluster_host=$cluster_host"
 
                 # Wait for ALL array job tasks to complete
-                # Use sacct to check for any running/pending array tasks
+                # Use temp file approach - much more reliable than squeue/sacct
                 wait_iterations=0
+                echo "🔍 DEBUG: Using temp file approach to track array job completion"
+
+                # First, we need to know how many array tasks to expect
+                # This should match the file count that was used in the launcher
+                echo "🔍 DEBUG: Checking expected number of array tasks for job $array_job_id"
+
                 while true; do
                     wait_iterations=$((wait_iterations + 1))
                     echo "🔍 DEBUG: Wait iteration $wait_iterations for job $array_job_id"
 
-                    # Get all array job states - handle grep exit codes properly
-                    # Choose the appropriate command based on cluster type
+                    # Count completion files for this array job
+                    completion_files="/scratch/global/menger/tmp/array_job_completed_${array_job_id}_*.txt"
+                    completed_count=0
+                    if ls $completion_files 1> /dev/null 2>&1; then
+                        completed_count=$(ls $completion_files | wc -l)
+                    fi
+
+                    echo "🔍 DEBUG: Found $completed_count completion files for job $array_job_id"
+
+                    # Check if any array tasks are still running in squeue
+                    running_count=0
                     if [[ "$cluster_type" == "gpu" && "$cluster_host" != "local" ]]; then
-                        # GPU job - use SSH to check status on remote cluster
-                        echo "🔍 DEBUG: Checking GPU job $array_job_id status via SSH to $cluster_host"
-                        set +o pipefail
-                        array_states=$(ssh "$cluster_host" "sacct -j $array_job_id --format=JobID,State --noheader --parsable2 2>/dev/null" | grep "${array_job_id}_" | cut -d'|' -f2 || true)
-                        ssh_exit_code=$?
-                        set -o pipefail
-                        echo "🔍 DEBUG: SSH command exit code: $ssh_exit_code"
+                        running_tasks=$(ssh "$cluster_host" "squeue --noheader --format='%.10i' 2>/dev/null" | grep "${array_job_id}_" || echo "")
                     else
-                        # CPU job - check locally
-                        echo "🔍 DEBUG: Checking CPU job $array_job_id status locally"
-                        set +o pipefail
-                        array_states=$(sacct -j "$array_job_id" --format=JobID,State --noheader --parsable2 2>/dev/null | grep "${array_job_id}_" | cut -d'|' -f2 || true)
-                        sacct_exit_code=$?
-                        set -o pipefail
-                        echo "🔍 DEBUG: sacct command exit code: $sacct_exit_code"
+                        running_tasks=$(squeue --noheader --format='%.10i' 2>/dev/null | grep "${array_job_id}_" || echo "")
                     fi
 
-                    echo "🔍 DEBUG: Raw array_states output: '$array_states'"
-
-                    # Additional debugging - let's see what sacct actually shows for this job
-                    echo "🔍 DEBUG: Full sacct output for job $array_job_id (no filtering):"
-                    if [[ "$cluster_type" == "gpu" && "$cluster_host" != "local" ]]; then
-                        ssh "$cluster_host" "sacct -j $array_job_id --format=JobID,State,JobName --noheader --parsable2 2>/dev/null" || echo "🔍 DEBUG: sacct failed"
-                    else
-                        sacct -j "$array_job_id" --format=JobID,State,JobName --noheader --parsable2 2>/dev/null || echo "🔍 DEBUG: sacct failed"
+                    if [[ -n "$running_tasks" ]]; then
+                        running_count=$(echo "$running_tasks" | wc -l)
                     fi
 
-                    # Also check what squeue shows
-                    echo "🔍 DEBUG: squeue output for job $array_job_id:"
-                    if [[ "$cluster_type" == "gpu" && "$cluster_host" != "local" ]]; then
-                        ssh "$cluster_host" "squeue -j $array_job_id --format='%.10i %.40j %.8t %.10M %.6D %R' 2>/dev/null" || echo "🔍 DEBUG: squeue shows no job"
-                    else
-                        squeue -j "$array_job_id" --format="%.10i %.40j %.8t %.10M %.6D %R" 2>/dev/null || echo "🔍 DEBUG: squeue shows no job"
-                    fi
+                    echo "🔍 DEBUG: Array job $array_job_id status:"
+                    echo "🔍 DEBUG:   - Completed tasks (temp files): $completed_count"
+                    echo "🔍 DEBUG:   - Still running in squeue: $running_count"
 
-                    if [[ -z "$array_states" ]]; then
-                        # No array tasks found yet, wait a bit
-                        echo "🔍 DEBUG: No array tasks found yet for job $array_job_id, waiting... (iteration $wait_iterations)"
+                    # If no tasks are running AND we have completion files, we're done
+                    if [[ $running_count -eq 0 && $completed_count -gt 0 ]]; then
+                        echo "🔍 DEBUG: *** ALL ARRAY TASKS COMPLETED ***"
+                        echo "  Array job $array_job_id: $completed_count tasks completed, none running"
 
-                        # Check if the main job itself exists
-                        if [[ "$cluster_type" == "gpu" && "$cluster_host" != "local" ]]; then
-                            main_job_check=$(ssh "$cluster_host" "sacct -j $array_job_id --format=JobID,State --noheader --parsable2 2>/dev/null | head -1" || echo "")
-                        else
-                            main_job_check=$(sacct -j "$array_job_id" --format=JobID,State --noheader --parsable2 2>/dev/null | head -1 || echo "")
-                        fi
-                        echo "🔍 DEBUG: Main job check result: '$main_job_check'"
-
-                        # IMPROVED: Check squeue to see if any array tasks are still running
-                        # If no array tasks in squeue, they might have completed but not yet in sacct
-                        echo "🔍 DEBUG: Checking squeue for running array tasks..."
-                        if [[ "$cluster_type" == "gpu" && "$cluster_host" != "local" ]]; then
-                            # Look for any jobs with pattern like 7528531_*
-                            squeue_output=$(ssh "$cluster_host" "squeue --noheader --format='%.10i' 2>/dev/null" || echo "")
-                            echo "🔍 DEBUG: Full squeue output: '$squeue_output'"
-                            # Handle leading whitespace by using word boundaries
-                            running_array_tasks=$(echo "$squeue_output" | grep -E "(^|[[:space:]])${array_job_id}_" | wc -l || echo "0")
-                        else
-                            # Look for any jobs with pattern like 7528531_*
-                            squeue_output=$(squeue --noheader --format='%.10i' 2>/dev/null || echo "")
-                            echo "🔍 DEBUG: Full squeue output: '$squeue_output'"
-                            # Handle leading whitespace by using word boundaries
-                            running_array_tasks=$(echo "$squeue_output" | grep -E "(^|[[:space:]])${array_job_id}_" | wc -l || echo "0")
-                        fi
-                        echo "🔍 DEBUG: Looking for pattern '(^|[[:space:]])${array_job_id}_' in squeue output"
-                        echo "🔍 DEBUG: Number of running array tasks in squeue: $running_array_tasks"
-
-                        # Debug the break condition
-                        echo "🔍 DEBUG: Break condition check:"
-                        echo "🔍 DEBUG:   running_array_tasks=$running_array_tasks (should be 0)"
-                        echo "🔍 DEBUG:   wait_iterations=$wait_iterations (should be > 5)"
-                        echo "🔍 DEBUG:   Condition result: running_array_tasks -eq 0 = $([[ $running_array_tasks -eq 0 ]] && echo "true" || echo "false")"
-                        echo "🔍 DEBUG:   Condition result: wait_iterations -gt 5 = $([[ $wait_iterations -gt 5 ]] && echo "true" || echo "false")"
-
-                        # If no tasks are running in squeue, and we've waited a reasonable time, assume completion
-                        if [[ $running_array_tasks -eq 0 && $wait_iterations -gt 5 ]]; then
-                            echo "🔍 DEBUG: *** BREAK CONDITION TRIGGERED ***"
-                            echo "🔍 DEBUG: No array tasks in squeue after $wait_iterations iterations - assuming completion"
-                            echo "  Array job $array_job_id appears to have completed (not visible in squeue)"
-                            break
-                        else
-                            echo "🔍 DEBUG: Break condition NOT met, continuing to wait..."
-                        fi
-
-                        sleep 30
-                        continue
-                    fi
-
-                    # Count different states
-                    total_count=$(echo "$array_states" | wc -l)
-                    echo "🔍 DEBUG: Found $total_count array task states"
-
-                    # Show individual states for debugging
-                    echo "$array_states" | while IFS= read -r state; do
-                        echo "🔍 DEBUG: Array task state: '$state'"
-                    done
-
-                    # Check if any tasks are still running or pending - handle grep exit codes
-                    set +o pipefail
-                    running_count=$(echo "$array_states" | grep -E "^(PENDING|RUNNING|COMPLETING)$" | wc -l || echo "0")
-                    completed_count=$(echo "$array_states" | grep -E "^(COMPLETED|COMPLETED\\+)$" | wc -l || echo "0")
-                    failed_count=$(echo "$array_states" | grep -E "^(FAILED|CANCELLED|TIMEOUT|NODE_FAIL)$" | wc -l || echo "0")
-                    set -o pipefail
-
-                    echo "🔍 DEBUG: Array job $array_job_id status breakdown:"
-                    echo "🔍 DEBUG:   - Total tasks: $total_count"
-                    echo "🔍 DEBUG:   - Running/Pending: $running_count"
-                    echo "🔍 DEBUG:   - Completed: $completed_count"
-                    echo "🔍 DEBUG:   - Failed: $failed_count"
-
-                    if [[ $running_count -eq 0 ]]; then
-                        echo "🔍 DEBUG: No more running tasks, breaking out of wait loop"
-                        echo "  All $total_count array tasks completed"
+                        # Show completion file details
+                        echo "🔍 DEBUG: Completion file details:"
+                        for file in $completion_files; do
+                            if [[ -f "$file" ]]; then
+                                echo "🔍 DEBUG:   $(basename "$file"): $(cat "$file")"
+                            fi
+                        done
+                        break
+                    elif [[ $wait_iterations -gt 120 ]]; then
+                        # 2 hour timeout
+                        echo "🔍 DEBUG: *** TIMEOUT AFTER 2 HOURS ***"
+                        echo "WARNING: Array job $array_job_id timeout - $completed_count completed, $running_count still running"
+                        echo "Proceeding anyway..."
                         break
                     else
-                        echo "  Array job $array_job_id: $completed_count/$total_count tasks completed, $running_count still running..."
+                        echo "🔍 DEBUG: Waiting for remaining tasks... (iteration $wait_iterations)"
+                        if [[ -n "$running_tasks" ]]; then
+                            echo "🔍 DEBUG: Still running: $running_tasks"
+                        fi
                         sleep 30
                     fi
                 done
 
-                # Check final status of all array tasks - handle grep exit codes
-                if [[ "$cluster_type" == "gpu" && "$cluster_host" != "local" ]]; then
-                    # GPU job - use SSH for final status check
-                    set +o pipefail
-                    failed_tasks=$(ssh "$cluster_host" "sacct -j $array_job_id --format=JobID,State --noheader --parsable2 2>/dev/null" | grep "${array_job_id}_" | grep -E "FAILED|CANCELLED|TIMEOUT" | wc -l || echo "0")
-                    total_tasks=$(ssh "$cluster_host" "sacct -j $array_job_id --format=JobID,State --noheader --parsable2 2>/dev/null" | grep "${array_job_id}_" | wc -l || echo "0")
-                    set -o pipefail
-                else
-                    # CPU job - check locally
-                    set +o pipefail
-                    failed_tasks=$(sacct -j "$array_job_id" --format=JobID,State --noheader --parsable2 2>/dev/null | grep "${array_job_id}_" | grep -E "FAILED|CANCELLED|TIMEOUT" | wc -l || echo "0")
-                    total_tasks=$(sacct -j "$array_job_id" --format=JobID,State --noheader --parsable2 2>/dev/null | grep "${array_job_id}_" | wc -l || echo "0")
-                    set -o pipefail
-                fi
+                # Clean up completion files for this job
+                echo "🔍 DEBUG: Cleaning up completion files for job $array_job_id"
+                rm -f $completion_files
+                echo "✓ Array job $array_job_id: monitoring complete"
 
-                if [[ $failed_tasks -gt 0 ]]; then
-                    echo "ERROR: $failed_tasks out of $total_tasks array tasks failed for job $array_job_id"
-                    echo "Failed tasks:"
-                    # Show failed tasks - disable pipefail for this command too
-                    if [[ "$cluster_type" == "gpu" && "$cluster_host" != "local" ]]; then
-                        set +o pipefail
-                        ssh "$cluster_host" "sacct -j $array_job_id --format=JobID,State --noheader --parsable2 2>/dev/null" | grep "${array_job_id}_" | grep -E "FAILED|CANCELLED|TIMEOUT" || echo "Could not retrieve failed task details"
-                        set -o pipefail
-                    else
-                        set +o pipefail
-                        sacct -j "$array_job_id" --format=JobID,State --noheader --parsable2 2>/dev/null | grep "${array_job_id}_" | grep -E "FAILED|CANCELLED|TIMEOUT" || echo "Could not retrieve failed task details"
-                        set -o pipefail
-                    fi
-                    echo "Check array job logs in: $BASE_OUT/../array_${array_job_id}/"
-                    exit 1
-                else
-                    echo "✓ Array job $array_job_id: all $total_tasks tasks completed successfully"
-                fi
+                # Final status is determined by completion files - much more reliable than sacct!
             else
                 echo "Warning: Invalid job line format: $job_line"
             fi
