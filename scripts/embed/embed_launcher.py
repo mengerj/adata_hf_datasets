@@ -226,6 +226,11 @@ class EmbeddingLauncher:
             "--time=24:00:00",
         ]
 
+        logger.info(f"🔍 DEBUG: Building sbatch command for {label}")
+        logger.info(
+            f"🔍 DEBUG: File count: {file_count}, so array will be 0-{file_count - 1}"
+        )
+
         # Add resource requirements based on mode
         if self.mode == "cpu":
             sbatch_cmd.extend(
@@ -246,6 +251,8 @@ class EmbeddingLauncher:
         # Add partition if specified
         if partition:
             sbatch_cmd.extend([f"--partition={partition}"])
+
+        logger.info(f"🔍 DEBUG: Complete sbatch command: {' '.join(sbatch_cmd)}")
 
         # Instead of creating temporary config files, pass the config selection via environment
         # This eliminates the race condition entirely!
@@ -302,16 +309,23 @@ class EmbeddingLauncher:
                 project_dir = "/home/menger/git/adata_hf_datasets"
                 remote_cmd = f"cd {project_dir} && {' '.join(sbatch_cmd)}"
                 ssh_cmd = ["ssh", gpu_host, remote_cmd]
-                logger.info(f"Executing via SSH to {gpu_host}: {' '.join(ssh_cmd)}")
+                logger.info(
+                    f"🔍 DEBUG: Executing via SSH to {gpu_host}: {' '.join(ssh_cmd)}"
+                )
                 result = subprocess.run(
                     ssh_cmd, capture_output=True, text=True, timeout=60
                 )
             else:
                 # Submit locally (same cluster)
-                logger.info(f"Executing locally: {' '.join(sbatch_cmd)}")
+                logger.info(f"🔍 DEBUG: Executing locally: {' '.join(sbatch_cmd)}")
                 result = subprocess.run(
                     sbatch_cmd, capture_output=True, text=True, timeout=60
                 )
+
+            logger.info("🔍 DEBUG: sbatch execution completed")
+            logger.info(f"🔍 DEBUG: Return code: {result.returncode}")
+            logger.info(f"🔍 DEBUG: stdout: '{result.stdout.strip()}'")
+            logger.info(f"🔍 DEBUG: stderr: '{result.stderr.strip()}'")
 
             if result.returncode != 0:
                 logger.error(f"Failed to submit array job for {label}")
@@ -323,11 +337,20 @@ class EmbeddingLauncher:
             import re
 
             job_id_match = re.search(r"Submitted batch job (\d+)", result.stdout)
+            logger.info(
+                f"🔍 DEBUG: Looking for job ID in stdout: '{result.stdout.strip()}'"
+            )
+            logger.info(f"🔍 DEBUG: Regex match result: {job_id_match}")
+
             if not job_id_match:
                 logger.error(f"Could not parse job ID from output: {result.stdout}")
                 raise RuntimeError("Could not parse job ID from SLURM output")
 
             job_id = int(job_id_match.group(1))
+            logger.info(f"🔍 DEBUG: Extracted job ID: {job_id}")
+            logger.info(
+                f"🔍 DEBUG: This should be an ARRAY JOB with tasks {job_id}_0 through {job_id}_{file_count - 1}"
+            )
             logger.info(
                 f"✓ Submitted array job {job_id} for {label} ({file_count} tasks)"
             )
