@@ -334,26 +334,70 @@ class EmbeddingLauncher:
 
             # IMMEDIATELY write job ID to temp file for tracking
             job_file = f"/scratch/global/menger/tmp/embedding_array_jobs_{os.environ.get('SLURM_JOB_ID', 'local')}.txt"
+            logger.info(
+                f"🔍 DEBUG: Attempting to write job ID {job_id} to temp file: {job_file}"
+            )
+
             try:
                 # Ensure the directory exists
-                os.makedirs("/scratch/global/menger/tmp", exist_ok=True)
+                temp_dir = "/scratch/global/menger/tmp"
+                os.makedirs(temp_dir, exist_ok=True)
+                logger.info(f"🔍 DEBUG: Created/verified temp directory: {temp_dir}")
+
+                # Check directory permissions
+                dir_stat = os.stat(temp_dir)
+                logger.info(
+                    f"🔍 DEBUG: Temp directory permissions: {oct(dir_stat.st_mode)[-3:]}"
+                )
 
                 with open(job_file, "a") as f:  # Use append mode
                     # Include cluster information for cross-cluster monitoring
                     if self.mode == "gpu" and os.environ.get("GPU_HOST"):
                         # GPU job - include cluster info
                         gpu_host = os.environ.get("GPU_HOST")
-                        f.write(f"{job_id}:gpu:{gpu_host}\n")
+                        line_to_write = f"{job_id}:gpu:{gpu_host}\n"
+                        f.write(line_to_write)
+                        f.flush()  # Force write to disk
+                        logger.info(
+                            f"🔍 DEBUG: Wrote line to temp file: '{line_to_write.strip()}'"
+                        )
                         logger.info(
                             f"✓ Job ID {job_id} written to tracking file (GPU cluster: {gpu_host}): {job_file}"
                         )
                     else:
                         # CPU job - local cluster
-                        f.write(f"{job_id}:cpu:local\n")
+                        line_to_write = f"{job_id}:cpu:local\n"
+                        f.write(line_to_write)
+                        f.flush()  # Force write to disk
+                        logger.info(
+                            f"🔍 DEBUG: Wrote line to temp file: '{line_to_write.strip()}'"
+                        )
                         logger.info(
                             f"✓ Job ID {job_id} written to tracking file (CPU cluster): {job_file}"
                         )
+
+                # Verify the file was written correctly
+                if os.path.exists(job_file):
+                    file_stat = os.stat(job_file)
+                    logger.info(
+                        f"🔍 DEBUG: Temp file exists, size: {file_stat.st_size} bytes, permissions: {oct(file_stat.st_mode)[-3:]}"
+                    )
+
+                    # Read back the file contents to verify
+                    with open(job_file, "r") as f:
+                        contents = f.read()
+                        logger.info(
+                            f"🔍 DEBUG: Temp file contents after write: '{contents.strip()}'"
+                        )
+                else:
+                    logger.error(
+                        "🔍 DEBUG: ERROR - Temp file does not exist after write attempt!"
+                    )
+
             except Exception as write_error:
+                logger.error(
+                    f"🔍 DEBUG: Exception during temp file write: {write_error}"
+                )
                 logger.warning(
                     f"Failed to write job ID to tracking file: {write_error}"
                 )
@@ -561,36 +605,102 @@ def main():
     # Final attempt to write job IDs file (in case immediate writing failed)
     if job_ids:
         job_file = f"/scratch/global/menger/tmp/embedding_array_jobs_{os.environ.get('SLURM_JOB_ID', 'local')}.txt"
+        logger.info(f"🔍 DEBUG: Final job ID write attempt to: {job_file}")
+        logger.info(f"🔍 DEBUG: Job IDs to ensure are written: {job_ids}")
+
         try:
             # Ensure the directory exists
-            os.makedirs("/scratch/global/menger/tmp", exist_ok=True)
+            temp_dir = "/scratch/global/menger/tmp"
+            os.makedirs(temp_dir, exist_ok=True)
+            logger.info(f"🔍 DEBUG: Final write - verified temp directory: {temp_dir}")
 
             # Ensure all job IDs are in the file (in case some immediate writes failed)
             existing_entries = set()
             if os.path.exists(job_file):
+                logger.info(
+                    "🔍 DEBUG: Temp file exists for final check, reading existing entries..."
+                )
                 with open(job_file, "r") as f:
-                    for line in f:
+                    file_contents = f.read()
+                    logger.info(
+                        f"🔍 DEBUG: Current temp file contents: '{file_contents.strip()}'"
+                    )
+
+                    for line_num, line in enumerate(
+                        file_contents.strip().split("\n"), 1
+                    ):
                         if line.strip():
                             # Extract job ID from the line (format: job_id:cluster_type:host)
                             job_id_part = line.strip().split(":")[0]
                             existing_entries.add(job_id_part)
+                            logger.info(
+                                f"🔍 DEBUG: Found existing entry {line_num}: job_id={job_id_part}, full_line='{line.strip()}'"
+                            )
+            else:
+                logger.warning(
+                    f"🔍 DEBUG: Temp file does not exist for final check: {job_file}"
+                )
 
             # Write any missing job IDs
             missing_ids = [jid for jid in job_ids if str(jid) not in existing_entries]
+            logger.info(
+                f"🔍 DEBUG: Missing job IDs that need to be written: {missing_ids}"
+            )
+
             if missing_ids:
+                logger.info(
+                    f"🔍 DEBUG: Writing {len(missing_ids)} missing job IDs to temp file..."
+                )
                 with open(job_file, "a") as f:
                     for job_id in missing_ids:
                         # Determine cluster info for missing job IDs
                         if args.mode == "gpu" and os.environ.get("GPU_HOST"):
                             gpu_host = os.environ.get("GPU_HOST")
-                            f.write(f"{job_id}:gpu:{gpu_host}\n")
+                            line_to_write = f"{job_id}:gpu:{gpu_host}\n"
+                            f.write(line_to_write)
+                            logger.info(
+                                f"🔍 DEBUG: Wrote missing GPU job ID: '{line_to_write.strip()}'"
+                            )
                         else:
-                            f.write(f"{job_id}:cpu:local\n")
+                            line_to_write = f"{job_id}:cpu:local\n"
+                            f.write(line_to_write)
+                            logger.info(
+                                f"🔍 DEBUG: Wrote missing CPU job ID: '{line_to_write.strip()}'"
+                            )
+                    f.flush()  # Force write to disk
+
                 logger.info(f"✓ Added missing job IDs to tracking file: {missing_ids}")
+            else:
+                logger.info(
+                    f"🔍 DEBUG: No missing job IDs - all {len(job_ids)} job IDs already in temp file"
+                )
+
+            # Final verification of temp file
+            if os.path.exists(job_file):
+                final_stat = os.stat(job_file)
+                logger.info(
+                    f"🔍 DEBUG: Final temp file status - size: {final_stat.st_size} bytes, permissions: {oct(final_stat.st_mode)[-3:]}"
+                )
+
+                with open(job_file, "r") as f:
+                    final_contents = f.read()
+                    final_lines = [
+                        line.strip()
+                        for line in final_contents.strip().split("\n")
+                        if line.strip()
+                    ]
+                    logger.info(
+                        f"🔍 DEBUG: Final temp file has {len(final_lines)} lines"
+                    )
+                    for i, line in enumerate(final_lines, 1):
+                        logger.info(f"🔍 DEBUG: Final line {i}: '{line}'")
 
             logger.info(f"✓ Final job IDs tracking file: {job_file}")
 
         except Exception as file_error:
+            logger.error(
+                f"🔍 DEBUG: Exception during final job ID file write: {file_error}"
+            )
             logger.error(f"Failed to finalize job IDs file: {file_error}")
             # Don't fail if we can't write the file - array jobs are already running
             logger.warning(
