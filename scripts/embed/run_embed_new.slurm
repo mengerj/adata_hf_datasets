@@ -244,21 +244,33 @@ if [[ -f "$job_file" ]]; then
                             # Look for any jobs with pattern like 7528531_*
                             squeue_output=$(ssh "$cluster_host" "squeue --noheader --format='%.10i' 2>/dev/null" || echo "")
                             echo "🔍 DEBUG: Full squeue output: '$squeue_output'"
-                            running_array_tasks=$(echo "$squeue_output" | grep "^${array_job_id}_" | wc -l || echo "0")
+                            # Handle leading whitespace by using word boundaries
+                            running_array_tasks=$(echo "$squeue_output" | grep -E "(^|[[:space:]])${array_job_id}_" | wc -l || echo "0")
                         else
                             # Look for any jobs with pattern like 7528531_*
                             squeue_output=$(squeue --noheader --format='%.10i' 2>/dev/null || echo "")
                             echo "🔍 DEBUG: Full squeue output: '$squeue_output'"
-                            running_array_tasks=$(echo "$squeue_output" | grep "^${array_job_id}_" | wc -l || echo "0")
+                            # Handle leading whitespace by using word boundaries
+                            running_array_tasks=$(echo "$squeue_output" | grep -E "(^|[[:space:]])${array_job_id}_" | wc -l || echo "0")
                         fi
-                        echo "🔍 DEBUG: Looking for pattern '^${array_job_id}_' in squeue output"
+                        echo "🔍 DEBUG: Looking for pattern '(^|[[:space:]])${array_job_id}_' in squeue output"
                         echo "🔍 DEBUG: Number of running array tasks in squeue: $running_array_tasks"
+
+                        # Debug the break condition
+                        echo "🔍 DEBUG: Break condition check:"
+                        echo "🔍 DEBUG:   running_array_tasks=$running_array_tasks (should be 0)"
+                        echo "🔍 DEBUG:   wait_iterations=$wait_iterations (should be > 5)"
+                        echo "🔍 DEBUG:   Condition result: running_array_tasks -eq 0 = $([[ $running_array_tasks -eq 0 ]] && echo "true" || echo "false")"
+                        echo "🔍 DEBUG:   Condition result: wait_iterations -gt 5 = $([[ $wait_iterations -gt 5 ]] && echo "true" || echo "false")"
 
                         # If no tasks are running in squeue, and we've waited a reasonable time, assume completion
                         if [[ $running_array_tasks -eq 0 && $wait_iterations -gt 5 ]]; then
+                            echo "🔍 DEBUG: *** BREAK CONDITION TRIGGERED ***"
                             echo "🔍 DEBUG: No array tasks in squeue after $wait_iterations iterations - assuming completion"
                             echo "  Array job $array_job_id appears to have completed (not visible in squeue)"
                             break
+                        else
+                            echo "🔍 DEBUG: Break condition NOT met, continuing to wait..."
                         fi
 
                         sleep 30
