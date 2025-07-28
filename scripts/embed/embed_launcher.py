@@ -333,8 +333,11 @@ class EmbeddingLauncher:
             )
 
             # IMMEDIATELY write job ID to temp file for tracking
-            job_file = f"/tmp/embedding_array_jobs_{os.environ.get('SLURM_JOB_ID', 'local')}.txt"
+            job_file = f"/scratch/global/menger/tmp/embedding_array_jobs_{os.environ.get('SLURM_JOB_ID', 'local')}.txt"
             try:
+                # Ensure the directory exists
+                os.makedirs("/scratch/global/menger/tmp", exist_ok=True)
+
                 with open(job_file, "a") as f:  # Use append mode
                     # Include cluster information for cross-cluster monitoring
                     if self.mode == "gpu" and os.environ.get("GPU_HOST"):
@@ -557,10 +560,11 @@ def main():
 
     # Final attempt to write job IDs file (in case immediate writing failed)
     if job_ids:
-        job_file = (
-            f"/tmp/embedding_array_jobs_{os.environ.get('SLURM_JOB_ID', 'local')}.txt"
-        )
+        job_file = f"/scratch/global/menger/tmp/embedding_array_jobs_{os.environ.get('SLURM_JOB_ID', 'local')}.txt"
         try:
+            # Ensure the directory exists
+            os.makedirs("/scratch/global/menger/tmp", exist_ok=True)
+
             # Ensure all job IDs are in the file (in case some immediate writes failed)
             existing_entries = set()
             if os.path.exists(job_file):

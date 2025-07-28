@@ -82,6 +82,21 @@ source .venv/bin/activate
 
 echo "Launching embedding array jobs..."
 
+# Ensure temp directory exists
+mkdir -p /scratch/global/menger/tmp
+
+# Set up cleanup trap for the temp file
+temp_cleanup() {
+    local job_file="/scratch/global/menger/tmp/embedding_array_jobs_${SLURM_JOB_ID}.txt"
+    if [[ -f "$job_file" ]]; then
+        echo "Cleaning up temp file: $job_file"
+        rm -f "$job_file"
+    fi
+}
+
+# Set up trap to clean up on exit (success, failure, or cancellation)
+trap temp_cleanup EXIT INT TERM
+
 # Build launcher command
 launcher_cmd=(
     "python" "scripts/embed/embed_launcher.py"
@@ -115,7 +130,7 @@ fi
 echo "Waiting for array jobs to complete..."
 
 # Check for array job IDs file
-job_file="/tmp/embedding_array_jobs_${SLURM_JOB_ID}.txt"
+job_file="/scratch/global/menger/tmp/embedding_array_jobs_${SLURM_JOB_ID}.txt"
 if [[ -f "$job_file" ]]; then
     echo "Found array job IDs file: $job_file"
 
