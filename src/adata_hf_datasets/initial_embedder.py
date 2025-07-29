@@ -1580,10 +1580,10 @@ class GeneSelectEmbedder(BaseEmbedder):
         fix_non_numeric_nans(adata)
 
         # Get the processed expression matrix
-        # X = adata.X.toarray() if sp.issparse(adata.X) else adata.X
-        embedding_matrix = adata.X
+        X = adata.X.toarray() if sp.issparse(adata.X) else adata.X
+        # embedding_matrix = adata.X
         # Save as float32
-        # embedding_matrix = X.copy().astype(np.float32)
+        embedding_matrix = X.copy().astype(np.float32)
         # Store in adata for compatibility
         adata.obsm[obsm_key] = embedding_matrix
 
