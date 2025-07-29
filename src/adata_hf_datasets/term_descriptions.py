@@ -336,24 +336,46 @@ def fetch_from_gene_db(term, description_config):
         # Initialize mygene
         mg = mygene.MyGeneInfo()
 
-        # Get NCBI gene ID from gene symbol
-        gene_info = mg.querymany(term, scopes="symbol", species="human", silent=True)
+        # Get gene info - use single query instead of querymany to avoid dup issues
+        gene_info = mg.query(term, scopes="symbol", species="human", size=5)
 
-        if not gene_info or len(gene_info) == 0:
+        if not gene_info or "hits" not in gene_info or len(gene_info["hits"]) == 0:
             logger.warning(f"No gene info found for {term}")
             return None
 
-        # Get the first result with an _id (this is the NCBI gene ID)
+        # Find the best gene ID - prefer NCBI gene IDs over Ensembl IDs
         gene_id = None
         gene_name = None
-        for result in gene_info:
-            if "_id" in result and "query" in result:
-                gene_id = result["_id"]
-                gene_name = result.get("name", "")
-                break
+
+        for hit in gene_info["hits"]:
+            if "_id" in hit:
+                current_id = str(hit["_id"])
+                current_name = hit.get("name", "")
+
+                # Skip Ensembl IDs (start with ENSG) - prefer NCBI gene IDs (numeric)
+                if current_id.startswith("ENSG"):
+                    continue
+
+                # Prefer numeric NCBI gene IDs
+                if current_id.isdigit():
+                    gene_id = current_id
+                    gene_name = current_name
+                    break
+
+                # Fallback to any non-Ensembl ID
+                if not gene_id:
+                    gene_id = current_id
+                    gene_name = current_name
 
         if not gene_id:
-            logger.warning(f"No gene ID found for {term}")
+            logger.warning(
+                f"No suitable gene ID found for {term} (only Ensembl IDs available)"
+            )
+            return None
+
+        # Skip if we still got an Ensembl ID
+        if gene_id.startswith("ENSG"):
+            logger.warning(f"Only Ensembl ID available for {term}: {gene_id}")
             return None
 
         # Now use NCBI Entrez API with the reliable gene ID from mygene
@@ -362,7 +384,9 @@ def fetch_from_gene_db(term, description_config):
         try:
             # Use esummary to get gene summary information
             summary_handle = Entrez.esummary(db="gene", id=gene_id)
-            summary_results = Entrez.read(summary_handle)
+            summary_results = Entrez.read(
+                summary_handle, validate=False
+            )  # Add validate=False
             summary_handle.close()
 
             if summary_results:
@@ -410,7 +434,7 @@ def fetch_from_gene_db(term, description_config):
         return None
 
     except Exception as e:
-        print(f"Error fetching Gene data for '{term}': {e}")
+        logger.warning(f"Error fetching Gene data for '{term}': {e}")
         return None
 
 
