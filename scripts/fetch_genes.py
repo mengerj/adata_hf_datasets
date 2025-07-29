@@ -1,17 +1,19 @@
 #!/usr/bin/env python3
 """
-Script to fetch human gene symbols from HGNC (HUGO Gene Nomenclature Committee).
+Script to fetch human gene symbols from local dictionary files.
 
-This script uses the HGNC complete set to fetch approved human gene symbols
-and saves them to a txt file in the resources folder.
+This script reads gene names from two dictionary files in the resources folder:
+1. A pickle file: gene_name_id_dict_gc95M.pkl
+2. A JSON file: vocab.json
+
+It returns the intersection of gene names (keys) from both dictionaries.
 """
 
-import io
+import json
 import logging
-from typing import Iterable, List, Optional
-import pandas as pd
-import requests
+import pickle
 from pathlib import Path
+from typing import List
 
 # Setup logging
 logging.basicConfig(
@@ -19,80 +21,71 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-HGNC_TSV = "https://storage.googleapis.com/public-download-files/hgnc/tsv/tsv/hgnc_complete_set.txt"
 
-
-def load_hgnc_symbols(locus_types: Optional[Iterable[str]] = None) -> List[str]:
-    """Return HGNC approved human gene symbols from the current *hgnc_complete_set*.
-
-    Parameters
-    ----------
-    locus_types : iterable of str, optional
-        Filter by HGNC ``locus_type`` values, e.g. ``["gene with protein product"]``,
-        ``["RNA, long non-coding"]``. If ``None``, return all approved symbols.
-
-    Returns
-    -------
-    list of str
-        Unique HGNC-approved symbols.
-
-    Notes
-    -----
-    Data source
-        HGNC "hgnc_complete_set" TSV hosted on Google Cloud Storage.
-        Files are updated on Tuesdays and Fridays. See HGNC downloads page
-        (new bucket paths) and archive/help.
+def load_genes_from_dictionaries(resources_dir: str = "resources") -> List[str]:
     """
-    logger.info("Downloading HGNC complete set from %s", HGNC_TSV)
-    r = requests.get(HGNC_TSV, timeout=120)
-    r.raise_for_status()
-    df = pd.read_csv(io.StringIO(r.text), sep="\t", dtype=str)
-    df = df[df["status"] == "Approved"]
-    if locus_types:
-        df = df[df["locus_type"].isin(list(locus_types))]
-    symbols = df["symbol"].dropna().unique().tolist()
-    logger.info("Collected %d HGNC symbols", len(symbols))
-    return symbols
+    Load gene names from two dictionary files and return their intersection.
 
-
-def fetch_all_genes() -> List[str]:
-    """
-    Fetch all approved human gene symbols from HGNC.
+    Args:
+        resources_dir: Directory containing the dictionary files
 
     Returns:
-        List of all approved gene symbols
+        List of gene names present in both dictionaries
     """
-    logger.info("Fetching all approved human gene symbols from HGNC...")
-    return load_hgnc_symbols()
+    resources_path = Path(resources_dir)
+
+    # File paths
+    pkl_file = resources_path / "gene_name_id_dict_gc95M.pkl"
+    json_file = resources_path / "vocab.json"
+
+    # Check if files exist
+    if not pkl_file.exists():
+        logger.error(f"Pickle file not found: {pkl_file}")
+        return []
+
+    if not json_file.exists():
+        logger.error(f"JSON file not found: {json_file}")
+        return []
+
+    # Load pickle dictionary
+    logger.info(f"Loading pickle dictionary from {pkl_file}")
+    try:
+        with open(pkl_file, "rb") as handle:
+            pkl_dict = pickle.load(handle)
+        pkl_genes = set(pkl_dict.keys())
+        logger.info(f"Loaded {len(pkl_genes)} genes from pickle file")
+    except Exception as e:
+        logger.error(f"Error loading pickle file: {e}")
+        return []
+
+    # Load JSON dictionary
+    logger.info(f"Loading JSON dictionary from {json_file}")
+    try:
+        with open(json_file, "r", encoding="utf-8") as handle:
+            json_dict = json.load(handle)
+        json_genes = set(json_dict.keys())
+        logger.info(f"Loaded {len(json_genes)} genes from JSON file")
+    except Exception as e:
+        logger.error(f"Error loading JSON file: {e}")
+        return []
+
+    # Get intersection of gene names
+    common_genes = pkl_genes.intersection(json_genes)
+    logger.info(f"Found {len(common_genes)} genes in common between both dictionaries")
+
+    # Convert to sorted list
+    return sorted(list(common_genes))
 
 
-def fetch_protein_coding_genes() -> List[str]:
+def fetch_genes_from_local_dicts() -> List[str]:
     """
-    Fetch only protein-coding gene symbols from HGNC.
+    Fetch gene symbols from local dictionary files.
 
     Returns:
-        List of protein-coding gene symbols
+        List of gene symbols present in both dictionary files
     """
-    logger.info("Fetching protein-coding gene symbols from HGNC...")
-    return load_hgnc_symbols(locus_types=["gene with protein product"])
-
-
-def fetch_common_gene_types() -> List[str]:
-    """
-    Fetch commonly used gene types (protein-coding + some RNA types).
-
-    Returns:
-        List of gene symbols for common gene types
-    """
-    logger.info("Fetching common gene types from HGNC...")
-    common_types = [
-        "gene with protein product",
-        "RNA, long non-coding",
-        "RNA, micro",
-        "RNA, ribosomal",
-        "RNA, transfer",
-    ]
-    return load_hgnc_symbols(locus_types=common_types)
+    logger.info("Fetching gene names from local dictionary files...")
+    return load_genes_from_dictionaries()
 
 
 def save_genes_to_file(
@@ -154,22 +147,12 @@ def load_genes_from_file(
 def main():
     """Main function to fetch and save gene symbols."""
 
-    logger.info("Starting gene symbol fetching from HGNC...")
+    logger.info("Starting gene symbol extraction from local dictionary files...")
 
     try:
-        # You can choose which gene types to fetch by uncommenting one of these:
-
-        # Option 1: All approved genes (largest set, ~45k genes)
-        # genes = fetch_all_genes()
-        # filename = "genes_all.txt"
-
-        # Option 2: Only protein-coding genes (most commonly used, ~20k genes)
-        genes = fetch_protein_coding_genes()
+        # Fetch genes from the intersection of both dictionaries
+        genes = fetch_genes_from_local_dicts()
         filename = "genes.txt"
-
-        # Option 3: Common gene types including some RNA types (~25k genes)
-        # genes = fetch_common_gene_types()
-        # filename = "genes_common.txt"
 
         if genes:
             # Save to file
@@ -211,7 +194,10 @@ description_config = TermDescriptionConfig(
 gen_term_descriptions(description_config)
 """)
         else:
-            logger.error("Failed to fetch gene symbols")
+            logger.error("Failed to load gene symbols from dictionary files")
+            logger.error("Please ensure both files exist in the resources directory:")
+            logger.error("  - resources/gene_name_id_dict_gc95M.pkl")
+            logger.error("  - resources/vocab.json")
 
     except Exception as e:
         logger.error(f"Error occurred: {e}")
