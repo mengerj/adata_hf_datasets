@@ -32,6 +32,7 @@ dependencies = [
   "ipykernel>=6.29.5",
   "ipywidgets>=8.1.5",
   "jupyter>=1.1.1",
+  "mygene>=3.2.2",
   "numcodecs==0.14.1",
   "numpy",
   "pandas",
