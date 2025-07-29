@@ -28,7 +28,7 @@ other_bio_labels: [organ_tissue, cluster_label]
 # =============================================================================
 # Download configuration
 download:
-  enabled: false
+  enabled: true
   preserve_proportions: true
   subset_size: 10000
 
