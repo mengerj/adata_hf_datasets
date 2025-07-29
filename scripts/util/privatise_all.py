@@ -12,7 +12,7 @@ References
 
 Example
 -------
-python make_all_hf_repos_private.py --user my_hf_username
+python privatise_all.py --user my_hf_username
 """
 
 import os
