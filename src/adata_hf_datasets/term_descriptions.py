@@ -661,7 +661,10 @@ def create_anchor_positive_pairs(df_descriptions, term_type):
     pairs = []
 
     for _, row in df_descriptions.iterrows():
-        if row["description"].strip():  # Only create pairs if we have a description
+        # Handle NaN and empty descriptions properly
+        if (
+            pd.notna(row["description"]) and str(row["description"]).strip()
+        ):  # Only create pairs if we have a description
             source = row.get("definition_source", "Unknown")
             citation_info = get_database_citation(source)
 
@@ -725,25 +728,51 @@ def gen_term_descriptions(description_config):
                 terms_list, term_type, description_config
             )
 
+            # Filter out entries without descriptions before saving
+            original_count = len(df_descriptions)
+            df_descriptions_filtered = df_descriptions[
+                df_descriptions["description"].notna()
+                & (df_descriptions["description"].str.strip() != "")
+            ].copy()
+
+            # Log missing descriptions
+            missing_count = original_count - len(df_descriptions_filtered)
+            if missing_count > 0:
+                missing_terms = df_descriptions[
+                    df_descriptions["description"].isna()
+                    | (df_descriptions["description"].str.strip() == "")
+                ]["term"].tolist()
+                print(
+                    f"⚠️  {missing_count} {term_type} without descriptions (excluded from CSV):"
+                )
+                for i, term in enumerate(missing_terms[:10]):  # Show first 10
+                    print(f"   • {term}")
+                if len(missing_terms) > 10:
+                    print(f"   • ... and {len(missing_terms) - 10} more")
+
             # Create subfolder for this term type
             subfolder = Path("descriptions") / term_type
 
             # Generate filename
             dataframe_name = f"{term_type}_descriptions.csv"
 
-            # Save to CSV
+            # Save filtered CSV (only entries with descriptions)
             save_to_csv(
-                dataframe=df_descriptions,
+                dataframe=df_descriptions_filtered,
                 dataframe_name=dataframe_name,
                 config=description_config,
                 subfolder=subfolder,
             )
 
-            print(f"✅ Saved {len(df_descriptions)} {term_type} descriptions")
+            print(
+                f"✅ Saved {len(df_descriptions_filtered)} {term_type} descriptions (filtered from {original_count} total)"
+            )
 
             # Create anchor-positive pairs for HuggingFace if requested
             if config.save_to_hf:
-                df_pairs = create_anchor_positive_pairs(df_descriptions, term_type)
+                df_pairs = create_anchor_positive_pairs(
+                    df_descriptions_filtered, term_type
+                )
                 if not df_pairs.empty:
                     # Create HuggingFace dataset
                     hf_dataset = Dataset.from_pandas(df_pairs)
@@ -751,16 +780,16 @@ def gen_term_descriptions(description_config):
                     hf_datasets[dataset_name] = {
                         "dataset": hf_dataset,
                         "df_pairs": df_pairs,
-                        "df_descriptions": df_descriptions,
+                        "df_descriptions": df_descriptions_filtered,
                     }
                     print(
                         f"📦 Created {len(df_pairs)} anchor-positive pairs for {term_type}"
                     )
 
-            # Print sample results
-            if not df_descriptions.empty:
+            # Print sample results (only from successfully fetched descriptions)
+            if not df_descriptions_filtered.empty:
                 print(f"Sample descriptions for {term_type}:")
-                for _, row in df_descriptions.head(3).iterrows():
+                for _, row in df_descriptions_filtered.head(3).iterrows():
                     desc_preview = (
                         row["description"][:100] + "..."
                         if len(row["description"]) > 100
