@@ -88,10 +88,9 @@ def main():
     tissues = None
     organisms = None
     cell_types = None
-
     # Advanced settings (OPTIMIZED FOR SPEED)
     max_retries = 1  # Reduced retries for speed
-    batch_size = 50  # Larger batches for efficiency
+    batch_size = 10  # Larger batches for efficiency
     include_mesh_tree = False  # Skip for speed
     include_synonyms = False  # Skip for speed (major time saver)
 

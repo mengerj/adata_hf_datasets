@@ -7,6 +7,11 @@ from Bio import Entrez
 from pathlib import Path
 from datasets import Dataset
 from adata_hf_datasets.hf_config import hf_config
+import logging
+import mygene
+
+
+logger = logging.getLogger(__name__)
 
 
 def save_to_csv(dataframe, dataframe_name, config, subfolder):
@@ -326,43 +331,81 @@ def fetch_from_mesh(term, description_config):
 
 
 def fetch_from_gene_db(term, description_config):
-    """Fetch gene information from NCBI Gene database."""
+    """Fetch gene information using mygene for gene ID + NCBI API for description."""
     try:
-        search_handle = Entrez.esearch(db="gene", term=f"{term}[Gene Name]", retmax=3)
-        search_results = Entrez.read(search_handle)
-        search_handle.close()
+        # Initialize mygene
+        mg = mygene.MyGeneInfo()
 
-        if not search_results["IdList"]:
+        # Get NCBI gene ID from gene symbol
+        gene_info = mg.querymany(term, scopes="symbol", species="human", silent=True)
+
+        if not gene_info or len(gene_info) == 0:
+            logger.warning(f"No gene info found for {term}")
             return None
 
-        gene_id = search_results["IdList"][0]
+        # Get the first result with an _id (this is the NCBI gene ID)
+        gene_id = None
+        gene_name = None
+        for result in gene_info:
+            if "_id" in result and "query" in result:
+                gene_id = result["_id"]
+                gene_name = result.get("name", "")
+                break
 
-        # Use esummary instead of efetch to avoid XML parsing issues
-        summary_handle = Entrez.esummary(db="gene", id=gene_id)
-        summary_results = Entrez.read(summary_handle)
-        summary_handle.close()
+        if not gene_id:
+            logger.warning(f"No gene ID found for {term}")
+            return None
 
-        if summary_results:
-            summary = (
-                summary_results[0]
-                if isinstance(summary_results, list)
-                else summary_results
+        # Now use NCBI Entrez API with the reliable gene ID from mygene
+        Entrez.email = description_config.email
+
+        try:
+            # Use esummary to get gene summary information
+            summary_handle = Entrez.esummary(db="gene", id=gene_id)
+            summary_results = Entrez.read(summary_handle)
+            summary_handle.close()
+
+            if summary_results:
+                # Handle both list and dict formats
+                if isinstance(summary_results, list):
+                    summary = summary_results[0] if summary_results else {}
+                elif "DocumentSummarySet" in summary_results:
+                    doc_summary = summary_results["DocumentSummarySet"][
+                        "DocumentSummary"
+                    ]
+                    summary = (
+                        doc_summary[0] if isinstance(doc_summary, list) else doc_summary
+                    )
+                else:
+                    summary = summary_results
+
+                description = ""
+
+                # Try to extract description from various fields
+                if isinstance(summary, dict):
+                    if "Summary" in summary and summary["Summary"].strip():
+                        description = str(summary["Summary"]).strip()
+                    elif "Description" in summary and summary["Description"].strip():
+                        description = str(summary["Description"]).strip()
+                    elif "Name" in summary and summary["Name"].strip():
+                        description = f"Gene: {summary['Name']}"
+
+                # If we got a good description from API, use it
+                if description and len(description) > 10:
+                    return {
+                        "description": description,
+                        "definition_source": "NCBI Gene API (via mygene ID)",
+                    }
+
+        except Exception as api_error:
+            logger.warning(
+                f"NCBI API error for gene {term} (ID: {gene_id}): {api_error}"
             )
-            description = ""
 
-            # Try to extract description from various fields
-            if "Summary" in summary:
-                description = summary["Summary"]
-            elif "Description" in summary:
-                description = summary["Description"]
-            elif "Name" in summary:
-                description = f"Gene: {summary['Name']}"
-
-            return (
-                {"description": description, "definition_source": "Gene DB"}
-                if description
-                else None
-            )
+        # Fallback: use basic gene info from mygene
+        if gene_name:
+            basic_desc = f"{term}: {gene_name}"
+            return {"description": basic_desc, "definition_source": "MyGene API"}
 
         return None
 
