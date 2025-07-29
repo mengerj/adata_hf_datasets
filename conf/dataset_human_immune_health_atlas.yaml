@@ -8,7 +8,7 @@ defaults:
 # DATASET METADATA
 # =============================================================================
 dataset:
-  name: "human_immune_health_atlas_5k_3k"
+  name: "human_immune_health_atlas_10k"
   description: |
     A dataset of 100k human immune health atlas samples from the Human Cell Atlas.
     Originally published in Gong Q, Sharma M, Kuan EL, Glass MC, Chander A, Singh M, et al.
@@ -32,7 +32,7 @@ other_bio_labels: ["AIFI_L1", "AIFI_L2", "AIFI_L3"]
 # Download configuration
 download:
   enabled: true
-  subset_size: 5000
+  subset_size: 10000
 
 # Preprocessing overrides (both dataset-specific and execution parameters)
 preprocessing:
@@ -43,17 +43,17 @@ preprocessing:
   count_layer_key: "counts" # Key in adata.layers with raw counts. If not present, adata.raw.X is checked.
 
 embedding_preparation:
-  enabled: false
+  enabled: true
   methods: ["geneformer"]
 
 # Embedding overrides (both dataset-specific and execution parameters)
 embedding_cpu:
   # Dataset-specific parameters
-  enabled: false
-  methods: ["hvg", "pca", "scvi_fm"]
+  enabled: true
+  methods: ["hvg", "pca", "scvi_fm", "gs"]
 
 embedding_gpu:
-  enabled: false
+  enabled: true
   methods: ["geneformer"]
 
 # Dataset creation overrides
@@ -61,8 +61,8 @@ dataset_creation:
   # Dataset-specific parameters
   enabled: true
   use_nextcloud: true
-  required_obsm_keys: [] #["X_pca", "X_scvi_fm", "X_hvg", "X_geneformer"]
-  cs_length: [2000]
+  required_obsm_keys: ["X_pca", "X_scvi_fm", "X_hvg", "X_geneformer", "X_gs"]
+  cs_length: [50, 2000]
   negatives_per_sample: 2
   split_dataset: false # Important for training datasets. Set to false for test datasets.
   dataset_format: single # Important for training datasets. Set to "single" for test datasets.

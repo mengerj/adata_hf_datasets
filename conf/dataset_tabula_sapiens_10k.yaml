@@ -28,7 +28,7 @@ other_bio_labels: [organ_tissue, cluster_label]
 # =============================================================================
 # Download configuration
 download:
-  enabled: true
+  enabled: false
   preserve_proportions: true
   subset_size: 10000
 
@@ -37,6 +37,7 @@ preprocessing:
   # Dataset-specific parameters
   enabled: true
   chunk_size: 100000
+  n_top_genes: 3000
   split_dataset: false # Important for training datasets. Set to false for test datasets. (Similar parameters in dataset_creation)
   count_layer_key: "decontXcounts" # Key in adata.layers with raw counts. If not present, adata.raw.X is checked.
 
@@ -44,23 +45,26 @@ preprocessing:
 embedding_preparation:
   enabled: true # Set to false to skip embedding preparation
   methods: ["geneformer"] #run the prepare step on cpu to save gpu time
+  # memory_gb: 80 # Override default 60GB if needed for larger datasets
 
 # Embedding overrides (both dataset-specific and execution parameters)
 embedding_cpu:
   enabled: true
-  methods: ["hvg", "pca", "scvi_fm"]
+  methods: ["hvg", "pca", "scvi_fm", "gs"]
+  # memory_gb: 80 # Override default 60GB if needed for larger datasets
 
 embedding_gpu:
   enabled: true
   methods: ["geneformer"]
+  # memory_gb: 80 # Override default 60GB if needed for larger datasets
 
 # Dataset creation overrides
 dataset_creation:
   enabled: true
   use_nextcloud: true
   # Dataset-specific parameters
-  required_obsm_keys: ["X_pca", "X_scvi_fm", "X_hvg", "X_geneformer"]
-  cs_length: [50, 200]
+  required_obsm_keys: ["X_pca", "X_scvi_fm", "X_hvg", "X_geneformer", "X_gs"]
+  cs_length: [50, 2000]
   negatives_per_sample: 2
   split_dataset: false # Important for training datasets. Set to false for test datasets.
   dataset_format: "single" # Important for training datasets. Set to "single" for test datasets.
