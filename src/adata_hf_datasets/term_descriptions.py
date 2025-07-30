@@ -776,7 +776,7 @@ def gen_term_descriptions(description_config):
                 if not df_pairs.empty:
                     # Create HuggingFace dataset
                     hf_dataset = Dataset.from_pandas(df_pairs)
-                    dataset_name = f"{term_type}_anchor_positive"
+                    dataset_name = f"{term_type}"
                     hf_datasets[dataset_name] = {
                         "dataset": hf_dataset,
                         "df_pairs": df_pairs,
@@ -802,7 +802,7 @@ def gen_term_descriptions(description_config):
     if config.save_to_hf and hf_datasets:
         print(f"\n🚀 Uploading {len(hf_datasets)} datasets to HuggingFace Hub...")
 
-        base_repo_name = f"{config.data_dir}_term_descriptions"
+        base_repo_name = f"{config.data_dir}"
 
         for dataset_name, dataset_info in hf_datasets.items():
             full_repo_name = f"{base_repo_name}_{dataset_name}"
