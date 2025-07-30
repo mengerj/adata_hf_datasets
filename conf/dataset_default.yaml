@@ -48,7 +48,7 @@ preprocessing:
   # Dataset-specific processing parameters
   min_cells: 20 # Minimum number of cells a gene should be expressed in
   min_genes: 200 # Minimum number of genes a cell should express
-  n_top_genes: 1000 # Number of top genes to select
+  n_top_genes: 5000 # Number of top genes to select
   count_layer_key: null # Key in adata.layers with raw counts. If not present, adata.raw.X is checked.
 
   # Category consolidation parameters
