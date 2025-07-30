@@ -7,6 +7,7 @@ defaults:
 # =============================================================================
 # DATASET METADATA
 # =============================================================================
+base_file_path: "data/RNA"
 dataset:
   name: "cellxgene_pseudo_bulk_3_5k"
   description: "CellxGene pseudo bulk dataset with 3,5k samples. Annotated with natural language descriptions obtained in CellWhisperer Study."
@@ -45,8 +46,8 @@ embedding_preparation:
 
 # Embedding overrides (both dataset-specific and execution parameters)
 embedding_cpu:
-  enabled: false
-  methods: ["hvg", "pca", "scvi_fm"]
+  enabled: true
+  methods: ["hvg", "pca", "scvi_fm", "gs"]
 
 embedding_gpu:
   enabled: false
@@ -57,8 +58,8 @@ dataset_creation:
   enabled: true
   use_nextcloud: true
   # Dataset-specific parameters
-  required_obsm_keys: ["X_pca", "X_scvi_fm", "X_hvg", "X_geneformer"]
-  cs_length: [50, 500]
+  required_obsm_keys: ["X_pca", "X_scvi_fm", "X_hvg", "X_geneformer", "X_gs"]
+  cs_length: [50, 2000]
   caption_keys: ["caption_key", "annotation_key"]
   negatives_per_sample: 2
   split_dataset: true # Important for training datasets. Set to false for test datasets.
