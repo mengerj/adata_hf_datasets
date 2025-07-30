@@ -521,7 +521,7 @@ def create_dataset_description(term_type, df_pairs, df_descriptions):
 
     # Count statistics
     total_pairs = len(df_pairs)
-    main_terms = len(df_pairs[not df_pairs["is_synonym"]])
+    main_terms = len(df_pairs[~df_pairs["is_synonym"]])  # Use ~ for Series negation
     synonym_pairs = len(df_pairs[df_pairs["is_synonym"]])
 
     # Create examples section
