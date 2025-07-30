@@ -31,6 +31,43 @@ import random
 logger = logging.getLogger(__name__)
 
 
+def _redirect_tmp_cache_dir(
+    cache_dir: str, cluster_tmp_dir: str = "/scratch/global/menger/tmp"
+) -> str:
+    """
+    Redirect cache directories from /tmp/ to a cluster-appropriate location.
+
+    Parameters
+    ----------
+    cache_dir : str
+        The original cache directory path.
+    cluster_tmp_dir : str, optional
+        The cluster tmp directory to use instead of /tmp/.
+        Defaults to "/scratch/global/menger/tmp".
+
+    Returns
+    -------
+    str
+        The potentially redirected cache directory path.
+    """
+    cache_path = Path(cache_dir)
+
+    # Check if the path starts with /tmp/
+    if str(cache_path).startswith("/tmp/"):
+        # Get the relative part after /tmp/
+        relative_path = cache_path.relative_to("/tmp")
+        # Create new path using cluster tmp directory
+        new_cache_dir = os.path.join(cluster_tmp_dir, str(relative_path))
+        logger.info(f"Redirecting cache from {cache_dir} to {new_cache_dir}")
+
+        # Ensure the new directory exists
+        os.makedirs(new_cache_dir, exist_ok=True)
+
+        return new_cache_dir
+
+    return cache_dir
+
+
 class BaseEmbedder:
     """
     Base class for all embedders. Defines a common interface.
@@ -917,6 +954,12 @@ class SCVIEmbedder(BaseEmbedder):
             "file_cache_dir", self.init_kwargs.get("file_cache_dir")
         )
 
+        # Redirect cache directories if they're in /tmp/
+        if cache_dir is not None:
+            cache_dir = _redirect_tmp_cache_dir(cache_dir)
+        if file_cache_dir is not None:
+            file_cache_dir = _redirect_tmp_cache_dir(file_cache_dir)
+
         # Load the model from either HF hub or S3
         if hub_repo_id is not None:
             logger.info("Loading SCVI model from HF hub: %s", hub_repo_id)
@@ -942,7 +985,8 @@ class SCVIEmbedder(BaseEmbedder):
         # Load reference AnnData if needed
         if reference_adata_url is not None:
             if file_cache_dir is None:
-                save_dir = tempfile.TemporaryDirectory()
+                temp_base_dir = _redirect_tmp_cache_dir(tempfile.gettempdir())
+                save_dir = tempfile.TemporaryDirectory(dir=temp_base_dir)
             else:
                 if not file_cache_dir.endswith("/"):
                     file_cache_dir += "/"
@@ -1159,7 +1203,8 @@ class SCVIEmbedder(BaseEmbedder):
             Base delay in seconds for exponential backoff
         """
         orig_dir = Path(model.local_dir)
-        tmp_dir = Path(tempfile.gettempdir()) / f"scvi_{uuid.uuid4().hex}"
+        temp_base_dir = _redirect_tmp_cache_dir(tempfile.gettempdir())
+        tmp_dir = Path(temp_base_dir) / f"scvi_{uuid.uuid4().hex}"
         tmp_dir.mkdir(parents=True, exist_ok=True)
 
         try:
@@ -1325,13 +1370,21 @@ class SCVIEmbedderFM(SCVIEmbedder):
         )
         default_data_cache = os.path.join(default_cache_root, "reference_data", "scvi")
 
+        # Redirect cache directories if they're in /tmp/
+        default_model_cache = _redirect_tmp_cache_dir(default_model_cache)
+        default_data_cache = _redirect_tmp_cache_dir(default_data_cache)
+
         # Ensure the cache directories exist
         os.makedirs(default_model_cache, exist_ok=True)
         os.makedirs(default_data_cache, exist_ok=True)
 
-        # Use provided cache dirs or defaults
-        cache_dir = init_kwargs.pop("cache_dir", default_model_cache)
-        file_cache_dir = init_kwargs.pop("file_cache_dir", default_data_cache)
+        # Use provided cache dirs or defaults (and redirect if needed)
+        cache_dir = _redirect_tmp_cache_dir(
+            init_kwargs.pop("cache_dir", default_model_cache)
+        )
+        file_cache_dir = _redirect_tmp_cache_dir(
+            init_kwargs.pop("file_cache_dir", default_data_cache)
+        )
 
         default_kwargs = {
             "reference_s3_bucket": "cellxgene-contrib-public",
@@ -1392,11 +1445,19 @@ class GeneSelectEmbedder(BaseEmbedder):
         )
         default_data_cache = os.path.join(default_cache_root, "reference_data", "scvi")
 
+        # Redirect cache directories if they're in /tmp/
+        default_model_cache = _redirect_tmp_cache_dir(default_model_cache)
+        default_data_cache = _redirect_tmp_cache_dir(default_data_cache)
+
         os.makedirs(default_model_cache, exist_ok=True)
         os.makedirs(default_data_cache, exist_ok=True)
 
-        cache_dir = init_kwargs.pop("cache_dir", default_model_cache)
-        file_cache_dir = init_kwargs.pop("file_cache_dir", default_data_cache)
+        cache_dir = _redirect_tmp_cache_dir(
+            init_kwargs.pop("cache_dir", default_model_cache)
+        )
+        file_cache_dir = _redirect_tmp_cache_dir(
+            init_kwargs.pop("file_cache_dir", default_data_cache)
+        )
 
         self.default_kwargs = {
             "reference_s3_bucket": "cellxgene-contrib-public",
@@ -1464,7 +1525,8 @@ class GeneSelectEmbedder(BaseEmbedder):
         # Load reference AnnData if needed
         if reference_adata_url is not None:
             if file_cache_dir is None:
-                save_dir = tempfile.TemporaryDirectory()
+                temp_base_dir = _redirect_tmp_cache_dir(tempfile.gettempdir())
+                save_dir = tempfile.TemporaryDirectory(dir=temp_base_dir)
             else:
                 if not file_cache_dir.endswith("/"):
                     file_cache_dir += "/"
