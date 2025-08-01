@@ -187,8 +187,8 @@ dataset_creation:
   # Cell sentence generation parameters
   gene_name_column: "gene_name" # Column in .var containing gene names
   include_label_prob: 0
-  cs_length: 10
-
+  cs_length: 4096
+  caption_keys: ["caption_key"]
   # Caption and negative sampling
   negatives_per_sample: 2
 
