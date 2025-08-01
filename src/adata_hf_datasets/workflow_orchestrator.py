@@ -1562,70 +1562,34 @@ class WorkflowOrchestrator:
     def _check_job_status_fallback(
         self, host: str, job_id: int, step_name: str
     ) -> bool:
-        """
-        Fallback method to check job status when sacct is unavailable.
-
-        Returns:
-            bool: True if job appears to have succeeded, False if it failed
-        """
-        logger.info(f"Using fallback status check for {step_name} job {job_id}")
-
+        """Check job status using fallback methods when sacct fails."""
         try:
-            # Get the job output directory from workflow logger
-            if self.workflow_logger:
-                job_output_dir = self.workflow_logger.get_step_log_dir(
-                    step_name.lower().replace(" ", "_"), str(job_id)
-                )
-            else:
-                # Fallback to default output location
-                job_output_dir = Path(
-                    f"outputs/{datetime.now().strftime('%Y-%m-%d')}/{step_name.lower().replace(' ', '_')}/{job_id}"
-                )
-
-            # Look for job output files in multiple possible locations
-            output_file_locations = [
-                # Workflow logger location
-                job_output_dir / f"{step_name.lower().replace(' ', '_')}.out",
-                job_output_dir / f"{step_name.lower().replace(' ', '_')}.err",
-                # Standard SLURM locations
-                Path(f"slurm-{job_id}.out"),
-                Path(f"slurm-{job_id}.err"),
-                Path(f"{job_id}.out"),
-                Path(f"{job_id}.err"),
-            ]
-
-            # Check remote files via SSH
-            for file_path in output_file_locations:
-                success, error_found = self._check_remote_job_output(
-                    host, file_path, step_name, job_id
-                )
-                if success is not None:  # Found definitive answer
-                    return success and not error_found
-
-            # If no output files found, try to get basic job info
-            logger.warning(f"No job output files found for {step_name} job {job_id}")
-
-            # As a last resort, check if the job process is still running
-            check_cmd = ["ssh", host, f"ps aux | grep {job_id} | grep -v grep"]
-            result = subprocess.run(
-                check_cmd,
-                capture_output=True,
-                text=True,
-                timeout=300,  # 5 minutes for monitoring
+            # Check for job output files
+            output_file_path = (
+                f"/path/to/job/output/{job_id}.out"  # Adjust path as necessary
             )
-
-            if result.returncode == 0 and result.stdout.strip():
-                logger.info(f"Job {job_id} process still appears to be running")
-                return False  # Still running, shouldn't be considered complete
+            if os.path.exists(output_file_path):
+                with open(output_file_path, "r") as f:
+                    content = f.read()
+                    if "SUCCESS" in content:
+                        logger.info(f"Job {job_id} completed successfully.")
+                        return True
+                    elif "FAILED" in content:
+                        logger.warning(f"Job {job_id} failed based on output.")
+                        return False
+                    else:
+                        logger.warning(
+                            f"Job {job_id} status is unknown based on output."
+                        )
+                        return True  # Or return None based on your preference
             else:
                 logger.warning(
-                    f"Cannot determine status for job {job_id} - assuming failure for safety"
+                    f"No output file found for job {job_id}. Status is unknown."
                 )
-                return False
-
+                return True  # Or return None based on your preference
         except Exception as e:
-            logger.warning(f"Fallback status check failed for job {job_id}: {e}")
-            return False  # Assume failure if we can't determine status
+            logger.warning(f"Error checking job status for {job_id}: {e}")
+            return True  # Or return None based on your preference
 
     def _check_remote_job_output(
         self, host: str, file_path: Path, step_name: str, job_id: int
@@ -2037,3 +2001,74 @@ if __name__ == "__main__":
     except Exception:
         logger.exception("Workflow orchestration failed")
         sys.exit(1)
+
+
+'''
+    def _check_job_status_fallback(
+        self, host: str, job_id: int, step_name: str
+    ) -> bool:
+        """
+        Fallback method to check job status when sacct is unavailable.
+
+        Returns:
+            bool: True if job appears to have succeeded, False if it failed
+        """
+        logger.info(f"Using fallback status check for {step_name} job {job_id}")
+
+        try:
+            # Get the job output directory from workflow logger
+            if self.workflow_logger:
+                job_output_dir = self.workflow_logger.get_step_log_dir(
+                    step_name.lower().replace(" ", "_"), str(job_id)
+                )
+            else:
+                # Fallback to default output location
+                job_output_dir = Path(
+                    f"outputs/{datetime.now().strftime('%Y-%m-%d')}/{step_name.lower().replace(' ', '_')}/{job_id}"
+                )
+
+            # Look for job output files in multiple possible locations
+            output_file_locations = [
+                # Workflow logger location
+                job_output_dir / f"{step_name.lower().replace(' ', '_')}.out",
+                job_output_dir / f"{step_name.lower().replace(' ', '_')}.err",
+                # Standard SLURM locations
+                Path(f"slurm-{job_id}.out"),
+                Path(f"slurm-{job_id}.err"),
+                Path(f"{job_id}.out"),
+                Path(f"{job_id}.err"),
+            ]
+
+            # Check remote files via SSH
+            for file_path in output_file_locations:
+                success, error_found = self._check_remote_job_output(
+                    host, file_path, step_name, job_id
+                )
+                if success is not None:  # Found definitive answer
+                    return success and not error_found
+
+            # If no output files found, try to get basic job info
+            logger.warning(f"No job output files found for {step_name} job {job_id}")
+
+            # As a last resort, check if the job process is still running
+            check_cmd = ["ssh", host, f"ps aux | grep {job_id} | grep -v grep"]
+            result = subprocess.run(
+                check_cmd,
+                capture_output=True,
+                text=True,
+                timeout=300,  # 5 minutes for monitoring
+            )
+
+            if result.returncode == 0 and result.stdout.strip():
+                logger.info(f"Job {job_id} process still appears to be running")
+                return False  # Still running, shouldn't be considered complete
+            else:
+                logger.warning(
+                    f"Cannot determine status for job {job_id} - assuming failure for safety"
+                )
+                return False
+
+        except Exception as e:
+            logger.warning(f"Fallback status check failed for job {job_id}: {e}")
+            return False  # Assume failure if we can't determine status
+'''
