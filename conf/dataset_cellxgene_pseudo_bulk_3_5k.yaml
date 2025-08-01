@@ -12,7 +12,7 @@ dataset:
   name: "cellxgene_pseudo_bulk_3_5k"
   description: "CellxGene pseudo bulk dataset with 3,5k samples. Annotated with natural language descriptions obtained in CellWhisperer Study."
   download_url: "https://medical-epigenomics.org/papers/schaefer2024/data/datasets/cellxgene_census/full_data.h5ad" # Example URL
-  full_name: "cellxgene_pseudo_bulk_full"
+  full_name: "cellxgene_pseudo_bulk_100k"
 
 # =============================================================================
 # COMMON KEYS (dataset-specific)
