@@ -148,16 +148,64 @@ def build_repo_id(
     dataset_names: List[str],
     dataset_format: str,
     caption_key: str,
-    cs_length: int,
 ) -> str:
     """
     Compose the final HF repo-ID.
 
     Example:
-        >>> build_repo_id("jo-mengr", ["bulk_5k", "geo"], "pairs", "cell_type", 512)
-        'jo-mengr/bulk_5k_geo_pairs_cell_type_cs512'
+        >>> build_repo_id("jo-mengr", ["bulk_5k", "geo"], "pairs", "cell_type")
+        'jo-mengr/bulk_5k_geo_pairs_cell_type'
     """
-    return f"{base_repo_id.rstrip('/')}/{dataset_names}_{dataset_format}_{caption_key}_cs{cs_length}"
+    return f"{base_repo_id.rstrip('/')}/{dataset_names}_{dataset_format}_{caption_key}"
+
+
+def check_and_version_repo_id(base_repo_id: str) -> str:
+    """
+    Check if a repository exists and add version suffix if needed.
+
+    Parameters
+    ----------
+    base_repo_id : str
+        The base repository ID to check
+
+    Returns
+    -------
+    str
+        The final repository ID with version suffix if needed
+    """
+    from huggingface_hub import HfApi, RepositoryNotFoundError
+    import os
+
+    api = HfApi()
+    token = os.getenv("HF_TOKEN_UPLOAD") or os.getenv("HF_TOKEN")
+
+    # Try the base repo_id first
+    try:
+        api.repo_info(repo_id=base_repo_id, repo_type="dataset", token=token)
+        # If we get here, the repo exists, so we need to version it
+        logger.info(f"Repository {base_repo_id} already exists, adding version suffix")
+
+        version = 2
+        while True:
+            versioned_repo_id = f"{base_repo_id}_v{version}"
+            try:
+                api.repo_info(
+                    repo_id=versioned_repo_id, repo_type="dataset", token=token
+                )
+                version += 1
+            except RepositoryNotFoundError:
+                logger.info(f"Using versioned repository ID: {versioned_repo_id}")
+                return versioned_repo_id
+
+    except RepositoryNotFoundError:
+        # Repository doesn't exist, use the original name
+        logger.info(f"Repository {base_repo_id} is available")
+        return base_repo_id
+    except Exception as e:
+        logger.warning(
+            f"Could not check repository existence: {e}. Using original name."
+        )
+        return base_repo_id
 
 
 def push_dataset_to_hub(
@@ -167,10 +215,15 @@ def push_dataset_to_hub(
     embedding_keys: List[str],
     dataset_format: str,
     share_links: Dict[str, Dict[str, str]],
+    cs_length: int,
+    sentence_keys: List[str],
 ):
     """
     Push DatasetDict *hf_dataset* to the Hub, writing a rich README.
     """
+    # Check for existing repo and add version if needed
+    final_repo_id = check_and_version_repo_id(repo_id)
+
     if dataset_format in {"pairs", "multiplets"}:
         if caption_key == "natural_language_annotation":
             caption_generation = (
@@ -190,17 +243,50 @@ def push_dataset_to_hub(
         "contrastive-learning or inference tasks)."
     )
 
+    # Create example data from the first row of the dataset for the description
+    example_data = {}
+    first_split = list(hf_dataset.keys())[0]
+    if len(hf_dataset[first_split]) > 0:
+        first_row = hf_dataset[first_split][0]
+        # Show only the first few columns as an example
+        for key in (
+            ["sample_idx"]
+            + sentence_keys[:2]
+            + ([caption_key] if caption_key and caption_key in first_row else [])
+        ):
+            if key in first_row:
+                value = str(first_row[key])
+                if len(value) > 100:
+                    value = value[:100] + "..."
+                example_data[key] = value
+
+    # Get one example share link (not all of them)
+    example_share_link = None
+    if share_links:
+        for split_links in share_links.values():
+            if split_links:
+                example_share_link = list(split_links.values())[0]
+                break
+
+    metadata = {
+        "adata_links": share_links,
+        "cs_length": cs_length,
+        "sentence_keys": sentence_keys,
+        "example_data": example_data,
+        "example_share_link": example_share_link,
+    }
+
     annotate_and_push_dataset(
         dataset=hf_dataset,
         caption_generation=caption_generation,
         embedding_generation=embedding_generation,
         dataset_type_explanation=dataset_type_explanation,
-        repo_id=repo_id,
+        repo_id=final_repo_id,
         readme_template_name="cellwhisperer_train",
-        metadata={"adata_links": share_links},
+        metadata=metadata,
         private=True,
     )
-    logger.info("Dataset pushed to HF Hub at %s", repo_id)
+    logger.info("Dataset pushed to HF Hub at %s", final_repo_id)
 
 
 # -----------------------------------------------------------------------------#
@@ -363,7 +449,6 @@ def main(cfg: DictConfig):
         dataset_names=data_name,
         dataset_format=dataset_format,
         caption_key=caption_key or "no_caption",
-        cs_length=dataset_cfg.cs_length,
     )
     logger.info("Final repo_id would be: %s", repo_id)
 
@@ -380,6 +465,8 @@ def main(cfg: DictConfig):
             embedding_keys=required_obsm_keys,
             dataset_format=dataset_format,
             share_links=share_links_per_split,
+            cs_length=dataset_cfg.cs_length,
+            sentence_keys=sentence_keys,
         )
 
     logger.info("Dataset creation script finished.")

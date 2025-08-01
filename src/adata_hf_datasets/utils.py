@@ -187,6 +187,11 @@ def annotate_and_push_dataset(
     with tempfile.TemporaryDirectory() as temp_dir:
         readme_path = Path(temp_dir) / "README.md"
 
+        # Extract share_info from metadata if available
+        share_info = None
+        if metadata and "adata_links" in metadata:
+            share_info = metadata["adata_links"]
+
         # Write the dynamically generated README file
         with open(readme_path, "w", encoding="utf-8") as f:
             f.write(
@@ -196,7 +201,8 @@ def annotate_and_push_dataset(
                     embedding_generation=embedding_generation,
                     caption_generation=caption_generation,
                     dataset_type_explanation=dataset_type_explanation,
-                    share_info=metadata,
+                    share_info=share_info,
+                    metadata=metadata,
                 )
             )
 
@@ -221,6 +227,7 @@ def _generate_readme(
     caption_generation=None,
     dataset_type_explanation=None,
     share_info=None,
+    metadata=None,
 ) -> str:
     """
     Fills the README template with dataset-specific details.
@@ -235,11 +242,32 @@ def _generate_readme(
         A description of how the embeddings stored in .obsm of the adata files were generated.
     caption_generation
         A description of how the captions stored in .obs of the adata files were generated. Not needed for inference datasets.
+    metadata
+        Additional metadata dictionary that can contain cs_length, example_data, example_share_link, etc.
     """
     if caption_generation is None:
         caption_info = ""
     else:
         caption_info = f"""The caption entry of the dataset contains a textual description of the dataset, it was generated like this:{caption_generation}"""
+
+    # Format example data if provided
+    example_data_formatted = ""
+    cs_length = ""
+    example_share_link = ""
+
+    if metadata:
+        if "example_data" in metadata and metadata["example_data"]:
+            example_lines = []
+            for key, value in metadata["example_data"].items():
+                example_lines.append(f"{key}: {value}")
+            example_data_formatted = "\n".join(example_lines)
+
+        if "cs_length" in metadata:
+            cs_length = str(metadata["cs_length"])
+
+        if "example_share_link" in metadata and metadata["example_share_link"]:
+            example_share_link = metadata["example_share_link"]
+
     readme_template = _load_readme_template(readme_template_name=readme_template_name)
     readme_filled = Template(readme_template).safe_substitute(
         repo_id=repo_id,
@@ -247,6 +275,9 @@ def _generate_readme(
         caption_generation=caption_info,
         dataset_type_explanation=dataset_type_explanation,
         share_info=share_info,
+        cs_length=cs_length,
+        example_data_formatted=example_data_formatted,
+        example_share_link=example_share_link,
     )
     return readme_filled
 
