@@ -1128,10 +1128,16 @@ class WorkflowOrchestrator:
             )
 
             # Wait for download job to complete
-            self._wait_for_job_completion(
-                self.cpu_login["host"], download_job_id, "Download"
-            )
-            self.workflow_logger.log_step_complete("Download", download_job_id)
+            try:
+                self._wait_for_job_completion(
+                    self.cpu_login["host"], download_job_id, "Download"
+                )
+                self.workflow_logger.log_step_complete("Download", download_job_id)
+            except Exception as e:
+                error_msg = f"Download step failed: {e}"
+                logger.error(error_msg)
+                self._log_error_to_consolidated_log(error_msg)
+                raise RuntimeError(error_msg) from e
         else:
             logger.info("=== Download Step Skipped (disabled) ===")
             self.workflow_logger.log_step_skipped("Download", "disabled in config")
@@ -1149,12 +1155,18 @@ class WorkflowOrchestrator:
             )
 
             # Wait for preprocessing job to complete
-            self._wait_for_job_completion(
-                self.cpu_login["host"], preprocessing_job_id, "Preprocessing"
-            )
-            self.workflow_logger.log_step_complete(
-                "Preprocessing", preprocessing_job_id
-            )
+            try:
+                self._wait_for_job_completion(
+                    self.cpu_login["host"], preprocessing_job_id, "Preprocessing"
+                )
+                self.workflow_logger.log_step_complete(
+                    "Preprocessing", preprocessing_job_id
+                )
+            except Exception as e:
+                error_msg = f"Preprocessing step failed: {e}"
+                logger.error(error_msg)
+                self._log_error_to_consolidated_log(error_msg)
+                raise RuntimeError(error_msg) from e
         else:
             logger.info("=== Preprocessing Step Skipped (disabled) ===")
             self.workflow_logger.log_step_skipped("Preprocessing", "disabled in config")
@@ -1176,14 +1188,20 @@ class WorkflowOrchestrator:
             )
 
             # Wait for embedding preparation job to complete
-            self._wait_for_job_completion(
-                self.cpu_login["host"],
-                embedding_prepare_job_id,
-                "Embedding Preparation",
-            )
-            self.workflow_logger.log_step_complete(
-                "Embedding Preparation", embedding_prepare_job_id
-            )
+            try:
+                self._wait_for_job_completion(
+                    self.cpu_login["host"],
+                    embedding_prepare_job_id,
+                    "Embedding Preparation",
+                )
+                self.workflow_logger.log_step_complete(
+                    "Embedding Preparation", embedding_prepare_job_id
+                )
+            except Exception as e:
+                error_msg = f"Embedding preparation step failed: {e}"
+                logger.error(error_msg)
+                self._log_error_to_consolidated_log(error_msg)
+                raise RuntimeError(error_msg) from e
         else:
             logger.info("=== Embedding Preparation Step Skipped (disabled) ===")
             self.workflow_logger.log_step_skipped(
@@ -1211,12 +1229,18 @@ class WorkflowOrchestrator:
             )
 
             # Wait for CPU embedding job to complete
-            self._wait_for_job_completion(
-                self.cpu_login["host"], embedding_cpu_job_id, "CPU Embedding"
-            )
-            self.workflow_logger.log_step_complete(
-                "CPU Embedding", embedding_cpu_job_id
-            )
+            try:
+                self._wait_for_job_completion(
+                    self.cpu_login["host"], embedding_cpu_job_id, "CPU Embedding"
+                )
+                self.workflow_logger.log_step_complete(
+                    "CPU Embedding", embedding_cpu_job_id
+                )
+            except Exception as e:
+                error_msg = f"CPU embedding step failed: {e}"
+                logger.error(error_msg)
+                self._log_error_to_consolidated_log(error_msg)
+                raise RuntimeError(error_msg) from e
         else:
             logger.info("=== CPU Embedding Step Skipped (disabled) ===")
             self.workflow_logger.log_step_skipped("CPU Embedding", "disabled in config")
@@ -1242,12 +1266,18 @@ class WorkflowOrchestrator:
             )
 
             # Wait for GPU embedding job to complete
-            self._wait_for_job_completion(
-                self.cpu_login["host"], embedding_gpu_job_id, "GPU Embedding Master"
-            )
-            self.workflow_logger.log_step_complete(
-                "GPU Embedding Master", embedding_gpu_job_id
-            )
+            try:
+                self._wait_for_job_completion(
+                    self.cpu_login["host"], embedding_gpu_job_id, "GPU Embedding Master"
+                )
+                self.workflow_logger.log_step_complete(
+                    "GPU Embedding Master", embedding_gpu_job_id
+                )
+            except Exception as e:
+                error_msg = f"GPU embedding step failed: {e}"
+                logger.error(error_msg)
+                self._log_error_to_consolidated_log(error_msg)
+                raise RuntimeError(error_msg) from e
         else:
             logger.info("=== GPU Embedding Step Skipped (disabled) ===")
             self.workflow_logger.log_step_skipped("GPU Embedding", "disabled in config")
@@ -1284,10 +1314,16 @@ class WorkflowOrchestrator:
                 if len(dataset_job_ids) > 1:
                     step_name += f" [{i + 1}/{len(dataset_job_ids)}]"
 
-                self._wait_for_job_completion(
-                    self.cpu_login["host"], dataset_job_id, step_name
-                )
-                self.workflow_logger.log_step_complete(step_name, dataset_job_id)
+                try:
+                    self._wait_for_job_completion(
+                        self.cpu_login["host"], dataset_job_id, step_name
+                    )
+                    self.workflow_logger.log_step_complete(step_name, dataset_job_id)
+                except Exception as e:
+                    error_msg = f"{step_name} failed: {e}"
+                    logger.error(error_msg)
+                    self._log_error_to_consolidated_log(error_msg)
+                    raise RuntimeError(error_msg) from e
         else:
             logger.info("=== Dataset Creation Step Skipped (disabled) ===")
             self.workflow_logger.log_step_skipped(
@@ -1326,72 +1362,277 @@ class WorkflowOrchestrator:
 
         logger.info("Job cancellation complete")
 
-    def _wait_for_job_completion(self, host: str, job_id: int, step_name: str) -> None:
+    def _wait_for_job_completion(
+        self, host: str, job_id: int, step_name: str, timeout_hours: int = 72
+    ) -> None:
         """Wait for a SLURM job to complete and check for errors."""
-        logger.info(f"Waiting for {step_name} job {job_id} to complete...")
+        logger.info(
+            f"Waiting for {step_name} job {job_id} to complete (timeout: {timeout_hours}h)..."
+        )
+
+        import time
+
+        start_time = time.time()
+        timeout_seconds = timeout_hours * 3600
+        check_interval = 60  # Check every minute
 
         while True:
+            # Check if we've exceeded the timeout
+            elapsed_time = time.time() - start_time
+            if elapsed_time > timeout_seconds:
+                error_msg = (
+                    f"✗ {step_name} job {job_id} timed out after {timeout_hours} hours"
+                )
+                logger.error(error_msg)
+                self._log_error_to_consolidated_log(error_msg)
+
+                # Try to cancel the job
+                try:
+                    cancel_cmd = ["ssh", host, f"scancel {job_id}"]
+                    subprocess.run(
+                        cancel_cmd, capture_output=True, text=True, timeout=30
+                    )
+                    logger.info(f"Cancelled timed-out job {job_id}")
+                except Exception as cancel_e:
+                    logger.warning(
+                        f"Failed to cancel timed-out job {job_id}: {cancel_e}"
+                    )
+
+                raise RuntimeError(error_msg)
             # Check job status
             cmd = ["ssh", host, f"squeue -j {job_id} --noheader"]
             result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
 
             if result.returncode != 0 or not result.stdout.strip():
                 # Job is no longer in queue (completed, failed, or cancelled)
-                # Check the exit status and look for array jobs
+                # Check the exit status using more comprehensive sacct query
                 exit_cmd = [
                     "ssh",
                     host,
-                    f"sacct -j {job_id} --format=JobID,State,ExitCode --noheader",
+                    f"sacct -j {job_id} --format=JobID,State,ExitCode --noheader --parsable2",
                 ]
                 exit_result = subprocess.run(
                     exit_cmd, capture_output=True, text=True, timeout=30
                 )
 
                 if exit_result.returncode == 0 and exit_result.stdout.strip():
-                    # Parse the job state - only check the main job
+                    # Parse all job states (main job and array tasks)
                     lines = exit_result.stdout.strip().split("\n")
-                    for line in lines:
-                        if (
-                            str(job_id) in line and "_" not in line.split()[0]
-                        ):  # Main job only, not array tasks
-                            parts = line.split()
-                            if len(parts) >= 2:
-                                state = parts[1]
-                                if state in ["COMPLETED", "COMPLETED+"]:
-                                    logger.info(
-                                        f"✓ {step_name} job {job_id} completed successfully"
-                                    )
-                                    return
-                                elif state in ["FAILED", "CANCELLED", "TIMEOUT"]:
-                                    error_msg = f"✗ {step_name} job {job_id} failed with state: {state}"
-                                    logger.error(error_msg)
-                                    # Log to consolidated error log
-                                    if self.workflow_logger:
-                                        error_log_path = (
-                                            self.workflow_logger.workflow_dir
-                                            / "logs"
-                                            / "errors_consolidated.log"
-                                        )
-                                        with open(error_log_path, "a") as f:
-                                            f.write(
-                                                f"{datetime.now().isoformat()} - {error_msg}\n"
-                                            )
-                                    raise RuntimeError(error_msg)
-                                else:
-                                    logger.warning(
-                                        f"? {step_name} job {job_id} ended with unknown state: {state}"
-                                    )
-                                    return
+                    main_job_state = None
+                    main_job_exit_code = None
+                    failed_array_jobs = []
 
-                # If we can't get detailed status, assume it completed
-                logger.info(f"✓ {step_name} job {job_id} completed")
-                break
+                    for line in lines:
+                        if not line.strip():
+                            continue
+
+                        parts = line.split("|")
+                        if len(parts) >= 3:
+                            job_id_part = parts[0]
+                            state = parts[1]
+                            exit_code = parts[2]
+
+                            # Check if this is the main job (no underscore or .batch/.extern suffix)
+                            if (
+                                job_id_part == str(job_id)
+                                or job_id_part == f"{job_id}.batch"
+                            ):
+                                main_job_state = state
+                                main_job_exit_code = exit_code
+                            # Check for failed array jobs
+                            elif f"{job_id}_" in job_id_part and state not in [
+                                "COMPLETED",
+                                "COMPLETED+",
+                            ]:
+                                failed_array_jobs.append(
+                                    (job_id_part, state, exit_code)
+                                )
+
+                    # Log detailed information about job completion
+                    self._log_job_completion_details(host, job_id, step_name)
+
+                    # Check main job state
+                    success_states = ["COMPLETED", "COMPLETED+"]
+                    failure_states = [
+                        "FAILED",
+                        "CANCELLED",
+                        "TIMEOUT",
+                        "OUT_OF_MEMORY",
+                        "NODE_FAIL",
+                        "PREEMPTED",
+                    ]
+
+                    if main_job_state in success_states:
+                        # Check if main job succeeded but array jobs failed
+                        if failed_array_jobs:
+                            error_msg = f"✗ {step_name} job {job_id} main task completed but {len(failed_array_jobs)} array task(s) failed:"
+                            for (
+                                array_job_id,
+                                array_state,
+                                array_exit_code,
+                            ) in failed_array_jobs:
+                                error_msg += f"\n  - Array job {array_job_id}: {array_state} (exit code: {array_exit_code})"
+
+                            logger.error(error_msg)
+                            self._log_error_to_consolidated_log(error_msg)
+                            raise RuntimeError(error_msg)
+                        else:
+                            logger.info(
+                                f"✓ {step_name} job {job_id} completed successfully"
+                            )
+                            return
+
+                    elif main_job_state in failure_states:
+                        error_msg = f"✗ {step_name} job {job_id} failed with state: {main_job_state}"
+                        if main_job_exit_code and main_job_exit_code != "0:0":
+                            error_msg += f" (exit code: {main_job_exit_code})"
+
+                        logger.error(error_msg)
+                        self._log_error_to_consolidated_log(error_msg)
+                        raise RuntimeError(error_msg)
+
+                    elif main_job_state:
+                        # Unknown state - treat as potential failure
+                        error_msg = f"? {step_name} job {job_id} ended with unknown state: {main_job_state}"
+                        if main_job_exit_code and main_job_exit_code != "0:0":
+                            error_msg += f" (exit code: {main_job_exit_code})"
+                            # If exit code is non-zero, treat as failure
+                            logger.error(error_msg)
+                            self._log_error_to_consolidated_log(error_msg)
+                            raise RuntimeError(error_msg)
+                        else:
+                            logger.warning(error_msg)
+                            self._log_error_to_consolidated_log(f"WARNING: {error_msg}")
+                            return
+                    else:
+                        # No main job state found - this is suspicious
+                        error_msg = f"✗ {step_name} job {job_id} - could not determine job state from sacct output"
+                        logger.error(error_msg)
+                        logger.error(f"Raw sacct output: {exit_result.stdout}")
+                        self._log_error_to_consolidated_log(error_msg)
+                        raise RuntimeError(error_msg)
+                else:
+                    # Could not get job status - this is also suspicious
+                    error_msg = f"✗ {step_name} job {job_id} - could not retrieve job status via sacct"
+                    if exit_result.stderr:
+                        error_msg += f": {exit_result.stderr}"
+                    logger.error(error_msg)
+                    self._log_error_to_consolidated_log(error_msg)
+                    raise RuntimeError(error_msg)
 
             # Job is still running, wait a bit
-            logger.info(f"  {step_name} job {job_id} still running...")
-            import time
+            elapsed_minutes = int(elapsed_time / 60)
+            remaining_minutes = int((timeout_seconds - elapsed_time) / 60)
+            logger.info(
+                f"  {step_name} job {job_id} still running... (elapsed: {elapsed_minutes}m, remaining: {remaining_minutes}m)"
+            )
+            time.sleep(check_interval)
 
-            time.sleep(60)  # Wait 1 minute before checking again
+    def _log_error_to_consolidated_log(self, error_msg: str) -> None:
+        """Log error message to the consolidated error log."""
+        if self.workflow_logger:
+            error_log_path = (
+                self.workflow_logger.workflow_dir / "logs" / "errors_consolidated.log"
+            )
+            try:
+                with open(error_log_path, "a", encoding="utf-8") as f:
+                    f.write(f"{datetime.now().isoformat()} - {error_msg}\n")
+            except Exception as e:
+                logger.warning(f"Failed to write to consolidated error log: {e}")
+
+    def _log_job_completion_details(
+        self, host: str, job_id: int, step_name: str
+    ) -> None:
+        """Log detailed information about job completion including SLURM logs."""
+        try:
+            # Get more detailed job information
+            detail_cmd = [
+                "ssh",
+                host,
+                f"sacct -j {job_id} --format=JobID,JobName,State,ExitCode,Start,End,Elapsed,MaxRSS,MaxVMSize --noheader",
+            ]
+            detail_result = subprocess.run(
+                detail_cmd, capture_output=True, text=True, timeout=30
+            )
+
+            if detail_result.returncode == 0 and detail_result.stdout.strip():
+                logger.info(f"Detailed job information for {step_name} job {job_id}:")
+                lines = detail_result.stdout.strip().split("\n")
+                for line in lines:
+                    if line.strip() and str(job_id) in line:
+                        logger.info(f"  {line.strip()}")
+
+                # Also log to consolidated log for record keeping
+                if self.workflow_logger:
+                    log_msg = f"Job completion details for {step_name} job {job_id}:\n"
+                    for line in lines:
+                        if line.strip() and str(job_id) in line:
+                            log_msg += f"  {line.strip()}\n"
+
+                    detail_log_path = (
+                        self.workflow_logger.workflow_dir / "logs" / "job_details.log"
+                    )
+                    with open(detail_log_path, "a", encoding="utf-8") as f:
+                        f.write(f"{datetime.now().isoformat()} - {log_msg}\n")
+
+            # Try to get the SLURM output files if they exist
+            self._log_slurm_output_files(host, job_id, step_name)
+
+        except Exception as e:
+            logger.warning(
+                f"Failed to get detailed job information for job {job_id}: {e}"
+            )
+
+    def _log_slurm_output_files(self, host: str, job_id: int, step_name: str) -> None:
+        """Try to log the contents of SLURM output files for debugging."""
+        try:
+            # Look for common SLURM output file patterns
+            output_patterns = [
+                f"slurm-{job_id}.out",
+                f"slurm-{job_id}.err",
+                f"{job_id}.out",
+                f"{job_id}.err",
+            ]
+
+            for pattern in output_patterns:
+                # Check if file exists and get last few lines
+                check_cmd = [
+                    "ssh",
+                    host,
+                    f"if [ -f {pattern} ]; then echo 'Found {pattern}'; tail -20 {pattern}; else echo 'File {pattern} not found'; fi",
+                ]
+
+                result = subprocess.run(
+                    check_cmd, capture_output=True, text=True, timeout=30
+                )
+
+                if result.returncode == 0 and result.stdout.strip():
+                    output = result.stdout.strip()
+                    if "Found" in output and "not found" not in output:
+                        logger.info(
+                            f"Last 20 lines of {pattern} for {step_name} job {job_id}:"
+                        )
+                        logger.info(output)
+
+                        # Log to file as well
+                        if self.workflow_logger:
+                            output_log_path = (
+                                self.workflow_logger.workflow_dir
+                                / "logs"
+                                / "slurm_outputs.log"
+                            )
+                            with open(output_log_path, "a", encoding="utf-8") as f:
+                                f.write(
+                                    f"\n{datetime.now().isoformat()} - {step_name} job {job_id} - {pattern}:\n"
+                                )
+                                f.write(output)
+                                f.write("\n" + "=" * 80 + "\n")
+                        break  # Only log the first file we find
+
+        except Exception as e:
+            logger.warning(
+                f"Failed to retrieve SLURM output files for job {job_id}: {e}"
+            )
 
     def _load_dataset_config(self, dataset_config_name: str) -> DictConfig:
         """Load the dataset configuration using proper Hydra composition."""
@@ -1473,10 +1714,19 @@ def main(cfg: DictConfig):
         orchestrator.cancel_all_jobs()
         sys.exit(1)
     except Exception as e:
-        logger.error(f"Workflow failed: {e}")
+        error_msg = f"Workflow failed with error: {e}"
+        logger.error(error_msg)
+        logger.exception("Full traceback:")
+
+        # Log to consolidated error log if possible
+        if hasattr(orchestrator, "_log_error_to_consolidated_log"):
+            orchestrator._log_error_to_consolidated_log(
+                f"WORKFLOW FAILURE: {error_msg}"
+            )
+
         logger.info("Cancelling any remaining jobs...")
         orchestrator.cancel_all_jobs()
-        raise
+        raise RuntimeError(error_msg) from e
 
 
 if __name__ == "__main__":
