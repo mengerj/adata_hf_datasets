@@ -1411,9 +1411,7 @@ class WorkflowOrchestrator:
                 raise RuntimeError(error_msg)
             # Check job status
             cmd = ["ssh", host, f"squeue -j {job_id} --noheader"]
-            result = subprocess.run(
-                cmd, capture_output=True, text=True, timeout=300
-            )  # 5 minutes for monitoring
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
 
             if result.returncode != 0 or not result.stdout.strip():
                 # Job is no longer in queue (completed, failed, or cancelled)
@@ -1427,7 +1425,7 @@ class WorkflowOrchestrator:
                     exit_cmd,
                     capture_output=True,
                     text=True,
-                    timeout=300,  # 5 minutes for monitoring
+                    timeout=30,  # 5 minutes for monitoring
                 )
 
                 if exit_result.returncode == 0 and exit_result.stdout.strip():
