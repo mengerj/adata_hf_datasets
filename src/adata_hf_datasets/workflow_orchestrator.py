@@ -331,7 +331,10 @@ class WorkflowOrchestrator:
                 "echo 'SSH test successful'",
             ]
             result = subprocess.run(
-                test_cmd, capture_output=True, text=True, timeout=10
+                test_cmd,
+                capture_output=True,
+                text=True,
+                timeout=30,  # 30 seconds for initial SSH test
             )
             if result.returncode != 0:
                 logger.warning(
@@ -428,7 +431,9 @@ class WorkflowOrchestrator:
 
         # Execute the command
         try:
-            result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+            result = subprocess.run(
+                cmd, capture_output=True, text=True, timeout=300
+            )  # 5 minutes for job submission
         except subprocess.TimeoutExpired:
             error_msg = f"SLURM job submission timed out for {step_name} step on {host}"
             logger.error(error_msg)
@@ -1348,7 +1353,9 @@ class WorkflowOrchestrator:
             try:
                 # Cancel the job (this will also cancel any array jobs it spawned)
                 cmd = ["ssh", host, f"scancel {job_id}"]
-                result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+                result = subprocess.run(
+                    cmd, capture_output=True, text=True, timeout=60
+                )  # 1 minute for cancellation
 
                 if result.returncode == 0:
                     logger.info(f"✓ Cancelled {step_name} job {job_id} on {host}")
@@ -1390,7 +1397,10 @@ class WorkflowOrchestrator:
                 try:
                     cancel_cmd = ["ssh", host, f"scancel {job_id}"]
                     subprocess.run(
-                        cancel_cmd, capture_output=True, text=True, timeout=30
+                        cancel_cmd,
+                        capture_output=True,
+                        text=True,
+                        timeout=60,  # 1 minute for cancellation
                     )
                     logger.info(f"Cancelled timed-out job {job_id}")
                 except Exception as cancel_e:
@@ -1401,7 +1411,9 @@ class WorkflowOrchestrator:
                 raise RuntimeError(error_msg)
             # Check job status
             cmd = ["ssh", host, f"squeue -j {job_id} --noheader"]
-            result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+            result = subprocess.run(
+                cmd, capture_output=True, text=True, timeout=300
+            )  # 5 minutes for monitoring
 
             if result.returncode != 0 or not result.stdout.strip():
                 # Job is no longer in queue (completed, failed, or cancelled)
@@ -1412,7 +1424,10 @@ class WorkflowOrchestrator:
                     f"sacct -j {job_id} --format=JobID,State,ExitCode --noheader --parsable2",
                 ]
                 exit_result = subprocess.run(
-                    exit_cmd, capture_output=True, text=True, timeout=30
+                    exit_cmd,
+                    capture_output=True,
+                    text=True,
+                    timeout=300,  # 5 minutes for monitoring
                 )
 
                 if exit_result.returncode == 0 and exit_result.stdout.strip():
@@ -1593,7 +1608,10 @@ class WorkflowOrchestrator:
             # As a last resort, check if the job process is still running
             check_cmd = ["ssh", host, f"ps aux | grep {job_id} | grep -v grep"]
             result = subprocess.run(
-                check_cmd, capture_output=True, text=True, timeout=30
+                check_cmd,
+                capture_output=True,
+                text=True,
+                timeout=300,  # 5 minutes for monitoring
             )
 
             if result.returncode == 0 and result.stdout.strip():
@@ -1629,7 +1647,10 @@ class WorkflowOrchestrator:
             ]
 
             result = subprocess.run(
-                check_cmd, capture_output=True, text=True, timeout=60
+                check_cmd,
+                capture_output=True,
+                text=True,
+                timeout=300,  # 5 minutes for monitoring
             )
 
             if result.returncode != 0 or "FILE_NOT_FOUND" in result.stdout:
@@ -1824,7 +1845,10 @@ class WorkflowOrchestrator:
                 f"sacct -j {job_id} --format=JobID,JobName,State,ExitCode,Start,End,Elapsed,MaxRSS,MaxVMSize --noheader",
             ]
             detail_result = subprocess.run(
-                detail_cmd, capture_output=True, text=True, timeout=30
+                detail_cmd,
+                capture_output=True,
+                text=True,
+                timeout=300,  # 5 minutes for monitoring
             )
 
             if detail_result.returncode == 0 and detail_result.stdout.strip():
@@ -1875,7 +1899,10 @@ class WorkflowOrchestrator:
                 ]
 
                 result = subprocess.run(
-                    check_cmd, capture_output=True, text=True, timeout=30
+                    check_cmd,
+                    capture_output=True,
+                    text=True,
+                    timeout=300,  # 5 minutes for monitoring
                 )
 
                 if result.returncode == 0 and result.stdout.strip():
