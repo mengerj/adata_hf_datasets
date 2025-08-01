@@ -51,6 +51,22 @@ echo "Current working directory: $(pwd)"
 echo "Checking if data directory exists: $(ls -la data/ 2>/dev/null || echo 'data directory does not exist')"
 
 # Now run your Python script with the dataset config
+echo "Starting preprocessing with config: $DATASET_CONFIG"
 python3 scripts/preprocessing/preprocess.py \
     --config-name=$DATASET_CONFIG \
     ++hydra.run.dir="$BASE_OUT"
+
+# Capture the exit code
+EXIT_CODE=$?
+
+# Log completion status
+if [ $EXIT_CODE -eq 0 ]; then
+    echo "Preprocessing completed successfully"
+    echo "SUCCESS: Preprocessing finished successfully" >> "$BASE_OUT"/preprocessing.out
+else
+    echo "Preprocessing failed with exit code: $EXIT_CODE"
+    echo "FAILED: Preprocessing failed with exit code: $EXIT_CODE" >> "$BASE_OUT"/preprocessing.err
+fi
+
+# Exit with the same code as the Python script
+exit $EXIT_CODE

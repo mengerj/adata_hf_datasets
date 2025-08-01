@@ -1512,13 +1512,29 @@ class WorkflowOrchestrator:
                         self._log_error_to_consolidated_log(error_msg)
                         raise RuntimeError(error_msg)
                 else:
-                    # Could not get job status - this is also suspicious
-                    error_msg = f"✗ {step_name} job {job_id} - could not retrieve job status via sacct"
-                    if exit_result.stderr:
-                        error_msg += f": {exit_result.stderr}"
-                    logger.error(error_msg)
-                    self._log_error_to_consolidated_log(error_msg)
-                    raise RuntimeError(error_msg)
+                    # Could not get job status via sacct - try fallback methods
+                    logger.warning(
+                        f"sacct failed for job {job_id}: {exit_result.stderr}"
+                    )
+                    logger.info(
+                        f"Attempting fallback job status check for {step_name} job {job_id}"
+                    )
+
+                    # Try to determine job status using fallback methods
+                    job_success = self._check_job_status_fallback(
+                        host, job_id, step_name
+                    )
+
+                    if job_success:
+                        logger.info(
+                            f"✓ {step_name} job {job_id} completed successfully (via fallback check)"
+                        )
+                        return
+                    else:
+                        error_msg = f"✗ {step_name} job {job_id} failed (determined via fallback check)"
+                        logger.error(error_msg)
+                        self._log_error_to_consolidated_log(error_msg)
+                        raise RuntimeError(error_msg)
 
             # Job is still running, wait a bit
             elapsed_minutes = int(elapsed_time / 60)
@@ -1527,6 +1543,262 @@ class WorkflowOrchestrator:
                 f"  {step_name} job {job_id} still running... (elapsed: {elapsed_minutes}m, remaining: {remaining_minutes}m)"
             )
             time.sleep(check_interval)
+
+    def _check_job_status_fallback(
+        self, host: str, job_id: int, step_name: str
+    ) -> bool:
+        """
+        Fallback method to check job status when sacct is unavailable.
+
+        Returns:
+            bool: True if job appears to have succeeded, False if it failed
+        """
+        logger.info(f"Using fallback status check for {step_name} job {job_id}")
+
+        try:
+            # Get the job output directory from workflow logger
+            if self.workflow_logger:
+                job_output_dir = self.workflow_logger.get_step_log_dir(
+                    step_name.lower().replace(" ", "_"), str(job_id)
+                )
+            else:
+                # Fallback to default output location
+                job_output_dir = Path(
+                    f"outputs/{datetime.now().strftime('%Y-%m-%d')}/{step_name.lower().replace(' ', '_')}/{job_id}"
+                )
+
+            # Look for job output files in multiple possible locations
+            output_file_locations = [
+                # Workflow logger location
+                job_output_dir / f"{step_name.lower().replace(' ', '_')}.out",
+                job_output_dir / f"{step_name.lower().replace(' ', '_')}.err",
+                # Standard SLURM locations
+                Path(f"slurm-{job_id}.out"),
+                Path(f"slurm-{job_id}.err"),
+                Path(f"{job_id}.out"),
+                Path(f"{job_id}.err"),
+            ]
+
+            # Check remote files via SSH
+            for file_path in output_file_locations:
+                success, error_found = self._check_remote_job_output(
+                    host, file_path, step_name, job_id
+                )
+                if success is not None:  # Found definitive answer
+                    return success and not error_found
+
+            # If no output files found, try to get basic job info
+            logger.warning(f"No job output files found for {step_name} job {job_id}")
+
+            # As a last resort, check if the job process is still running
+            check_cmd = ["ssh", host, f"ps aux | grep {job_id} | grep -v grep"]
+            result = subprocess.run(
+                check_cmd, capture_output=True, text=True, timeout=30
+            )
+
+            if result.returncode == 0 and result.stdout.strip():
+                logger.info(f"Job {job_id} process still appears to be running")
+                return False  # Still running, shouldn't be considered complete
+            else:
+                logger.warning(
+                    f"Cannot determine status for job {job_id} - assuming failure for safety"
+                )
+                return False
+
+        except Exception as e:
+            logger.warning(f"Fallback status check failed for job {job_id}: {e}")
+            return False  # Assume failure if we can't determine status
+
+    def _check_remote_job_output(
+        self, host: str, file_path: Path, step_name: str, job_id: int
+    ) -> Tuple[Optional[bool], bool]:
+        """
+        Check a remote job output file for success/error indicators.
+
+        Returns:
+            tuple: (success_indicator_found, error_found)
+                - success_indicator_found: True if file indicates success, False if failure, None if indeterminate
+                - error_found: True if Python errors were found and logged
+        """
+        try:
+            # Check if file exists and get its content
+            check_cmd = [
+                "ssh",
+                host,
+                f"if [ -f {file_path} ]; then cat {file_path}; else echo 'FILE_NOT_FOUND'; fi",
+            ]
+
+            result = subprocess.run(
+                check_cmd, capture_output=True, text=True, timeout=60
+            )
+
+            if result.returncode != 0 or "FILE_NOT_FOUND" in result.stdout:
+                return None, False  # File not found
+
+            content = result.stdout.strip()
+            if not content:
+                return None, False  # Empty file
+
+            logger.info(f"Found job output file: {file_path}")
+            logger.info(f"Content length: {len(content)} characters")
+
+            # Look for success indicators
+            success_indicators = [
+                "finished successfully",
+                "completed successfully",
+                "SUCCESS",
+                "All done",
+                "Processing complete",
+            ]
+
+            # Look for error indicators and Python errors
+            error_indicators = [
+                "ERROR",
+                "Error:",
+                "Exception:",
+                "Traceback",
+                "FileNotFoundError",
+                "ImportError",
+                "ValueError",
+                "KeyError",
+                "RuntimeError",
+                "FAILED",
+                "FATAL",
+            ]
+
+            content_lower = content.lower()
+            found_success = any(
+                indicator.lower() in content_lower for indicator in success_indicators
+            )
+            found_error = any(
+                indicator.lower() in content_lower for indicator in error_indicators
+            )
+
+            # Extract and log Python errors to consolidated log
+            python_errors_found = self._extract_python_errors_from_output(
+                content, step_name, job_id
+            )
+
+            if python_errors_found:
+                logger.error(f"Found Python errors in {step_name} job {job_id} output")
+                return False, True  # Definite failure due to Python errors
+            elif found_error and not found_success:
+                logger.error(
+                    f"Found error indicators in {step_name} job {job_id} output"
+                )
+                # Log last 20 lines to consolidated log for context
+                lines = content.split("\n")
+                last_lines = "\n".join(lines[-20:]) if len(lines) > 20 else content
+                error_msg = (
+                    f"Job output errors for {step_name} job {job_id}:\n{last_lines}"
+                )
+                self._log_error_to_consolidated_log(error_msg)
+                return False, True
+            elif found_success and not found_error:
+                logger.info(
+                    f"Found success indicators in {step_name} job {job_id} output"
+                )
+                return True, False
+            else:
+                # Ambiguous - both or neither found
+                logger.warning(
+                    f"Ambiguous status in {step_name} job {job_id} output (success: {found_success}, error: {found_error})"
+                )
+                return None, found_error
+
+        except Exception as e:
+            logger.warning(f"Failed to check remote job output {file_path}: {e}")
+            return None, False
+
+    def _extract_python_errors_from_output(
+        self, content: str, step_name: str, job_id: int
+    ) -> bool:
+        """
+        Extract Python errors/tracebacks from job output and log them to consolidated log.
+
+        Returns:
+            bool: True if Python errors were found and logged
+        """
+        lines = content.split("\n")
+        python_errors = []
+        current_error = []
+        in_traceback = False
+
+        for line in lines:
+            line_stripped = line.strip()
+
+            # Look for traceback start
+            if "Traceback (most recent call last):" in line:
+                in_traceback = True
+                current_error = [line]
+                continue
+
+            # Look for error lines
+            if any(
+                error_type in line
+                for error_type in [
+                    "Error:",
+                    "Exception:",
+                    "FileNotFoundError:",
+                    "ImportError:",
+                    "ValueError:",
+                    "KeyError:",
+                    "RuntimeError:",
+                ]
+            ):
+                if not in_traceback:
+                    current_error = []
+                current_error.append(line)
+
+                # If we have collected an error, save it
+                if current_error:
+                    python_errors.append("\n".join(current_error))
+                    current_error = []
+                    in_traceback = False
+                continue
+
+            # If in traceback, collect all lines
+            if in_traceback:
+                current_error.append(line)
+
+            # Look for specific error patterns
+            elif any(
+                error_pattern in line_stripped
+                for error_pattern in [
+                    "FileNotFoundError:",
+                    "No such file or directory",
+                    "ImportError:",
+                    "ModuleNotFoundError:",
+                    "ValueError:",
+                    "KeyError:",
+                    "RuntimeError:",
+                    "Exception:",
+                    "Error type:",
+                    "Error message:",
+                ]
+            ):
+                if not current_error:  # Start new error collection
+                    current_error = [line]
+                else:
+                    current_error.append(line)
+
+        # Save any remaining error
+        if current_error:
+            python_errors.append("\n".join(current_error))
+
+        # Log all found errors to consolidated log
+        if python_errors:
+            error_msg = f"Python errors found in {step_name} job {job_id}:"
+            for i, error in enumerate(python_errors, 1):
+                error_msg += f"\n\n--- Error {i} ---\n{error}"
+
+            logger.error(
+                f"Extracted {len(python_errors)} Python error(s) from {step_name} job {job_id}"
+            )
+            self._log_error_to_consolidated_log(error_msg)
+            return True
+
+        return False
 
     def _log_error_to_consolidated_log(self, error_msg: str) -> None:
         """Log error message to the consolidated error log."""

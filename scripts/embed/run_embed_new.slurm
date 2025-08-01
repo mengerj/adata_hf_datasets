@@ -301,4 +301,28 @@ echo "Output Directory: $BASE_OUT"
 echo "End Time: $(date)"
 echo "================================="
 
-echo "Embedding job completed successfully!"
+# Check if any of our array jobs failed by examining their exit codes
+OVERALL_SUCCESS=true
+
+if [[ -f "$job_file" ]]; then
+    while IFS= read -r array_job_id; do
+        if [[ -n "$array_job_id" ]]; then
+            # Check if array job failed (this is a simple check - real status would need sacct)
+            array_exit_code=$(sacct -j "$array_job_id" --format=ExitCode --noheader --parsable2 2>/dev/null | head -1)
+            if [[ "$array_exit_code" != "0:0" && -n "$array_exit_code" ]]; then
+                echo "WARNING: Array job $array_job_id may have failed with exit code: $array_exit_code"
+                OVERALL_SUCCESS=false
+            fi
+        fi
+    done < "$job_file"
+fi
+
+if [[ "$OVERALL_SUCCESS" == "true" ]]; then
+    echo "Embedding job completed successfully!"
+    echo "SUCCESS: Embedding finished successfully" >> "$BASE_OUT"/embedding.out
+    exit 0
+else
+    echo "Embedding job completed with some failures!"
+    echo "FAILED: Some embedding array jobs failed" >> "$BASE_OUT"/embedding.err
+    exit 1
+fi

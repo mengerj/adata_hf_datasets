@@ -76,3 +76,18 @@ fi
 # Execute the command
 echo "Running command: $CMD"
 eval $CMD
+
+# Capture the exit code
+EXIT_CODE=$?
+
+# Log completion status
+if [ $EXIT_CODE -eq 0 ]; then
+    echo "Dataset creation completed successfully"
+    echo "SUCCESS: Dataset creation finished successfully" >> "$BASE_OUT"/create_ds.out
+else
+    echo "Dataset creation failed with exit code: $EXIT_CODE"
+    echo "FAILED: Dataset creation failed with exit code: $EXIT_CODE" >> "$BASE_OUT"/create_ds.err
+fi
+
+# Exit with the same code as the Python script
+exit $EXIT_CODE

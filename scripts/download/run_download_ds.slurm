@@ -55,6 +55,22 @@ echo "venv activated"
 #    - Check if file already exists and skip download if it does
 #    - Apply stratification if configured
 ###
+echo "Starting download with config: $DATASET_CONFIG"
 python3 scripts/download/download_dataset_config.py \
     --config-name=$DATASET_CONFIG \
     ++hydra.run.dir="$BASE_OUT"
+
+# Capture the exit code
+EXIT_CODE=$?
+
+# Log completion status
+if [ $EXIT_CODE -eq 0 ]; then
+    echo "Download completed successfully"
+    echo "SUCCESS: Download finished successfully" >> "$BASE_OUT"/download.out
+else
+    echo "Download failed with exit code: $EXIT_CODE"
+    echo "FAILED: Download failed with exit code: $EXIT_CODE" >> "$BASE_OUT"/download.err
+fi
+
+# Exit with the same code as the Python script
+exit $EXIT_CODE
