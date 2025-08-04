@@ -173,7 +173,8 @@ def check_and_version_repo_id(base_repo_id: str) -> str:
     str
         The final repository ID with version suffix if needed
     """
-    from huggingface_hub import HfApi, RepositoryNotFoundError
+    from huggingface_hub import HfApi
+    from huggingface_hub.errors import RepositoryNotFoundError
     import os
 
     api = HfApi()
