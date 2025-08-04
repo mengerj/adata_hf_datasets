@@ -116,6 +116,15 @@ echo "Starting embedding processing..."
 export EMBEDDING_CONFIG_SECTION
 export PREPARE_ONLY
 #path always is read relative to the script by hydra
+# If "gpu" is in the embedding config section, run GPU diagnostics
+if [[ "$EMBEDDING_CONFIG_SECTION" == *"gpu"* ]]; then
+    echo "=== GPU diagnostics: nvidia-smi ==="
+    nvidia-smi
+    echo "=== GPU diagnostics: nvidia-smi --query-compute-apps ==="
+    nvidia-smi --query-compute-apps
+    echo "=== GPU diagnostics: nvidia-smi -q | grep -E 'Xid|Retired' ==="
+    nvidia-smi -q | grep -E "Xid|Retired"
+fi
 
 # Override input_files for the specific embedding section being used
 # This ensures the override happens to the correct section BEFORE config selection
