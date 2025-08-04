@@ -121,7 +121,8 @@ if [[ "$EMBEDDING_CONFIG_SECTION" == *"gpu"* ]]; then
     echo "=== GPU diagnostics: nvidia-smi ==="
     nvidia-smi
     echo "=== GPU diagnostics: nvidia-smi --query-compute-apps ==="
-    nvidia-smi --query-compute-apps
+    # Minimal, machine-readable list of PIDs currently running CUDA kernels
+    nvidia-smi --query-compute-apps=pid --format=csv,noheader
     echo "=== GPU diagnostics: nvidia-smi -q | grep -E 'Xid|Retired' ==="
     nvidia-smi -q | grep -E "Xid|Retired"
 fi
