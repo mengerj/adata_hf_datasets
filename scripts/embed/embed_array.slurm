@@ -125,6 +125,12 @@ if [[ "$EMBEDDING_CONFIG_SECTION" == *"gpu"* ]]; then
     nvidia-smi --query-compute-apps=pid --format=csv,noheader
     echo "=== GPU diagnostics: nvidia-smi -q | grep -E 'Xid|Retired' ==="
     nvidia-smi -q | grep -E "Xid|Retired"
+    echo "=== ECC page-retirement status ==="
+    nvidia-smi -i $CUDA_VISIBLE_DEVICES -q -d PAGE_RETIREMENT | \
+    grep -E "Retired|Pending"
+
+    echo "=== Device nodes visible in the cgroup ==="
+    ls -l /dev/nvidia* | head
 fi
 
 # Override input_files for the specific embedding section being used
