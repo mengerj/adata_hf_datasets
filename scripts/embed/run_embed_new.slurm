@@ -231,9 +231,9 @@ if [[ -f "$job_file" ]]; then
                             fi
                         done
                         break
-                    elif [[ $wait_iterations -gt 120 ]]; then
+                    elif [[ $wait_iterations -gt 7200 ]]; then
                         # 2 hour timeout
-                        echo "🔍 DEBUG: *** TIMEOUT AFTER 2 HOURS ***"
+                        echo "🔍 DEBUG: *** TIMEOUT AFTER 120 HOURS ***"
                         echo "WARNING: Array job $array_job_id timeout - $completed_count completed, $running_count still running"
                         echo "Proceeding anyway..."
                         break
@@ -242,7 +242,7 @@ if [[ -f "$job_file" ]]; then
                         if [[ -n "$running_tasks" ]]; then
                             echo "🔍 DEBUG: Still running: $running_tasks"
                         fi
-                        sleep 30
+                        sleep 120
                     fi
                 done
 
