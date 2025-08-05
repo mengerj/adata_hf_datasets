@@ -253,7 +253,6 @@ class EmbeddingLauncher:
                     "--mem=64G",
                     "--cpus-per-task=8",
                     "--gres=gpu:1",
-                    "--constraint=gpu",  # Ensure we get a GPU node
                 ]
             )
 
