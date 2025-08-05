@@ -1,5 +1,6 @@
 import anndata
 import logging
+import pandas as pd
 from adata_hf_datasets.utils import (
     fix_non_numeric_nans,
 )
@@ -23,7 +24,6 @@ import scanpy as sc
 import scipy.sparse as sp
 import numpy as np
 from appdirs import user_cache_dir
-import pandas as pd
 import errno
 import time
 import random
@@ -322,7 +322,7 @@ class HighlyVariableGenesEmbedder(BaseEmbedder):
         adata.var.loc[top_genes, "highly_variable"] = True
 
 
-class PCAEmbedder(BaseEmbedder):
+class PCAEmbedder_old(BaseEmbedder):
     """PCA-based embedding for single-cell data stored in AnnData."""
 
     def __init__(self, embedding_dim: int = 64, **kwargs):
@@ -385,6 +385,267 @@ class PCAEmbedder(BaseEmbedder):
         # Store in adata for compatibility
         adata.obsm[obsm_key] = embedding_matrix
         return embedding_matrix
+
+
+class PCAEmbedder(BaseEmbedder):
+    """
+    Pre-trained PCA embedder using saved cross-dataset PCA model.
+
+    This embedder loads a pre-trained PCA model and gene list from the resources
+    directory and applies it to new datasets, ensuring consistent dimensionality
+    reduction across all analyses.
+    """
+
+    def __init__(self, embedding_dim: int = 50, **kwargs):
+        """
+        Initialize the pre-trained PCA embedder.
+
+        Parameters
+        ----------
+        embedding_dim : int, optional
+            Number of principal components to retain. Defaults to 50.
+            This should match the number of components in the saved model.
+        kwargs : dict
+            Additional keyword arguments including:
+            - model_path: Path to saved PCA model (default: resources/cellxgene_geo_pca_8000_to_50.pkl)
+            - gene_list_path: Path to gene list file (default: resources/gene_selection_ENSG_8k.txt)
+        """
+        super().__init__(embedding_dim=embedding_dim)
+        self.embedding_dim = embedding_dim
+
+        # Set default paths
+        self.model_path = kwargs.get(
+            "model_path", "resources/cellxgene_geo_pca_8000_to_50.pkl"
+        )
+        self.gene_list_path = kwargs.get(
+            "gene_list_path", "resources/gene_selection_ENSG_8k.txt"
+        )
+
+        # Initialize model components
+        self.pca_model = None
+        self.scaler = None
+        self.gene_order = None
+        self.metadata = None
+
+        logger.info(f"Initialized PCAEmbedder with model_path: {self.model_path}")
+        logger.info(
+            f"Initialized PCAEmbedder with gene_list_path: {self.gene_list_path}"
+        )
+
+    def _load_model(self) -> None:
+        """Load the saved PCA model and gene list."""
+        import pickle
+
+        # Load PCA model
+        if not Path(self.model_path).exists():
+            raise FileNotFoundError(f"PCA model file not found: {self.model_path}")
+
+        with open(self.model_path, "rb") as f:
+            model_data = pickle.load(f)
+
+        # Extract components
+        self.pca_model = model_data["pca_model"]
+        self.scaler = model_data["scaler"]
+        self.gene_order = model_data["gene_order"]
+        self.metadata = model_data["metadata"]
+
+        logger.info(
+            f"Loaded PCA model: {self.metadata['n_components']} components, {len(self.gene_order)} genes"
+        )
+
+        # Validate embedding dimension matches model
+        if self.embedding_dim != self.pca_model.n_components_:
+            logger.warning(
+                f"Embedding dimension ({self.embedding_dim}) doesn't match model components ({self.pca_model.n_components_}). Using model components."
+            )
+            self.embedding_dim = self.pca_model.n_components_
+
+    def _load_gene_list(self) -> None:
+        """Load gene list from file if not already loaded from model."""
+        if self.gene_order is None:
+            gene_list_path = Path(self.gene_list_path)
+            if not gene_list_path.exists():
+                raise FileNotFoundError(f"Gene list file not found: {gene_list_path}")
+
+            with open(gene_list_path, "r") as f:
+                self.gene_order = [line.strip() for line in f if line.strip()]
+
+            logger.info(f"Loaded {len(self.gene_order)} genes from {gene_list_path}")
+
+    def _subset_and_order_genes(self, adata: ad.AnnData) -> ad.AnnData:
+        """
+        Subset dataset to required genes in the correct order.
+        Missing genes are filled with zeros to ensure consistent dimensionality.
+
+        Parameters
+        ----------
+        adata : ad.AnnData
+            Input dataset
+
+        Returns
+        -------
+        ad.AnnData
+            Subsetted dataset with genes in correct order
+        """
+        # Ensure ensembl IDs are available
+        ensure_ensembl_index(adata, ensembl_col="ensembl_id")
+
+        # Create a new AnnData object with the exact gene list
+        n_cells = adata.n_obs
+
+        # Initialize data matrix with zeros for all genes
+        if sp.issparse(adata.X):
+            X_new = np.zeros((n_cells, len(self.gene_order)), dtype=adata.X.dtype)
+        else:
+            X_new = np.zeros((n_cells, len(self.gene_order)), dtype=adata.X.dtype)
+
+        # Create new var DataFrame with the exact gene list
+        var_new = pd.DataFrame(index=self.gene_order)
+
+        # Copy available genes from original dataset
+        available_genes = [g for g in self.gene_order if g in adata.var_names]
+        missing_genes = [g for g in self.gene_order if g not in adata.var_names]
+
+        if len(available_genes) == 0:
+            raise ValueError("Dataset has no genes from the required gene set")
+
+        # Copy data for available genes
+        for j, gene in enumerate(self.gene_order):
+            if gene in adata.var_names:
+                # Find the column index in the original dataset
+                orig_idx = list(adata.var_names).index(gene)
+                X_new[:, j] = (
+                    adata.X[:, orig_idx].toarray().flatten()
+                    if sp.issparse(adata.X)
+                    else adata.X[:, orig_idx]
+                )
+
+                # Copy var metadata for this gene
+                if gene in adata.var.columns:
+                    for col in adata.var.columns:
+                        if col not in var_new.columns:
+                            var_new[col] = None
+                        var_new.loc[gene, col] = adata.var.loc[gene, col]
+
+        # Create new AnnData object
+        adata_subset = ad.AnnData(
+            X=X_new,
+            obs=adata.obs.copy(),
+            var=var_new,
+            uns=adata.uns.copy() if adata.uns else {},
+        )
+
+        # Log information about missing genes
+        if missing_genes:
+            logger.warning(
+                f"Dataset missing {len(missing_genes)} genes, filled with zeros"
+            )
+            logger.debug(f"First few missing genes: {missing_genes[:5]}")
+
+        logger.info(
+            f"Dataset subsetted to {len(self.gene_order)} genes (exact order from model)"
+        )
+        return adata_subset
+
+    def _prepare_data(self, adata: ad.AnnData) -> np.ndarray:
+        """
+        Prepare data for PCA transformation.
+
+        Parameters
+        ----------
+        adata : ad.AnnData
+            Subsetted dataset
+
+        Returns
+        -------
+        np.ndarray
+            Prepared data matrix
+        """
+        # Convert to dense if sparse
+        if sp.issparse(adata.X):
+            X = adata.X.toarray()
+        else:
+            X = adata.X.copy()
+
+        # Apply scaling if scaler was used during training
+        if self.scaler is not None:
+            logger.debug("Applying saved scaling transformation")
+            X = self.scaler.transform(X)
+        else:
+            logger.debug("No scaling applied (none was used during training)")
+
+        return X
+
+    def prepare(
+        self,
+        adata: anndata.AnnData | None = None,
+        adata_path: str | None = None,
+        **kwargs,
+    ) -> None:
+        """
+        Load the pre-trained PCA model and gene list.
+
+        Parameters
+        ----------
+        adata : anndata.AnnData, optional
+            Not used for preparation, but kept for interface consistency.
+        adata_path : str, optional
+            Not used for preparation, but kept for interface consistency.
+        **kwargs : dict
+            Additional keyword arguments (unused).
+        """
+        logger.info("Loading pre-trained PCA model and gene list...")
+        self._load_model()
+        self._load_gene_list()
+        logger.info("PCA model preparation complete")
+
+    def embed(
+        self,
+        adata: anndata.AnnData | None = None,
+        adata_path: str | None = None,
+        obsm_key: str = "X_pca",
+        **kwargs,
+    ) -> np.ndarray:
+        """
+        Apply pre-trained PCA transformation to a dataset.
+
+        Parameters
+        ----------
+        adata : anndata.AnnData, optional
+            Input dataset
+        adata_path : str, optional
+            Path to the AnnData file (.h5ad or .zarr)
+        obsm_key : str, default "X_pca"
+            Key for storing PCA results in adata.obsm
+
+        Returns
+        -------
+        np.ndarray
+            PCA embedding matrix
+        """
+        adata = _check_load_adata(adata, adata_path)
+
+        if self.pca_model is None:
+            raise RuntimeError("PCA model is not loaded. Call `prepare()` first.")
+
+        logger.info(f"Applying pre-trained PCA to dataset: {adata.shape}")
+
+        # 1. Subset to required genes in correct order
+        adata_subset = self._subset_and_order_genes(adata)
+
+        # 2. Prepare data (scaling, etc.)
+        X_prepared = self._prepare_data(adata_subset)
+
+        # 3. Apply PCA transformation
+        X_pca = self.pca_model.transform(X_prepared)
+
+        # 4. Store results in original adata
+        adata.obsm[obsm_key] = X_pca
+
+        logger.info(f"PCA applied: {adata.shape} -> {X_pca.shape}")
+        logger.info(f"Results stored in adata.obsm['{obsm_key}']")
+
+        return X_pca
 
 
 class GeneformerEmbedder(BaseEmbedder):
@@ -1410,67 +1671,133 @@ class GeneSelectEmbedder(BaseEmbedder):
     Gene selection embedder that uses the same gene set as the scVI foundation model
     but returns the raw expression values instead of scVI embeddings.
 
-    This embedder leverages the scVI foundation model's gene selection and preprocessing
-    pipeline to ensure consistent gene sets across datasets, but simply returns the
-    processed gene expression matrix (X) as the embedding.
+    This embedder uses the gene list from resources/gene_selection_ENSG_8k.txt, which
+    contains exactly the same genes that the scVI foundation model selects. This approach
+    is much faster than loading the full scVI model since it only requires the gene list.
+
+    The gene list contains 8000 genes that were selected by the scVI foundation model
+    for consistent gene selection across datasets.
     """
 
     def __init__(self, embedding_dim: int = None, **init_kwargs):
         """
-        Initialize the GeneSelect embedder with scVI FM defaults.
+        Initialize the GeneSelect embedder with gene list from resources.
 
         Parameters
         ----------
         embedding_dim : int, optional
-            Will be dynamically determined by the number of genes in the scVI model.
+            Will be dynamically determined by the number of genes in the gene list.
             If provided, it will be ignored with a warning.
         init_kwargs : dict
-            Additional keyword arguments including cache directories.
+            Additional keyword arguments including:
+            - gene_list_path: Path to gene list file (default: resources/gene_selection_ENSG_8k.txt)
         """
         if embedding_dim is not None:
             logger.warning(
-                "GeneSelectEmbedder embedding_dim is determined by the scVI model's gene set. "
+                "GeneSelectEmbedder embedding_dim is determined by the gene list. "
                 f"Ignoring provided value: {embedding_dim}"
             )
 
-        # Initialize with a placeholder - will be updated after loading the model
+        # Initialize with a placeholder - will be updated after loading the gene list
         super().__init__(embedding_dim=0)
 
-        # Use the same default configuration as SCVIEmbedderFM
-        app_name = "adata_hf_datasets"
-        default_cache_root = user_cache_dir(app_name)
-
-        default_model_cache = os.path.join(
-            default_cache_root, "models", "scvi_cellxgene"
-        )
-        default_data_cache = os.path.join(default_cache_root, "reference_data", "scvi")
-
-        # Redirect cache directories if they're in /tmp/
-        default_model_cache = _redirect_tmp_cache_dir(default_model_cache)
-        default_data_cache = _redirect_tmp_cache_dir(default_data_cache)
-
-        os.makedirs(default_model_cache, exist_ok=True)
-        os.makedirs(default_data_cache, exist_ok=True)
-
-        cache_dir = _redirect_tmp_cache_dir(
-            init_kwargs.pop("cache_dir", default_model_cache)
-        )
-        file_cache_dir = _redirect_tmp_cache_dir(
-            init_kwargs.pop("file_cache_dir", default_data_cache)
+        # Set default gene list path
+        self.gene_list_path = init_kwargs.get(
+            "gene_list_path", "resources/gene_selection_ENSG_8k.txt"
         )
 
-        self.default_kwargs = {
-            "reference_s3_bucket": "cellxgene-contrib-public",
-            "reference_s3_path": "models/scvi/2024-02-12/homo_sapiens/modelhub",
-            "reference_adata_url": "https://cellxgene-contrib-public.s3.amazonaws.com/models/scvi/2024-02-12/homo_sapiens/adata-spinal-cord-minified.h5ad",
-            "cache_dir": cache_dir,
-            "file_cache_dir": file_cache_dir,
-        }
-        self.default_kwargs.update(init_kwargs)
+        # Initialize gene list
+        self.gene_order = None
 
-        self.scvi_model = None
-        logger.info(f"Using model cache directory: {cache_dir}")
-        logger.info(f"Using reference data cache directory: {file_cache_dir}")
+        logger.info(
+            f"Initialized GeneSelectEmbedder with gene_list_path: {self.gene_list_path}"
+        )
+
+    def _load_gene_list(self) -> None:
+        """Load gene list from file."""
+        gene_list_path = Path(self.gene_list_path)
+        if not gene_list_path.exists():
+            raise FileNotFoundError(f"Gene list file not found: {gene_list_path}")
+
+        with open(gene_list_path, "r") as f:
+            self.gene_order = [line.strip() for line in f if line.strip()]
+
+        logger.info(f"Loaded {len(self.gene_order)} genes from {gene_list_path}")
+
+    def _subset_and_order_genes(self, adata: ad.AnnData) -> ad.AnnData:
+        """
+        Subset dataset to required genes in the correct order.
+        Missing genes are filled with zeros to ensure consistent dimensionality.
+
+        Parameters
+        ----------
+        adata : ad.AnnData
+            Input dataset
+
+        Returns
+        -------
+        ad.AnnData
+            Subsetted dataset with genes in correct order
+        """
+        # Ensure ensembl IDs are available
+        ensure_ensembl_index(adata, ensembl_col="ensembl_id")
+
+        # Create a new AnnData object with the exact gene list
+        n_cells = adata.n_obs
+
+        # Initialize data matrix with zeros for all genes
+        if sp.issparse(adata.X):
+            X_new = np.zeros((n_cells, len(self.gene_order)), dtype=adata.X.dtype)
+        else:
+            X_new = np.zeros((n_cells, len(self.gene_order)), dtype=adata.X.dtype)
+
+        # Create new var DataFrame with the exact gene list
+        var_new = pd.DataFrame(index=self.gene_order)
+
+        # Copy available genes from original dataset
+        available_genes = [g for g in self.gene_order if g in adata.var_names]
+        missing_genes = [g for g in self.gene_order if g not in adata.var_names]
+
+        if len(available_genes) == 0:
+            raise ValueError("Dataset has no genes from the required gene set")
+
+        # Copy data for available genes
+        for j, gene in enumerate(self.gene_order):
+            if gene in adata.var_names:
+                # Find the column index in the original dataset
+                orig_idx = list(adata.var_names).index(gene)
+                X_new[:, j] = (
+                    adata.X[:, orig_idx].toarray().flatten()
+                    if sp.issparse(adata.X)
+                    else adata.X[:, orig_idx]
+                )
+
+                # Copy var metadata for this gene
+                if gene in adata.var.columns:
+                    for col in adata.var.columns:
+                        if col not in var_new.columns:
+                            var_new[col] = None
+                        var_new.loc[gene, col] = adata.var.loc[gene, col]
+
+        # Create new AnnData object
+        adata_subset = ad.AnnData(
+            X=X_new,
+            obs=adata.obs.copy(),
+            var=var_new,
+            uns=adata.uns.copy() if adata.uns else {},
+        )
+
+        # Log information about missing genes
+        if missing_genes:
+            logger.warning(
+                f"Dataset missing {len(missing_genes)} genes, filled with zeros"
+            )
+            logger.debug(f"First few missing genes: {missing_genes[:5]}")
+
+        logger.info(
+            f"Dataset subsetted to {len(self.gene_order)} genes (exact order from gene list)"
+        )
+        return adata_subset
 
     def prepare(
         self,
@@ -1479,7 +1806,7 @@ class GeneSelectEmbedder(BaseEmbedder):
         **kwargs,
     ):
         """
-        Load the scVI foundation model to determine the gene set.
+        Load the gene list from resources.
 
         Parameters
         ----------
@@ -1488,90 +1815,16 @@ class GeneSelectEmbedder(BaseEmbedder):
         adata_path : str, optional
             Not used for preparation, but kept for interface consistency.
         **kwargs : dict
-            Additional configuration merged with default_kwargs.
+            Additional keyword arguments (unused).
         """
-        logger.info("Preparing GeneSelect embedder by loading scVI foundation model...")
+        logger.info("Loading gene list from resources...")
+        self._load_gene_list()
 
-        # Merge kwargs with defaults
-        config = self.default_kwargs.copy()
-        config.update(kwargs)
-
-        # Load the model using the same logic as SCVIEmbedder
-        reference_s3_bucket = config.get("reference_s3_bucket")
-        reference_s3_path = config.get("reference_s3_path")
-        reference_adata_url = config.get("reference_adata_url")
-        cache_dir = config.get("cache_dir")
-        file_cache_dir = config.get("file_cache_dir")
-
-        # Load model from S3
-        if reference_s3_bucket is not None and reference_s3_path is not None:
-            logger.info(
-                "Loading scVI model from S3 bucket %s, path %s",
-                reference_s3_bucket,
-                reference_s3_path,
-            )
-            import botocore
-
-            model = HubModel.pull_from_s3(
-                s3_bucket=reference_s3_bucket,
-                s3_path=reference_s3_path,
-                pull_anndata=False,
-                config=botocore.config.Config(signature_version=botocore.UNSIGNED),
-                cache_dir=Path(cache_dir),
-            )
-        else:
-            raise ValueError("No valid scVI loading parameters provided.")
-
-        # Load reference AnnData if needed
-        if reference_adata_url is not None:
-            if file_cache_dir is None:
-                temp_base_dir = _redirect_tmp_cache_dir(tempfile.gettempdir())
-                save_dir = tempfile.TemporaryDirectory(dir=temp_base_dir)
-            else:
-                if not file_cache_dir.endswith("/"):
-                    file_cache_dir += "/"
-                save_dir = Path(file_cache_dir)
-            ref_adata_path = os.path.join(save_dir, "cellxgene_reference_adata.h5ad")
-            logger.info("Reading reference adata from URL %s", reference_adata_url)
-            reference_adata = sc.read(ref_adata_path, backup_url=reference_adata_url)
-        else:
-            try:
-                reference_adata = model.adata
-            except AttributeError as e:
-                raise ValueError(
-                    "No reference AnnData available in model or via URL."
-                ) from e
-
-        # Set up the scVI model with reference data
-        self.scvi_model = self._setup_model_with_ref(model, reference_adata)
-
-        # Update embedding dimension based on the number of genes in the model
-        self.embedding_dim = self.scvi_model.adata.n_vars
+        # Update embedding dimension based on the number of genes in the list
+        self.embedding_dim = len(self.gene_order)
         logger.info(
             f"GeneSelect embedder prepared. Gene set contains {self.embedding_dim} genes."
         )
-
-    def _setup_model_with_ref(self, model, reference_adata):
-        """Set up the scVI model with the reference AnnData (same as SCVIEmbedder)."""
-        if SCVIEmbedder._is_shared_path(Path(model.local_dir)):
-            logger.info(
-                "Copying scVI weight file to a worker-unique temp dir to avoid NFS races."
-            )
-            model = SCVIEmbedder._localize_hubmodel(model)
-
-        logger.info("Preparing scVI model with reference data...")
-        try:
-            del reference_adata.uns["_scvi_adata_minify_type"]
-        except KeyError:
-            pass
-        if "is_primary_data" in reference_adata.obs:
-            model.load_model(
-                adata=reference_adata[reference_adata.obs["is_primary_data"]].copy()
-            )
-        else:
-            model.load_model(adata=reference_adata.copy())
-        scvi_model = model.model
-        return scvi_model
 
     def embed(
         self,
@@ -1593,7 +1846,7 @@ class GeneSelectEmbedder(BaseEmbedder):
         obsm_key : str
             The key in `adata.obsm` under which to store the gene-selected matrix.
         batch_key : str
-            The batch key in `adata.obs` to use for batch information.
+            The batch key in `adata.obs` to use for batch information (unused but kept for interface consistency).
         **kwargs : dict
             Additional keyword arguments (unused).
 
@@ -1604,48 +1857,21 @@ class GeneSelectEmbedder(BaseEmbedder):
         """
         adata = _check_load_adata(adata, adata_path)
 
-        if self.scvi_model is None:
-            raise ValueError("scVI model is not prepared. Call `prepare(...)` first.")
+        if self.gene_order is None:
+            raise ValueError("Gene list is not loaded. Call `prepare(...)` first.")
 
         logger.info("Applying gene selection using scVI foundation model gene set...")
 
-        # Prepare query data using the same logic as SCVIEmbedder
-        if "counts" not in adata.layers:
-            raise ValueError(
-                "No 'counts' layer found in adata. Run preprocessing first."
-            )
-
-        ensure_ensembl_index(
-            adata,
-            ensembl_col=self.default_kwargs.get("ensembl_col", "ensembl_id"),
-            add_fn=add_ensembl_ids,
-        )
-
         # Keep a backup of the original data
         adata_backup = adata.copy()
-        adata.X = adata.layers["counts"].copy()
 
-        # Set batch key as expected from training data
-        adata.obs["batch"] = adata.obs[batch_key].astype(str).astype("category")
-
-        # Clear varm to prevent dimension mismatch errors
-        if len(adata.varm) > 0:
-            logger.info(
-                "Clearing varm field to prevent dimension mismatch during gene selection"
-            )
-            adata.varm.clear()
-
-        # Apply scVI gene selection and preprocessing
-        SCVI.prepare_query_anndata(adata, self.scvi_model)
-
-        # Fix non-numerics
-        fix_non_numeric_nans(adata)
+        # Subset to required genes in correct order
+        adata_subset = self._subset_and_order_genes(adata)
 
         # Get the processed expression matrix
-        X = adata.X.toarray() if sp.issparse(adata.X) else adata.X
-        # embedding_matrix = adata.X
-        # Save as float32
+        X = adata_subset.X.toarray() if sp.issparse(adata_subset.X) else adata_subset.X
         embedding_matrix = X.copy().astype(np.float32)
+
         # Store in adata for compatibility
         adata.obsm[obsm_key] = embedding_matrix
 
