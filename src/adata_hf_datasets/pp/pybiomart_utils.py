@@ -15,8 +15,8 @@ def add_ensembl_ids(
 ):
     """Add Ensembl IDs to an AnnData object based on gene symbols.
 
-    Maps gene symbols in ``adata.var[var_key]`` to Ensembl IDs via biomart and stores them
-    in a new column, ``adata.var[ensembl_col]``.
+    Maps gene symbols in adata.var_names to Ensembl IDs via biomart and stores them
+    in a new column, adata.var[ensembl_col].
 
     Parameters
     ----------
@@ -45,7 +45,7 @@ def add_ensembl_ids(
 
     Examples
     --------
-    >>> add_ensembl_ids(adata, var_key="gene_name", ensembl_col="ensembl_id")
+    >>> add_ensembl_ids(adata, ensembl_col="ensembl_id")
     >>> adata.var.head()  # Now contains a new column 'ensembl_id'
     """
     # Check that entries in .var_names are valid gene symbols
