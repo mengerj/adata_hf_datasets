@@ -311,21 +311,70 @@ class EmbeddingLauncher:
         # For GPU jobs, we might need to submit to a different cluster
         # Check if we need to SSH to submit the job
         try:
-            if self.mode == "gpu" and os.environ.get("GPU_HOST"):
+            gpu_host = os.environ.get("GPU_HOST")
+            logger.info(f"🔍 DEBUG: Mode: {self.mode}")
+            logger.info(f"🔍 DEBUG: GPU_HOST environment variable: '{gpu_host}'")
+
+            if self.mode == "gpu" and gpu_host:
                 # Submit via SSH to GPU cluster
-                gpu_host = os.environ.get("GPU_HOST")
-                # Change to project directory before running sbatch
-                project_dir = "/home/menger/git/adata_hf_datasets"
-                remote_cmd = f"cd {project_dir} && {' '.join(sbatch_cmd)}"
-                ssh_cmd = ["ssh", gpu_host, remote_cmd]
+                logger.info(f"🔍 DEBUG: Will submit via SSH to GPU cluster: {gpu_host}")
+
+                # Test SSH connection first
+                logger.info("🔍 DEBUG: Testing SSH connection...")
+                ssh_test_cmd = [
+                    "ssh",
+                    "-o",
+                    "ConnectTimeout=10",
+                    "-o",
+                    "BatchMode=yes",
+                    gpu_host,
+                    "echo 'SSH connection test successful'",
+                ]
+                test_result = subprocess.run(
+                    ssh_test_cmd, capture_output=True, text=True, timeout=30
+                )
+
+                logger.info(f"🔍 DEBUG: SSH test return code: {test_result.returncode}")
                 logger.info(
-                    f"🔍 DEBUG: Executing via SSH to {gpu_host}: {' '.join(ssh_cmd)}"
+                    f"🔍 DEBUG: SSH test stdout: '{test_result.stdout.strip()}'"
                 )
-                result = subprocess.run(
-                    ssh_cmd, capture_output=True, text=True, timeout=60
+                logger.info(
+                    f"🔍 DEBUG: SSH test stderr: '{test_result.stderr.strip()}'"
                 )
+
+                if test_result.returncode != 0:
+                    logger.error(
+                        f"SSH connection test failed to {gpu_host}: {test_result.stderr}"
+                    )
+                    logger.warning(
+                        "SSH connection failed, attempting local submission as fallback..."
+                    )
+                    # Fall back to local submission
+                    logger.info(
+                        f"🔍 DEBUG: Falling back to local submission: {' '.join(sbatch_cmd)}"
+                    )
+                    result = subprocess.run(
+                        sbatch_cmd, capture_output=True, text=True, timeout=60
+                    )
+                else:
+                    logger.info("✓ SSH connection test successful")
+
+                    # Change to project directory before running sbatch
+                    project_dir = "/home/menger/git/adata_hf_datasets"
+                    remote_cmd = f"cd {project_dir} && {' '.join(sbatch_cmd)}"
+                    ssh_cmd = ["ssh", "-o", "ConnectTimeout=30", gpu_host, remote_cmd]
+                    logger.info(
+                        f"🔍 DEBUG: Executing via SSH to {gpu_host}: {' '.join(ssh_cmd)}"
+                    )
+                    result = subprocess.run(
+                        ssh_cmd, capture_output=True, text=True, timeout=120
+                    )
             else:
                 # Submit locally (same cluster)
+                if self.mode == "gpu":
+                    logger.warning(
+                        "GPU mode requested but GPU_HOST not set, submitting locally"
+                    )
                 logger.info(f"🔍 DEBUG: Executing locally: {' '.join(sbatch_cmd)}")
                 result = subprocess.run(
                     sbatch_cmd, capture_output=True, text=True, timeout=60
@@ -450,6 +499,20 @@ class EmbeddingLauncher:
         logger.info(f"Dataset: {self.config.dataset.name}")
         logger.info(f"Mode: {self.mode}")
         logger.info(f"Prepare only: {self.prepare_only}")
+
+        # Debug environment variables
+        logger.info("=== Environment Variables Debug ===")
+        relevant_env_vars = [
+            "GPU_HOST",
+            "SLURM_PARTITION",
+            "MODE",
+            "WORKFLOW_DIR",
+            "BASE_FILE_PATH",
+        ]
+        for var in relevant_env_vars:
+            value = os.environ.get(var, "NOT_SET")
+            logger.info(f"{var}: '{value}'")
+        logger.info("=== End Environment Debug ===")
 
         # Get embedding configuration
         embedding_config = self._get_embedding_config()
