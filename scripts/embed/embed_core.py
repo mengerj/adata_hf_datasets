@@ -530,12 +530,77 @@ def main(cfg: DictConfig):
 
                     monitor.log_event(f"Embed {method}")
                     obsm_key = f"X_{method}"
-                    emb_matrix = embedder.embed(
-                        adata_path=str(input_for_processing),
-                        obsm_key=obsm_key,
-                        batch_key=embedding_cfg.batch_key,
-                        batch_size=embedding_cfg.batch_size,
-                    )
+
+                    # Add robust retry logic for GPU-dependent methods
+                    max_retries = 3
+                    retry_delay = 30  # seconds
+
+                    for attempt in range(max_retries):
+                        try:
+                            logger.info(
+                                f"Embedding attempt {attempt + 1}/{max_retries} for method '{method}'"
+                            )
+                            emb_matrix = embedder.embed(
+                                adata_path=str(input_for_processing),
+                                obsm_key=obsm_key,
+                                batch_key=embedding_cfg.batch_key,
+                                batch_size=embedding_cfg.batch_size,
+                            )
+                            logger.info(
+                                f"✓ Embedding successful for method '{method}' on attempt {attempt + 1}"
+                            )
+                            break
+
+                        except RuntimeError as e:
+                            error_msg = str(e).lower()
+                            is_cuda_error = any(
+                                cuda_keyword in error_msg
+                                for cuda_keyword in [
+                                    "cuda",
+                                    "gpu",
+                                    "device",
+                                    "driver initialization failed",
+                                    "out of memory",
+                                    "cudnn",
+                                    "cublas",
+                                ]
+                            )
+
+                            if is_cuda_error and attempt < max_retries - 1:
+                                logger.warning(
+                                    f"CUDA-related error on attempt {attempt + 1}/{max_retries} for method '{method}': {e}"
+                                )
+                                logger.info(f"Retrying in {retry_delay} seconds...")
+
+                                # Clear CUDA cache if available
+                                try:
+                                    import torch
+
+                                    if torch.cuda.is_available():
+                                        torch.cuda.empty_cache()
+                                        logger.info("Cleared CUDA cache")
+                                except ImportError:
+                                    pass
+
+                                import time
+
+                                time.sleep(retry_delay)
+                                retry_delay *= 2  # Exponential backoff
+                                continue
+                            else:
+                                # Non-CUDA error or final attempt - re-raise
+                                logger.error(
+                                    f"Final attempt failed for method '{method}': {e}"
+                                )
+                                raise
+
+                        except Exception as e:
+                            # Non-RuntimeError exceptions - don't retry
+                            logger.error(
+                                f"Non-retryable error for method '{method}': {e}"
+                            )
+                            raise
+
                     monitor.log_event(f"Finished {method}")
 
                     append_embedding(

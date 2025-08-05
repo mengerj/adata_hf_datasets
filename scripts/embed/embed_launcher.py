@@ -226,6 +226,14 @@ class EmbeddingLauncher:
             "--time=24:00:00",
         ]
 
+        # Add GPU-specific settings for better resource management
+        if self.mode == "gpu":
+            # Add exclusive node access for GPU jobs to avoid resource contention
+            sbatch_cmd.extend(["--exclusive"])
+            logger.info(
+                "Adding --exclusive flag for GPU jobs to prevent resource contention"
+            )
+
         logger.info(f"🔍 DEBUG: Building sbatch command for {label}")
         logger.info(
             f"🔍 DEBUG: File count: {file_count}, so array will be 0-{file_count - 1}"
@@ -245,6 +253,7 @@ class EmbeddingLauncher:
                     "--mem=64G",
                     "--cpus-per-task=8",
                     "--gres=gpu:1",
+                    "--constraint=gpu",  # Ensure we get a GPU node
                 ]
             )
 
@@ -451,7 +460,18 @@ class EmbeddingLauncher:
 
         # Submit array jobs for each directory
         job_ids = []
-        for label, input_dir in directories:
+        for i, (label, input_dir) in enumerate(directories):
+            # Add staggered delay for GPU jobs to prevent resource conflicts
+            if i > 0 and self.mode == "gpu":
+                delay_seconds = 60  # 1 minute delay between GPU array job submissions
+                logger.info(
+                    f"Adding {delay_seconds}s delay before submitting {label} job "
+                    f"to prevent GPU resource conflicts with previous job"
+                )
+                import time
+
+                time.sleep(delay_seconds)
+
             file_count = self._count_zarr_files(input_dir)
             job_id = self._submit_array_job(label, input_dir, file_count)
             if job_id:

@@ -116,21 +116,71 @@ echo "Starting embedding processing..."
 export EMBEDDING_CONFIG_SECTION
 export PREPARE_ONLY
 #path always is read relative to the script by hydra
-# If "gpu" is in the embedding config section, run GPU diagnostics
+# If "gpu" is in the embedding config section, run GPU diagnostics and checks
 if [[ "$EMBEDDING_CONFIG_SECTION" == *"gpu"* ]]; then
+    echo "=== GPU Environment Validation ==="
+    echo "CUDA_VISIBLE_DEVICES: ${CUDA_VISIBLE_DEVICES:-'not set'}"
+    echo "SLURM_GPUS_ON_NODE: ${SLURM_GPUS_ON_NODE:-'not set'}"
+    echo "SLURM_GPUS: ${SLURM_GPUS:-'not set'}"
+
     echo "=== GPU diagnostics: nvidia-smi ==="
-    nvidia-smi
+    if nvidia-smi; then
+        echo "✓ nvidia-smi successful"
+    else
+        echo "✗ nvidia-smi failed - this is a critical issue"
+        exit 1
+    fi
+
+    echo "=== GPU Memory Status ==="
+    nvidia-smi --query-gpu=index,name,memory.total,memory.used,memory.free,utilization.gpu --format=csv
+
     echo "=== GPU diagnostics: nvidia-smi --query-compute-apps ==="
     # Minimal, machine-readable list of PIDs currently running CUDA kernels
     nvidia-smi --query-compute-apps=pid --format=csv,noheader
+
     echo "=== GPU diagnostics: nvidia-smi -q | grep -E 'Xid|Retired' ==="
-    nvidia-smi -q | grep -E "Xid|Retired"
+    nvidia-smi -q | grep -E "Xid|Retired" || echo "No GPU errors found"
+
     echo "=== ECC page-retirement status ==="
-    nvidia-smi -i $CUDA_VISIBLE_DEVICES -q -d PAGE_RETIREMENT | \
-    grep -E "Retired|Pending"
+    if [[ -n "${CUDA_VISIBLE_DEVICES:-}" ]]; then
+        nvidia-smi -i $CUDA_VISIBLE_DEVICES -q -d PAGE_RETIREMENT | \
+        grep -E "Retired|Pending" || echo "No page retirement issues"
+    fi
 
     echo "=== Device nodes visible in the cgroup ==="
     ls -l /dev/nvidia* | head
+
+    echo "=== CUDA Availability Test ==="
+    python3 -c "
+import torch
+import sys
+print(f'PyTorch version: {torch.__version__}')
+print(f'CUDA available: {torch.cuda.is_available()}')
+if torch.cuda.is_available():
+    print(f'CUDA device count: {torch.cuda.device_count()}')
+    for i in range(torch.cuda.device_count()):
+        print(f'Device {i}: {torch.cuda.get_device_name(i)}')
+        print(f'Memory allocated: {torch.cuda.memory_allocated(i) / 1024**3:.2f} GB')
+        print(f'Memory cached: {torch.cuda.memory_reserved(i) / 1024**3:.2f} GB')
+    # Test basic CUDA operations
+    try:
+        device = torch.device('cuda:0')
+        test_tensor = torch.randn(10, 10).to(device)
+        result = torch.mm(test_tensor, test_tensor.t())
+        print('✓ Basic CUDA operations successful')
+    except Exception as e:
+        print(f'✗ Basic CUDA operations failed: {e}')
+        sys.exit(1)
+else:
+    print('✗ CUDA not available')
+    sys.exit(1)
+"
+
+    if [ $? -ne 0 ]; then
+        echo "✗ CUDA availability test failed - GPU not accessible"
+        exit 1
+    fi
+    echo "✓ GPU environment validation complete"
 fi
 
 # Override input_files for the specific embedding section being used
