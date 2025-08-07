@@ -1703,7 +1703,7 @@ class GeneSelectEmbedder(BaseEmbedder):
 
         # Set default gene list path
         self.gene_list_path = init_kwargs.get(
-            "gene_list_path", "resources/gene_selection_ENSG_8k.txt"
+            "gene_list_path", "resources/gene_selection_common_genes.txt"
         )
 
         # Initialize gene list
