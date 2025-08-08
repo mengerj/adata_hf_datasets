@@ -259,7 +259,11 @@ def _generate_readme(
         if "example_data" in metadata and metadata["example_data"]:
             example_lines = []
             for key, value in metadata["example_data"].items():
-                example_lines.append(f"{key}: {value}")
+                # Format each field with proper indentation and truncation
+                formatted_value = _format_example_value(value, max_length=80)
+
+                # Format with proper indentation for readability
+                example_lines.append(f"  {key}: {formatted_value}")
             example_data_formatted = "\n".join(example_lines)
 
         if "cs_length" in metadata:
@@ -363,3 +367,53 @@ def subset_sra_and_plot(
         metrics_of_interest=list(cfg.metrics_of_interest),
         categories_of_interest=list(cfg.categories_of_interest),
     )
+
+
+def _format_example_value(value, max_length: int = 80) -> str:
+    """
+    Format a value for display in example data, handling different data types
+    and truncating if necessary.
+
+    Parameters
+    ----------
+    value : any
+        The value to format
+    max_length : int
+        Maximum length before truncation
+
+    Returns
+    -------
+    str
+        Formatted string representation of the value
+    """
+    if value is None:
+        return "None"
+    elif isinstance(value, (list, tuple)):
+        # For lists/tuples, show the type and length
+        if len(value) == 0:
+            return f"{type(value).__name__}([])"
+        elif len(value) <= 3:
+            # Show all elements if 3 or fewer
+            str_repr = str(value)
+        else:
+            # Show first few elements for longer lists
+            preview = str(value[:3])[:-1] + f", ... ({len(value)} total)]"
+            str_repr = preview
+    elif isinstance(value, dict):
+        # For dicts, show type and key count
+        if len(value) == 0:
+            return "dict({})"
+        else:
+            keys_preview = list(value.keys())[:3]
+            if len(value) <= 3:
+                str_repr = str(value)
+            else:
+                str_repr = f"dict with {len(value)} keys: {keys_preview}..."
+    else:
+        str_repr = str(value)
+
+    # Truncate if too long
+    if len(str_repr) > max_length:
+        return str_repr[:max_length] + "..."
+
+    return str_repr

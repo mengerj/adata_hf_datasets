@@ -249,16 +249,27 @@ def push_dataset_to_hub(
     first_split = list(hf_dataset.keys())[0]
     if len(hf_dataset[first_split]) > 0:
         first_row = hf_dataset[first_split][0]
-        # Show only the first few columns as an example
-        for key in (
-            ["sample_idx"]
-            + sentence_keys[:2]
-            + ([caption_key] if caption_key and caption_key in first_row else [])
-        ):
+
+        # Define column priority order for better presentation
+        priority_columns = ["sample_idx"]
+        if caption_key and caption_key in first_row:
+            priority_columns.append(caption_key)
+        priority_columns.extend(sentence_keys)
+
+        # Add priority columns first
+        for key in priority_columns:
             if key in first_row:
                 value = str(first_row[key])
-                if len(value) > 100:
-                    value = value[:100] + "..."
+                if len(value) > 150:  # Increased from 100 for better context
+                    value = value[:150] + "..."
+                example_data[key] = value
+
+        # Add remaining columns (excluding those already added)
+        for key in first_row.keys():
+            if key not in example_data:
+                value = str(first_row[key])
+                if len(value) > 150:
+                    value = value[:150] + "..."
                 example_data[key] = value
 
     # Get one example share link (not all of them)

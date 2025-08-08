@@ -17,7 +17,7 @@ task_categories:
 This dataset contains a representation of **RNA sequencing data** and text descriptions.
 $dataset_type_explanation
 
-**Cell Sentence Length**: The cell sentences in this dataset have a length of $cs_length tokens.
+**Cell Sentence Length**: The cell sentences in this dataset have a length of $cs_length genes.
 
 The **RNA sequencing data** used for training was originally gathered and annotated in the **CellWhisperer** project. It is derived from
 **CellxGene** and **GEO**. Detailed information on the gathering and annotation of the data can be read in the CellWhisperer Manuscript.
@@ -32,8 +32,7 @@ $example_data_formatted
 
 The processed .h5ad files used to create this dataset are stored remotely. An example file can be accessed here: $example_share_link
 
-The Test data is partly taken from the cellwhisperer project (bowel disease dataset) and from Luecken et. al.
-It was processed and converted into a Hugging Face dataset using the [adata_hf_datasets](https://github.com/mengerj/adata_hf_datasets) Python package.
+The AnnData Objects were processed and converted into a Hugging Face dataset using the [adata_hf_datasets](https://github.com/mengerj/adata_hf_datasets) Python package.
 The dataset can be used to train a multimodal model, aligning transcriptome and text modalities with the **sentence-transformers** framework.
 See [mmcontext](https://github.com/mengerj/mmcontext) for examples on how to train such a model.
 
@@ -48,11 +47,9 @@ $caption_info
   CZ CELLxGENE Discover: **A single-cell data platform for scalable exploration, analysis and modeling of aggregated data CZI Single-Cell Biology, et al. bioRxiv 2023.10.30**
   [Publication](https://doi.org/10.1101/2023.10.30.563174)
 
-  Bowel Disease: _Parikh, Kaushal, Agne Antanaviciute, David Fawkner-Corbett, Marta Jagielowicz, Anna Aulicino, Christoffer Lagerholm, Simon Davis, et al. 2019. “Colonic Epithelial Cell Diversity in Health and Inflammatory Bowel Disease.” Nature 567 (7746): 49–55_
-  [GEO accession](https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE116222)
-
-  Other Test Data: Luecken, Malte D., M. Büttner, K. Chaichoompu, A. Danese, M. Interlandi, M. F. Mueller, D. C. Strobl, et al. “Benchmarking Atlas-Level Data Integration in Single-Cell Genomics.” Nature Methods 19, no. 1 (January 2022): 41–50.
-  [Publication](https://doi.org/10.1038/s41592-021-01336-8).
+  GEO Database: Edgar R, Domrachev M, Lash AE.
+  Gene Expression Omnibus: NCBI gene expression and hybridization array data repository
+  Nucleic Acids Res. 2002 Jan 1;30(1):207-10
 
 - **Annotated Data:**
   Cell Whisperer: _Multimodal learning of transcriptomes and text enables interactive single-cell RNA-seq data exploration with natural-language chats_
