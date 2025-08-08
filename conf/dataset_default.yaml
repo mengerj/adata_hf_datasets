@@ -1,0 +1,206 @@
+# Clean default configuration for all datasets
+# This config contains dataset-specific parameters and execution parameters
+
+# =============================================================================
+# DATASET METADATA
+# =============================================================================
+base_file_path: "/scratch/global/menger/data/RNA"
+dataset:
+  name: null # e.g., "cellxgene_pseudo_bulk_35k"
+  description: null # Human-readable description
+  download_url: null # URL to download the raw data
+  full_name: null # Name for the full downloaded file (e.g., "cellxgene_pseudo_bulk_full")
+
+# =============================================================================
+# COMMON KEYS (defined once, used across workflows)
+# =============================================================================
+# Batch key for batch-aware processing (used in preprocessing, embedding, and dataset creation)
+batch_key: null # e.g., "dataset_title", "batch", "donor"
+
+# Annotation key for cell type/annotation (used in dataset creation and consolidation)
+annotation_key: null # e.g., "cell_type", "celltype", "annotation"
+
+# Caption/description key for natural language descriptions (used in preprocessing and dataset creation)
+caption_key: null # e.g., "natural_language_annotation", "description", null if not available
+
+# Instrument key for technical metadata (used in preprocessing)
+instrument_key: null # e.g., "assay", "instrument", null if not available
+
+# Other biological labels for consolidation and plotting (e.g., tissue, disease, age)
+other_bio_labels: [] # e.g., ["tissue", "disease", "age", "sex"]
+
+# =============================================================================
+# DOWNLOAD CONFIGURATION (dataset-specific)
+# =============================================================================
+download:
+  enabled: false # Whether to download the dataset (set to true if download_url is provided)
+  subset_size: null # Number of observations to include in subset (null = no subsetting)
+  seed: 42 # Random seed for reproducible subsetting
+  stratify_keys: null # List of column names to stratify by (will be auto-generated from common keys)
+  preserve_proportions: false # Whether to preserve proportions when stratifying
+  validate: true # Validate downloaded file format
+  keep_full_file: true # Keep the full downloaded file for future subsetting
+
+# =============================================================================
+# PREPROCESSING CONFIGURATION (dataset-specific overrides)
+# =============================================================================
+preprocessing:
+  # Dataset-specific processing parameters
+  min_cells: 20 # Minimum number of cells a gene should be expressed in
+  min_genes: 200 # Minimum number of genes a cell should express
+  n_top_genes: 5000 # Number of top genes to select
+  count_layer_key: null # Key in adata.layers with raw counts. If not present, adata.raw.X is checked.
+
+  # Category consolidation parameters
+  category_threshold: 5 # Remove categories with fewer than this many samples
+  remove_low_frequency: false # Whether to remove low frequency categories
+
+  # Layer management
+  layers_to_delete: null # List of layer names to delete from adata.layers (e.g., ["replicate_1", "replicate_2"])
+
+  # Bimodal splitting (for specific datasets)
+  split_bimodal: false
+  bimodal_col: null
+
+  # SRA metadata fetching (dataset-specific)
+  skip_sra_fetch: false
+  sra_max_retries: 3
+  sra_continue_on_fail: true
+  sra_chunk_size: null
+  sra_extra_cols: [null]
+
+  # Execution parameters (accessed by preprocessing script)
+  chunk_size: 200000 # Processing chunk size
+  output_format: "zarr" # Output format preference
+  geneformer_pp: true # Geneformer preprocessing
+  train_split: 0.9 # Train/validation split ratio
+  random_seed: 42 # Random seed for splits
+  metrics_of_interest: # Quality control metrics
+    - "n_genes_by_counts"
+    - "total_counts"
+    - "pct_counts_mt"
+
+# =============================================================================
+# EMBEDDING PREPARATION CONFIGURATION (dataset-specific overrides)
+# =============================================================================
+embedding_preparation:
+  # Whether to run embedding preparation step
+  enabled: true # Set to false to skip embedding preparation
+
+  # Preparation-specific parameters
+  prepare_only: true # Always true for preparation step
+  mode: "slurm" # Use CPU partition for preparation
+
+  # SLURM resource allocation
+  memory_gb: 60 # Memory allocation in GB (default: 60GB). Increase for larger datasets (e.g., 80, 120)
+
+  # Execution parameters (accessed by embedding preparation script)
+  input_format: "auto" # Input format detection
+  output_format: "zarr" # Output format preference
+  overwrite: false # Whether to overwrite existing preparation files
+  chunk_rows: 16384 # Number of cells written per chunk when streaming into Zarr
+  # Method-specific parameters
+  batch_size: 128 # Used by geneformer
+
+  # Embedding dimensions (dataset-specific)
+  embedding_dim_map:
+    scvi_fm: 50 # Can't be changed as the pretrained scvi model is fixed.
+    geneformer: 512
+    pca: 50
+    hvg: 512
+    gs: 8000
+
+# =============================================================================
+# CPU EMBEDDING CONFIGURATION (dataset-specific overrides)
+# =============================================================================
+embedding_cpu:
+  # Whether to run CPU embedding step
+  enabled: true # Set to false to skip CPU embedding
+
+  # CPU embedding methods to apply
+  methods: ["hvg", "pca", "scvi_fm"] # CPU-only methods: ["scvi_fm", "pca", "hvg"]
+
+  # SLURM resource allocation
+  memory_gb: 60 # Memory allocation in GB (default: 60GB). Increase for larger datasets (e.g., 80, 120)
+
+  # Method-specific parameters
+  batch_size: 128 # Used by geneformer
+
+  # Embedding dimensions (dataset-specific)
+  embedding_dim_map:
+    scvi_fm: 50 # Can't be changed as the pretrained scvi model is fixed.
+    geneformer: 512
+    pca: 50
+    hvg: 512
+    gs: 8000
+
+  # Execution parameters (accessed by embedding script)
+  input_format: "auto" # Input format detection
+  output_format: "zarr" # Output format preference
+  overwrite: false # Whether to overwrite existing embeddings
+  chunk_rows: 16384 # Number of cells written per chunk when streaming into Zarr
+
+# =============================================================================
+# GPU EMBEDDING CONFIGURATION (dataset-specific overrides)
+# =============================================================================
+embedding_gpu:
+  # Whether to run GPU embedding step
+  enabled: true # Set to false to skip GPU embedding
+
+  # GPU embedding methods to apply
+  methods: ["geneformer"] # GPU-required methods: ["geneformer"]
+
+  # SLURM resource allocation
+  memory_gb: 60 # Memory allocation in GB (default: 60GB). Increase for larger datasets (e.g., 80, 120)
+
+  # Method-specific parameters
+  batch_size: 128 # Used by geneformer
+
+  # Embedding dimensions (dataset-specific)
+  embedding_dim_map:
+    scvi_fm: 50 # Can't be changed as the pretrained scvi model is fixed.
+    geneformer: 512
+    pca: 50
+    hvg: 512
+    gs: 8000
+
+  # Execution parameters (accessed by embedding script)
+  input_format: "auto" # Input format detection
+  output_format: "zarr" # Output format preference
+  overwrite: false # Whether to overwrite existing embeddings
+  chunk_rows: 16384 # Number of cells written per chunk when streaming into Zarr
+
+# =============================================================================
+# DATASET CREATION CONFIGURATION (dataset-specific overrides)
+# =============================================================================
+dataset_creation:
+  # Sentence generation parameters
+  sentence_keys:
+    - "sample_id_og" # Will be added to obs within the script
+    - "cell_sentence"
+    - "semantic_true"
+    - "semantic_similar"
+
+  # Required embeddings (dataset-specific)
+  required_obsm_keys: ["X_pca", "X_scvi_fm"]
+
+  # Cell sentence generation parameters
+  gene_name_column: "gene_name" # Column in .var containing gene names
+  include_label_prob: 0
+  cs_length: 4096
+  caption_keys: ["caption_key"]
+  # Caption and negative sampling
+  negatives_per_sample: 2
+
+  # Output configuration
+  output_dir: "data/hf_datasets"
+  push_to_hub: true
+  base_repo_id: "jo-mengr"
+
+  # Nextcloud upload (dataset-specific)
+  use_nextcloud: false
+  nextcloud_config:
+    url: "NEXTCLOUD_URL"
+    username: "NEXTCLOUD_USER"
+    password: "NEXTCLOUD_PASSWORD"
+    remote_path: ""
