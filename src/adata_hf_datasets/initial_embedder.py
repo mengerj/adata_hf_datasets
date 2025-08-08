@@ -407,7 +407,7 @@ class PCAEmbedder(BaseEmbedder):
             This should match the number of components in the saved model.
         kwargs : dict
             Additional keyword arguments including:
-            - model_path: Path to saved PCA model (default: resources/cellxgene_geo_pca_8000_to_50.pkl)
+            - model_path: Path to saved PCA model (default: resources/cellxgene_geo_pca_3936_to_50.pkl)
             - gene_list_path: Path to gene list file (default: resources/gene_selection_ENSG_8k.txt)
         """
         super().__init__(embedding_dim=embedding_dim)
@@ -415,7 +415,7 @@ class PCAEmbedder(BaseEmbedder):
 
         # Set default paths
         self.model_path = kwargs.get(
-            "model_path", "resources/cellxgene_geo_pca_8000_to_50.pkl"
+            "model_path", "resources/cellxgene_geo_pca_3936_to_50.pkl"
         )
         self.gene_list_path = kwargs.get(
             "gene_list_path", "resources/gene_selection_ENSG_8k.txt"
