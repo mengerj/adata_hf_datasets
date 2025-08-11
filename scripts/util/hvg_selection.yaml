@@ -1,0 +1,47 @@
+# Stable HVG Selection Configuration
+# This configuration file defines datasets and parameters for stable highly variable gene selection
+
+# List of datasets to process
+datasets:
+  # Dataset 1: H5AD format
+  - path: /Users/mengerj/repos/adata_hf_datasets/data/RNA/processed/train/cellxgene_pseudo_bulk_3_5k/train/chunk_0.zarr
+    name: "cg3_5k" # Optional: human-readable name for this dataset
+    batch_key: "dataset_title" # Column in adata.obs containing batch information
+    gene_name_column: "ensembl_id" # Column in adata.var containing gene identifiers (e.g., Ensembl IDs)
+
+  # Dataset 2: Zarr format
+#  - path: "/path/to/dataset2.zarr"
+#    name: "immune_atlas"
+#    batch_key: "study_id"
+#    gene_name_column: "gene_ids"
+
+# Dataset 3: Another H5AD file
+#  - path: "/path/to/dataset3.h5ad"
+#    name: "tissue_atlas"
+#    batch_key: "donor_id"
+#    gene_name_column: "ensembl_id"
+
+# HVG selection parameters
+n_genes_per_dataset: 2000 # Number of HVGs to select from each dataset
+final_gene_count: 1500 # Final number of stable genes to retain
+
+# Output configuration
+output_dir: "stable_hvg_results" # Directory to save results
+output_prefix: "stable_hvg" # Prefix for output files
+
+# Optional: Advanced parameters (uncomment to customize)
+# min_cells_per_gene: 3       # Minimum cells expressing a gene (for filtering)
+# min_genes_per_cell: 200     # Minimum genes per cell (for filtering)
+# intersection_strategy: "ranked"  # How to handle intersection: "ranked" or "random"
+
+# Example of a minimal configuration:
+# datasets:
+#   - path: "data1.h5ad"
+#     batch_key: "batch"
+#     gene_name_column: "ensembl_id"
+#   - path: "data2.h5ad"
+#     batch_key: "study"
+#     gene_name_column: "ensembl_id"
+# n_genes_per_dataset: 1000
+# final_gene_count: 800
+# output_dir: "results"
