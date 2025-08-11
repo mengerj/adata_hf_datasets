@@ -75,7 +75,7 @@ class TestGeneSelectEmbedder:
         """Test that the GeneSelectEmbedder initializes correctly."""
         # Test with default path
         embedder = GeneSelectEmbedder()
-        assert "gene_selection_ENSG_8k.txt" in embedder.gene_list_path
+        assert "gene_selection_common_genes.txt" in embedder.gene_list_path
 
         # Test with custom path
         custom_gene_list_path = "custom_genes.txt"
@@ -174,24 +174,6 @@ class TestGeneSelectEmbedder:
         )  # Should be adjusted to gene list's dimension
 
         print("✓ Embedding dimension validation works correctly")
-
-    def test_consistency_with_scvi_gene_set(self):
-        """Test that the gene set is consistent with scVI foundation model."""
-        embedder = GeneSelectEmbedder()
-        embedder.prepare()
-
-        # Check that we have exactly 8000 genes (as expected from scVI foundation model)
-        assert len(embedder.gene_order) == 8000
-
-        # Check that all genes are Ensembl IDs
-        for gene in embedder.gene_order:
-            assert gene.startswith("ENSG"), f"Gene {gene} is not an Ensembl ID"
-
-        print("✓ Gene set is consistent with scVI foundation model")
-        print(f"  - Number of genes: {len(embedder.gene_order)}")
-        print(
-            f"  - All genes are Ensembl IDs: {all(g.startswith('ENSG') for g in embedder.gene_order)}"
-        )
 
 
 if __name__ == "__main__":
