@@ -1370,7 +1370,7 @@ class WorkflowOrchestrator:
         logger.info("Job cancellation complete")
 
     def _wait_for_job_completion(
-        self, host: str, job_id: int, step_name: str, timeout_hours: int = 72
+        self, host: str, job_id: int, step_name: str, timeout_hours: int = 144
     ) -> None:
         """Wait for a SLURM job to complete and check for errors."""
         logger.info(
@@ -1381,7 +1381,7 @@ class WorkflowOrchestrator:
 
         start_time = time.time()
         timeout_seconds = timeout_hours * 3600
-        check_interval = 60  # Check every minute
+        check_interval = 600  # check every 10 minutes
 
         while True:
             # Check if we've exceeded the timeout
