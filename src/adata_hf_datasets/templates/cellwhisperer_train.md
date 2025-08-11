@@ -14,21 +14,31 @@ task_categories:
 
 ## Description
 
-This dataset contains **RNA sequencing data** (or actually references to anndata files stored on a cloud) and text descriptions.
+This dataset contains a representation of **RNA sequencing data** and text descriptions.
 $dataset_type_explanation
+
+**Cell Sentence Length**: The cell sentences in this dataset have a length of $cs_length genes.
 
 The **RNA sequencing data** used for training was originally gathered and annotated in the **CellWhisperer** project. It is derived from
 **CellxGene** and **GEO**. Detailed information on the gathering and annotation of the data can be read in the CellWhisperer Manuscript.
 
-The Test data is partly taken from the cellwhisperer project (bowel disease dataset) and from Luecken et. al.
-It was processed and converted into a Hugging Face dataset using the [adata_hf_datasets](https://github.com/mengerj/adata_hf_datasets) Python package.
+## Example Data Row
+
+The dataset contains the following column structure (example from the first row):
+
+```
+$example_data_formatted
+```
+
+The processed .h5ad files used to create this dataset are stored remotely. An example file can be accessed here: $example_share_link
+
+The AnnData Objects were processed and converted into a Hugging Face dataset using the [adata_hf_datasets](https://github.com/mengerj/adata_hf_datasets) Python package.
 The dataset can be used to train a multimodal model, aligning transcriptome and text modalities with the **sentence-transformers** framework.
 See [mmcontext](https://github.com/mengerj/mmcontext) for examples on how to train such a model.
 
 The anndata objects are stored on nextcloud and a sharelink is provided as part of the dataset to download them. These anndata objects contain
 intial embeddings generated like this: $embedding_generation
 These initial embeddings are used as inputs for downstream model training / inference.
-$caption_info
 
 ## Source
 
@@ -36,11 +46,9 @@ $caption_info
   CZ CELLxGENE Discover: **A single-cell data platform for scalable exploration, analysis and modeling of aggregated data CZI Single-Cell Biology, et al. bioRxiv 2023.10.30**
   [Publication](https://doi.org/10.1101/2023.10.30.563174)
 
-  Bowel Disease: _Parikh, Kaushal, Agne Antanaviciute, David Fawkner-Corbett, Marta Jagielowicz, Anna Aulicino, Christoffer Lagerholm, Simon Davis, et al. 2019. “Colonic Epithelial Cell Diversity in Health and Inflammatory Bowel Disease.” Nature 567 (7746): 49–55_
-  [GEO accession](https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE116222)
-
-  Other Test Data: Luecken, Malte D., M. Büttner, K. Chaichoompu, A. Danese, M. Interlandi, M. F. Mueller, D. C. Strobl, et al. “Benchmarking Atlas-Level Data Integration in Single-Cell Genomics.” Nature Methods 19, no. 1 (January 2022): 41–50.
-  [Publication](https://doi.org/10.1038/s41592-021-01336-8).
+  GEO Database: Edgar R, Domrachev M, Lash AE.
+  Gene Expression Omnibus: NCBI gene expression and hybridization array data repository
+  Nucleic Acids Res. 2002 Jan 1;30(1):207-10
 
 - **Annotated Data:**
   Cell Whisperer: _Multimodal learning of transcriptomes and text enables interactive single-cell RNA-seq data exploration with natural-language chats_
@@ -63,52 +71,39 @@ To use this dataset in Python:
 ```python
 from datasets import load_dataset
 
+# Load the dataset
 dataset = load_dataset("$repo_id")
 ```
 
-The anndata reference is a json string which contains a share_link to the remotly stored anndata object. It can be obtained like this:
+### Understanding the Data Structure
+
+- **sample_idx**: This column maps to the `adata.obs.index` of the original AnnData objects
+- **Chunking**: Larger datasets were chunked, so each AnnData object contains only a subset of the indices from the complete dataset
+- **Share Links**: Each row contains a `share_link` that can be used with requests to download the corresponding AnnData object
+
+### Loading AnnData Objects
+
+The share links in the dataset can be used to download the corresponding AnnData objects:
 
 ```python
-import json
-import anndata
 import requests
-import numpy as np
+import anndata as ad
 
-adata_ref = json.loads(dataset["train"]["anndata_ref"][0])
-caption = dataset["train"]["caption"] #For dataset_type "pairs"
-#caption = dataset["train"]["positive"] #For dataset_type "multiplet"
-adata_share_link = adata_ref["file_record"]["dataset_path"]
-embedding_matrix_share_link = adata_ref["file_record"]["embeddings"]["X_scvi"] #directly access a seperatly stored embedding matrix
-sample_id = adata_ref["sample_id"]
-save_path = "../data/adata.h5ad"
-#read the whole adata
-response = requests.get(adata_share_link)
-if response.status_code == 200:
-  # Write the content of the response to a local file
-  with open(save_path, "wb") as file:
-    file.write(response.content)
-else:
-  print("Failed to read data from share link.")
-adata = anndata.read_h5ad(save_path)
+# Get the share link from a dataset row
+row = dataset["train"][0]  # First row as example
+share_link = row["share_link"]
+sample_idx = row["sample_idx"]
 
-save_path = "../data/embedding.npy"
-# The dataset contains several pre-computed embeddings. Lets for example get the embeddings computed with "scvi":
-sample_idx = adata.obs.index == sample_id
-sample_embedding = adata.obsm["X_scvi"][sample_idx]
-# This sample embedding is described the the caption (loaded above)
-# The same embedding should be obtainable from the embedding matrix directly
-response = requests.get(embedding_matrix_share_link)
+# Download and load the AnnData object
+response = requests.get(share_link)
 if response.status_code == 200:
-  # Write the content of the response to a local file
-  with open(save_path, "wb") as file:
-    file.write(response.content)
+    with open("adata.h5ad", "wb") as f:
+        f.write(response.content)
+    adata = ad.read_h5ad("adata.h5ad")
+
+    # The sample_idx corresponds to adata.obs.index
+    sample_data = adata[adata.obs.index == sample_idx]
+    print(f"Found sample: {sample_data.shape}")
 else:
-  print("Failed to read data from share link.")
-# Load the .npz file
-npzfile = np.load(save_path, allow_pickle=True)
-# Extract arrays from the keys
-emb_matrix = npzfile["data"]       # Assuming "data" contains your embeddings
-sample_ids = npzfile["sample_ids"] # Assuming "sample_ids" contains the corresponding sample IDs
-sample_embedding_2 = emb_matrix[sample_ids == sample_id]
-assert np.allclose(sample_embedding, sample_embedding_2)
+    print("Failed to download AnnData object")
 ```

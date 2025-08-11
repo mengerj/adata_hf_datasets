@@ -1,0 +1,52 @@
+# Workflow Orchestrator Configuration
+# This config contains settings for the workflow orchestrator only
+# Dataset configs should be specified separately via command line
+
+# =============================================================================
+# WORKFLOW MODE CONFIGURATION
+# =============================================================================
+workflow:
+  # Set to true to run locally instead of via SSH
+  local_mode: false
+
+  # Transfer mode configuration
+  # Set to true to use local scratch storage with transfers between clusters (faster processing, slower transfers)
+  # Set to false to use shared filesystem directly (slower processing, no transfer overhead)
+  # This allows performance comparison between local scratch + transfers vs shared filesystem
+  enable_transfers: false
+
+  # SSH connection settings for CPU cluster
+  # Using SSH aliases from ~/.ssh/config (handles ProxyJump automatically)
+  cpu_login:
+    host: "imbi13" # SSH alias that resolves through biom5
+    user: "menger" # Use the user from SSH config
+
+  # SSH connection settings for GPU cluster
+  # Using SSH aliases from ~/.ssh/config (handles ProxyJump automatically)
+  gpu_login:
+    host: "imbi_gpu_H100" # SSH alias that resolves through biom5
+    user: "menger" # Use the user from SSH config
+
+  # SLURM partition names (from actual cluster configuration)
+  cpu_partition: "slurm" # CPU partition on imbi13
+  gpu_partition: "gpu" # GPU partition on imbi_gpu_H100
+
+  # Job polling interval (seconds)
+  poll_interval: 3600
+
+  # Timeout for job completion (seconds, 0 = no timeout)
+  job_timeout: 0
+
+  # Output directory configuration
+  # This is the base directory where all workflow outputs and logs will be stored
+  # The actual workflow directory will be: {output_directory}/{date}/workflow_{job_id}/
+  output_directory: "/home/menger/git/adata_hf_datasets/outputs"
+
+# =============================================================================
+# ORCHESTRATOR SETTINGS
+# =============================================================================
+# Force flag to skip config synchronization validation
+force: false
+
+# Dataset config name to use (will be overridden by command line)
+dataset_config_name: "dataset_cellxgene_pseudo_bulk_35k"

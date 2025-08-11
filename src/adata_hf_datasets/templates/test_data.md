@@ -24,13 +24,14 @@ See [mmcontext](https://github.com/mengerj/mmcontext) for examples on how to tra
 The anndata objects are stored on nextcloud and a sharelink is provided as part of the dataset to download them. These anndata objects contain
 intial embeddings generated like this: $embedding_generation
 These initial embeddings are used as inputs for downstream model inference.
-$caption_info
 
 ## Source
 
 - **Original Data:**
-  CZ CELLxGENE Discover: **A single-cell data platform for scalable exploration, analysis and modeling of aggregated data CZI Single-Cell Biology, et al. bioRxiv 2023.10.30**
-  [Publication](https://doi.org/10.1101/2023.10.30.563174)
+  Human Immune Health Atlas: Gong Q, Sharma M, Kuan EL, Glass MC, Chander A, Singh M, et al. Longitudinal Multi-omic Immune Profiling Reveals Age-Related Immune Cell Dynamics in Healthy Adults. bioRxiv. 2024. p. 2024.09.10.612119.
+  [Publication](doi:10.1101/2024.09.10.612119)
+
+  The Tabula Sapiens Consortium\*, Robert C. Jones, Jim Karkanias, Mark A. Krasnow, Angela Oliveira Pisco, Stephen R. Quake, Julia Salzman et al. "The Tabula Sapiens: A multiple-organ, single-cell transcriptomic atlas of humans." Science 376, no. 6594 (2022): eabl4896. [Publication](10.1126/science.abl4896)
 
   Bowel Disease: _Parikh, Kaushal, Agne Antanaviciute, David Fawkner-Corbett, Marta Jagielowicz, Anna Aulicino, Christoffer Lagerholm, Simon Davis, et al. 2019. “Colonic Epithelial Cell Diversity in Health and Inflammatory Bowel Disease.” Nature 567 (7746): 49–55_
   [GEO accession](https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE116222)

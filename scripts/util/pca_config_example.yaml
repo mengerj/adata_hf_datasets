@@ -1,0 +1,44 @@
+# Cross-Dataset PCA Configuration
+# This configuration file specifies datasets and parameters for fitting a consistent PCA model
+
+# List of dataset directories containing zarr chunks
+dataset_directories:
+  # Dataset 1: Path to directory with chunk_*.zarr files
+  - "data/RNA/processed_with_emb/train/cellxgene_pseudo_bulk_100k/train/"
+
+  # Dataset 2: Another dataset directory
+  - "data/RNA/processed_with_emb/train/geo_700k/train/"
+
+# PCA parameters
+n_components: 50 # Number of principal components to compute
+random_state: 42 # For reproducible results
+
+# Optional: Gene list file (one gene per line)
+# If provided, all datasets will be subsetted to these genes in this order
+# If not provided, uses intersection of genes across all datasets
+gene_list_file: "resources/gene_selection_common_genes.txt"
+
+# Output configuration
+output_dir: "resources/pca_common_genes" # Directory to save results
+output_prefix: "100k_700k" # Prefix for output files
+
+# Optional: Advanced parameters
+
+# Gene filtering options (applied if no gene_list_file provided)
+# min_genes_per_dataset: 1000  # Minimum genes a dataset must have
+# require_all_datasets: true   # Require genes present in ALL datasets
+
+# Subsampling options (for very large datasets)
+# max_cells_per_dataset: 50000   # Subsample each dataset to this many cells
+# subsample_strategy: "random"   # "random" or "stratified"
+# subsample_seed: 42
+
+# Memory optimization
+# chunk_size: 10000  # Process data in chunks of this size (for memory efficiency)
+
+# Example minimal configuration:
+# dataset_directories:
+#   - "data1_chunks/"
+#   - "data2_chunks/"
+# n_components: 30
+# output_dir: "pca_results"

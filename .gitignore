@@ -9,8 +9,11 @@ data/
 *cache*
 /tmp*
 *logs*
+*.log
 *.err
 *.out
 out/
 *.DS_Store
 outputs
+models/
+src/adata_hf_datasets/hf_config.py

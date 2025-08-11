@@ -8,34 +8,44 @@ name = "adata-hf-datasets"
 version = "0.1.0"
 description = "A package for building multimodal omics datasets confirm with huggingface based on anndata. Furthermore there is an integration with cellxgene to get an anndata object with extra information based on the given dois."
 readme = "README.md"
-license = { file = "LICENSE" }
 authors = [
   { name = "Jonatan Menger", email = "jonatan.menger@gmail.com" },
 ]
-requires-python = ">=3.10,<3.13"
+requires-python = ">=3.11,<3.13"
 classifiers = [
   "Programming Language :: Python :: 3 :: Only",
-  "Programming Language :: Python :: 3.10",
   "Programming Language :: Python :: 3.11",
   "Programming Language :: Python :: 3.12",
 ]
 dependencies = [
   "anndata",
+  "appdirs>=1.4.4",
+  "biopython>=1.85",
+  "boto3>=1.37.15",
+  "botocore>=1.37.15",
   "bs4",
+  "dask>=2025.3",
   "datasets",
+  "geneformer",
   "huggingface-hub>=0.28.1",
   "hydra-core>=1.3.2",
   "ipykernel>=6.29.5",
   "ipywidgets>=8.1.5",
   "jupyter>=1.1.1",
+  "mygene>=3.2.2",
+  "numcodecs==0.14.1",
   "numpy",
   "pandas",
   "pybiomart>=0.2",
   "pynvml>=12",
+  "pysradb>=2.2.2",
   "python-dotenv>=1.0.1",
   "requests",
   "scanpy>=1.10.4",
   "scvi-tools>=1.2.2.post2",
+  "torch>=2.6",
+  "transformers==4.43.4",    # due to issues with importing AdamW used in Geneformer
+  "zarr==2.16.1",            #had some compatibility issues with anndata and numcodecs
 ]
 
 optional-dependencies.dev = [
@@ -53,3 +63,6 @@ optional-dependencies.test = [
   "coverage",
   "pytest",
 ]
+
+[tool.uv.sources]
+geneformer = { path = "external/Geneformer" }
