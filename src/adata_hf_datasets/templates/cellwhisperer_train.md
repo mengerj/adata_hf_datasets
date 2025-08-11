@@ -39,7 +39,6 @@ See [mmcontext](https://github.com/mengerj/mmcontext) for examples on how to tra
 The anndata objects are stored on nextcloud and a sharelink is provided as part of the dataset to download them. These anndata objects contain
 intial embeddings generated like this: $embedding_generation
 These initial embeddings are used as inputs for downstream model training / inference.
-$caption_info
 
 ## Source
 
