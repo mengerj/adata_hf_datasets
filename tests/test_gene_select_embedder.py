@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 """
-Test the new PCA embedder with pre-trained model
+Test the updated GeneSelectEmbedder
 
-This test verifies that the new PCAEmbedder correctly:
-- Loads the pre-trained model and gene list
+This test verifies that the updated GeneSelectEmbedder correctly:
+- Loads the gene list from resources
 - Subsets data to the required genes in correct order
-- Applies the PCA transformation
+- Returns the gene expression matrix as embedding
 - Handles missing genes by filling with zeros
 """
 
@@ -20,11 +20,11 @@ import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
-from adata_hf_datasets.initial_embedder import PCAEmbedder
+from adata_hf_datasets.initial_embedder import GeneSelectEmbedder
 
 
-class TestNewPCAEmbedder:
-    """Test the new PCA embedder functionality."""
+class TestGeneSelectEmbedder:
+    """Test the updated GeneSelectEmbedder functionality."""
 
     def setup_method(self):
         """Set up test data."""
@@ -71,46 +71,37 @@ class TestNewPCAEmbedder:
 
         return ad.AnnData(X=X, obs=obs_df, var=var_df)
 
-    def test_pca_embedder_initialization(self):
-        """Test that the PCA embedder initializes correctly."""
-        # Test with default paths
-        embedder = PCAEmbedder(embedding_dim=50)
-        assert embedder.embedding_dim == 50
-        assert "cellxgene_geo_pca_3936_to_50.pkl" in embedder.model_path
+    def test_gene_select_embedder_initialization(self):
+        """Test that the GeneSelectEmbedder initializes correctly."""
+        # Test with default path
+        embedder = GeneSelectEmbedder()
         assert "gene_selection_ENSG_8k.txt" in embedder.gene_list_path
 
-        # Test with custom paths
-        custom_model_path = "custom_model.pkl"
+        # Test with custom path
         custom_gene_list_path = "custom_genes.txt"
-        embedder = PCAEmbedder(
-            embedding_dim=50,
-            model_path=custom_model_path,
-            gene_list_path=custom_gene_list_path,
-        )
-        assert embedder.model_path == custom_model_path
+        embedder = GeneSelectEmbedder(gene_list_path=custom_gene_list_path)
         assert embedder.gene_list_path == custom_gene_list_path
 
-    def test_model_loading(self):
-        """Test that the model loads correctly."""
-        embedder = PCAEmbedder(embedding_dim=50)
+    def test_gene_list_loading(self):
+        """Test that the gene list loads correctly."""
+        embedder = GeneSelectEmbedder()
 
         # Test prepare method
         embedder.prepare()
 
-        # Check that model components are loaded
-        assert embedder.pca_model is not None
+        # Check that gene list is loaded
         assert embedder.gene_order is not None
         assert len(embedder.gene_order) > 0
-        assert embedder.pca_model.n_components_ == 50
+        assert embedder.embedding_dim == len(embedder.gene_order)
 
-        print("✓ Model loaded successfully")
-        print(f"  - PCA components: {embedder.pca_model.n_components_}")
-        print(f"  - Gene order length: {len(embedder.gene_order)}")
+        print("✓ Gene list loaded successfully")
+        print(f"  - Number of genes: {len(embedder.gene_order)}")
+        print(f"  - Embedding dimension: {embedder.embedding_dim}")
         print(f"  - First 5 genes: {embedder.gene_order[:5]}")
 
     def test_gene_subsetting(self):
         """Test that genes are subsetted correctly."""
-        embedder = PCAEmbedder(embedding_dim=50)
+        embedder = GeneSelectEmbedder()
         embedder.prepare()
 
         # Test with dataset that has some matching genes
@@ -135,29 +126,29 @@ class TestNewPCAEmbedder:
 
         print("✓ Gene subsetting works correctly")
 
-    def test_pca_application(self):
-        """Test that PCA is applied correctly."""
-        embedder = PCAEmbedder(embedding_dim=50)
+    def test_gene_selection_application(self):
+        """Test that gene selection is applied correctly."""
+        embedder = GeneSelectEmbedder()
         embedder.prepare()
 
-        # Apply PCA to test dataset
-        embedding = embedder.embed(self.dataset1, obsm_key="X_pca_test")
+        # Apply gene selection to test dataset
+        embedding = embedder.embed(self.dataset1, obsm_key="X_gs_test")
 
         # Check embedding dimensions
         assert embedding.shape[0] == self.dataset1.n_obs  # Same number of cells
-        assert embedding.shape[1] == 50  # 50 PCA components
+        assert embedding.shape[1] == len(embedder.gene_order)  # All genes from list
 
         # Check that results are stored in adata
-        assert "X_pca_test" in self.dataset1.obsm
-        assert self.dataset1.obsm["X_pca_test"].shape == embedding.shape
+        assert "X_gs_test" in self.dataset1.obsm
+        assert self.dataset1.obsm["X_gs_test"].shape == embedding.shape
 
-        print("✓ PCA application works correctly")
+        print("✓ Gene selection application works correctly")
         print(f"  - Input shape: {self.dataset1.shape}")
         print(f"  - Output shape: {embedding.shape}")
 
     def test_missing_genes_handling(self):
         """Test that missing genes are handled correctly."""
-        embedder = PCAEmbedder(embedding_dim=50)
+        embedder = GeneSelectEmbedder()
         embedder.prepare()
 
         # Create dataset with no matching genes (should fail)
@@ -174,25 +165,46 @@ class TestNewPCAEmbedder:
     def test_embedding_dimension_validation(self):
         """Test that embedding dimension validation works."""
         # Test with wrong embedding dimension
-        embedder = PCAEmbedder(embedding_dim=100)  # Wrong dimension
+        embedder = GeneSelectEmbedder(embedding_dim=100)  # Wrong dimension
         embedder.prepare()
 
-        # Should automatically adjust to model's dimension
-        assert embedder.embedding_dim == 50  # Should be adjusted to model's dimension
+        # Should automatically adjust to gene list's dimension
+        assert embedder.embedding_dim == len(
+            embedder.gene_order
+        )  # Should be adjusted to gene list's dimension
 
         print("✓ Embedding dimension validation works correctly")
+
+    def test_consistency_with_scvi_gene_set(self):
+        """Test that the gene set is consistent with scVI foundation model."""
+        embedder = GeneSelectEmbedder()
+        embedder.prepare()
+
+        # Check that we have exactly 8000 genes (as expected from scVI foundation model)
+        assert len(embedder.gene_order) == 8000
+
+        # Check that all genes are Ensembl IDs
+        for gene in embedder.gene_order:
+            assert gene.startswith("ENSG"), f"Gene {gene} is not an Ensembl ID"
+
+        print("✓ Gene set is consistent with scVI foundation model")
+        print(f"  - Number of genes: {len(embedder.gene_order)}")
+        print(
+            f"  - All genes are Ensembl IDs: {all(g.startswith('ENSG') for g in embedder.gene_order)}"
+        )
 
 
 if __name__ == "__main__":
     # Run tests
-    test_instance = TestNewPCAEmbedder()
+    test_instance = TestGeneSelectEmbedder()
     test_instance.setup_method()
 
-    print("Running new PCA embedder tests...")
-    test_instance.test_pca_embedder_initialization()
-    test_instance.test_model_loading()
+    print("Running GeneSelectEmbedder tests...")
+    test_instance.test_gene_select_embedder_initialization()
+    test_instance.test_gene_list_loading()
     test_instance.test_gene_subsetting()
-    test_instance.test_pca_application()
+    test_instance.test_gene_selection_application()
     test_instance.test_missing_genes_handling()
     test_instance.test_embedding_dimension_validation()
+    test_instance.test_consistency_with_scvi_gene_set()
     print("All tests passed!")
