@@ -158,7 +158,6 @@ def annotate_and_push_dataset(
     private: bool = False,
     readme_template_name: str | None = None,
     embedding_generation: str | None = None,
-    caption_generation: str | None = None,
     dataset_type_explanation: str | None = None,
     metadata: dict | None = None,
 ) -> None:
@@ -177,8 +176,6 @@ def annotate_and_push_dataset(
         The name of the README template to use. Has to be stored in the package resources.
     embedding_generation (str, optional):
         A description of how the embeddings stored in .obsm of the adata files were generated.
-    caption_generation (str, optional):
-        A description of how the captions stored in .obs of the adata files were generated.
     dataset_type_explanation (str, optional):
         A description of the dataset type. E.g. "pairs" or "multiplets".
     """
@@ -199,7 +196,6 @@ def annotate_and_push_dataset(
                     readme_template_name=readme_template_name,
                     repo_id=repo_id,
                     embedding_generation=embedding_generation,
-                    caption_generation=caption_generation,
                     dataset_type_explanation=dataset_type_explanation,
                     share_info=share_info,
                     metadata=metadata,
@@ -224,7 +220,6 @@ def _generate_readme(
     readme_template_name,
     repo_id,
     embedding_generation,
-    caption_generation=None,
     dataset_type_explanation=None,
     share_info=None,
     metadata=None,
@@ -240,15 +235,9 @@ def _generate_readme(
         The name of the template file to use. E.g cellwhisperer
     embedding_generation
         A description of how the embeddings stored in .obsm of the adata files were generated.
-    caption_generation
-        A description of how the captions stored in .obs of the adata files were generated. Not needed for inference datasets.
     metadata
         Additional metadata dictionary that can contain cs_length, example_data, example_share_link, etc.
     """
-    if caption_generation is None:
-        caption_info = ""
-    else:
-        caption_info = f"""The caption entry of the dataset contains a textual description of the dataset, it was generated like this:{caption_generation}"""
 
     # Format example data if provided
     example_data_formatted = ""
@@ -276,7 +265,6 @@ def _generate_readme(
     readme_filled = Template(readme_template).safe_substitute(
         repo_id=repo_id,
         embedding_generation=embedding_generation,
-        caption_generation=caption_info,
         dataset_type_explanation=dataset_type_explanation,
         share_info=share_info,
         cs_length=cs_length,

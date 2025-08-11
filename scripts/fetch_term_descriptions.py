@@ -29,7 +29,7 @@ def main():
     # ========== CONFIGURATION PARAMETERS ==========
 
     # Basic configuration
-    data_dir = "term_descriptions_example"  # Output folder name in out/data/
+    data_dir = "descriptions"  # Output folder name in out/data/
 
     # NCBI API configuration
     email = "jonatan.menger@uniklinik-freiburg.de"  # REQUIRED: Your email for NCBI API access
@@ -87,7 +87,7 @@ def main():
     diseases = None
     tissues = None
     organisms = None
-    cell_types = None
+    genes = None
     # Advanced settings (OPTIMIZED FOR SPEED)
     max_retries = 1  # Reduced retries for speed
     batch_size = 10  # Larger batches for efficiency
@@ -95,7 +95,7 @@ def main():
     include_synonyms = False  # Skip for speed (major time saver)
 
     # Database options (GENES ONLY - skip slow searches)
-    search_mesh = False  # Skip MeSH for genes (use Gene DB directly)
+    search_mesh = True  # Skip MeSH for genes (use Gene DB directly)
     search_gene = True  # Only use Gene database for genes
     search_books = False  # Skip slow Books database
 
@@ -193,11 +193,11 @@ def main():
             "🚀 HuggingFace datasets have also been created with anchor-positive pairs!"
         )
         print("   Check your HuggingFace account for datasets named:")
-        print(f"   - {data_dir}_term_descriptions_cell_types_anchor_positive")
-        print(f"   - {data_dir}_term_descriptions_diseases_anchor_positive")
-        print(f"   - {data_dir}_term_descriptions_tissues_anchor_positive")
-        print(f"   - {data_dir}_term_descriptions_organisms_anchor_positive")
-        print(f"   - {data_dir}_term_descriptions_genes_anchor_positive")
+        print(f"   - {data_dir}_cell_types")
+        print(f"   - {data_dir}_diseases")
+        print(f"   - {data_dir}_tissues")
+        print(f"   - {data_dir}_organisms")
+        print(f"   - {data_dir}_genes")
         print()
         print("📊 Each HuggingFace dataset contains:")
         print("   • anchor: term (including synonyms)")

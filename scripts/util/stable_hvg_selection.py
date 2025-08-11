@@ -561,7 +561,10 @@ The configuration file should be in YAML format with the following structure:
     )
 
     parser.add_argument(
-        "--config", type=str, required=True, help="Path to YAML configuration file"
+        "--config",
+        type=str,
+        default="/Users/mengerj/repos/adata_hf_datasets/scripts/util/hvg_selection.yaml",
+        help="Path to YAML configuration file (default: ../../conf/hvg_selection.yaml)",
     )
 
     parser.add_argument(

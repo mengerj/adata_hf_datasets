@@ -8,9 +8,9 @@ defaults:
 # DATASET METADATA
 # =============================================================================
 dataset:
-  name: "human_immune_health_atlas_10k"
+  name: "human_immune_health_atlas_50k"
   description: |
-    A dataset of 100k human immune health atlas samples from the Human Cell Atlas.
+    A dataset of 50kk human immune health atlas samples from the Human Cell Atlas.
     Originally published in Gong Q, Sharma M, Kuan EL, Glass MC, Chander A, Singh M, et al.
     Longitudinal Multi-omic Immune Profiling Reveals Age-Related Immune Cell Dynamics in Healthy Adults.
     bioRxiv. 2024. p. 2024.09.10.612119. doi:10.1101/2024.09.10.612119
@@ -31,8 +31,8 @@ other_bio_labels: ["AIFI_L1", "AIFI_L2", "AIFI_L3"]
 # =============================================================================
 # Download configuration
 download:
-  enabled: false
-  subset_size: 10000
+  enabled: true
+  subset_size: 50000
 
 # Preprocessing overrides (both dataset-specific and execution parameters)
 preprocessing:
@@ -61,7 +61,7 @@ dataset_creation:
   enabled: true
   use_nextcloud: true
   required_obsm_keys: ["X_pca", "X_scvi_fm", "X_hvg", "X_geneformer", "X_gs"]
-  cs_length: [50, 2000]
+  cs_length: [4096]
   negatives_per_sample: 2
   split_dataset: false # Important for training datasets. Set to false for test datasets.
   dataset_format: single # Important for training datasets. Set to "single" for test datasets.

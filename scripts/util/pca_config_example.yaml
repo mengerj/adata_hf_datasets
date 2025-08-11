@@ -7,7 +7,7 @@ dataset_directories:
   - "data/RNA/processed_with_emb/train/cellxgene_pseudo_bulk_100k/train/"
 
   # Dataset 2: Another dataset directory
-  #- "data/RNA/processed_with_emb/train/geo_700k/train/"
+  - "data/RNA/processed_with_emb/train/geo_700k/train/"
 
 # PCA parameters
 n_components: 50 # Number of principal components to compute
@@ -16,11 +16,11 @@ random_state: 42 # For reproducible results
 # Optional: Gene list file (one gene per line)
 # If provided, all datasets will be subsetted to these genes in this order
 # If not provided, uses intersection of genes across all datasets
-gene_list_file: "resources/gene_selection_ENSG_8k.txt"
+gene_list_file: "resources/gene_selection_common_genes.txt"
 
 # Output configuration
-output_dir: "resources/cross_dataset_pca_results" # Directory to save results
-output_prefix: "100k" # Prefix for output files
+output_dir: "resources/pca_common_genes" # Directory to save results
+output_prefix: "100k_700k" # Prefix for output files
 
 # Optional: Advanced parameters
 
