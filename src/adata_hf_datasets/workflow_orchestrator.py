@@ -355,7 +355,7 @@ class WorkflowOrchestrator:
     ) -> None:
         """Validate that the remote config matches the local one."""
         logger.info(f"Validating config synchronization for {dataset_config_name}...")
-
+        logger.info(f"Project directory: {project_directory}")
         ensure_config_sync(
             config_name=dataset_config_name,
             remote_host=self.cpu_login["host"],
@@ -971,7 +971,7 @@ class WorkflowOrchestrator:
             pass
 
         # Validate config synchronization unless forced
-        project_dir = workflow_config.workflow.get("project_directory")
+        project_dir = workflow_config.get("project_directory")
         self.validate_config_sync(
             dataset_config_name, force=force, project_directory=project_dir
         )
@@ -1160,7 +1160,7 @@ class WorkflowOrchestrator:
         logger.info(f"Output directory: {base_dir}")
 
         # Validate config synchronization unless forced
-        project_dir = workflow_config.workflow.get("project_directory")
+        project_dir = workflow_config.get("project_directory")
         self.validate_config_sync(
             dataset_config_name, force=force, project_directory=project_dir
         )
