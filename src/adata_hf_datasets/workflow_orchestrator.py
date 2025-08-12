@@ -66,7 +66,7 @@ class WorkflowLogger:
         # Set up logging
         self._setup_logging()
 
-        project_dir = workflow_config.get("project_directory")
+        project_dir = Path(workflow_config.get("project_directory"))
         # Copy the dataset config
         self._copy_dataset_config(project_dir)
 
