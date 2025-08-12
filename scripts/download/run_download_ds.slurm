@@ -43,7 +43,10 @@ DATASET_CONFIG="${DATASET_CONFIG:-dataset_cellxgene_pseudo_bulk_3_5k}"
 echo "Starting job with RUN_ID: $RUN_ID"
 echo "Output directory: $BASE_OUT"
 echo "Using dataset config: $DATASET_CONFIG"
-source cpu_venv/bin/activate
+PROJECT_DIR=${PROJECT_DIR:-/home/menger/git/adata_hf_datasets}
+cd "$PROJECT_DIR"
+VENV_PATH=${VENV_PATH:-.venv}
+source "$VENV_PATH"/bin/activate
 echo "venv activated"
 
 ###
@@ -56,9 +59,16 @@ echo "venv activated"
 #    - Apply stratification if configured
 ###
 echo "Starting download with config: $DATASET_CONFIG"
-python3 scripts/download/download_dataset_config.py \
-    --config-name=$DATASET_CONFIG \
-    ++hydra.run.dir="$BASE_OUT"
+
+# Build command and include base_file_path override if provided via env
+CMD="python3 scripts/download/download_dataset_config.py --config-name=$DATASET_CONFIG ++hydra.run.dir=\"$BASE_OUT\""
+if [[ -n "${BASE_FILE_PATH:-}" ]]; then
+  echo "Using base_file_path override: $BASE_FILE_PATH"
+  CMD="$CMD ++base_file_path=\"$BASE_FILE_PATH\""
+fi
+
+echo "Running: $CMD"
+eval $CMD
 
 # Capture the exit code
 EXIT_CODE=$?

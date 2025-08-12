@@ -92,10 +92,12 @@ echo "Processing file: $target_file"
 # ─────────────────────────────────────────────────────────────────────────────
 
 # Change to project directory
-cd /dsk/home/menger/git/adata_hf_datasets
+PROJECT_DIR=${PROJECT_DIR:-/home/menger/git/adata_hf_datasets}
+cd "$PROJECT_DIR"
 
 # Activate environment
-source .venv/bin/activate
+VENV_PATH=${VENV_PATH:-.venv}
+source "$VENV_PATH"/bin/activate
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Build Configuration Parameters
@@ -183,16 +185,17 @@ else:
     echo "✓ GPU environment validation complete"
 fi
 
-# Override input_files for the specific embedding section being used
-# This ensures the override happens to the correct section BEFORE config selection
 echo "Overriding input_files for section: $EMBEDDING_CONFIG_SECTION"
-python3 scripts/embed/embed_core.py \
-    --config-path="../../conf" \
-    --config-name="$DATASET_CONFIG" \
-    ++${EMBEDDING_CONFIG_SECTION}.input_files="[\"$target_file\"]" \
-    ++prepare_only="$PREPARE_ONLY" \
-    ++hydra.run.dir="$OUTPUT_DIR" \
-    ++embedding_config_section="$EMBEDDING_CONFIG_SECTION"
+
+CMD="python3 scripts/embed/embed_core.py --config-path=\"../../conf\" --config-name=\"$DATASET_CONFIG\" ++${EMBEDDING_CONFIG_SECTION}.input_files=\"[\"$target_file\"]\" ++prepare_only=\"$PREPARE_ONLY\" ++hydra.run.dir=\"$OUTPUT_DIR\" ++embedding_config_section=\"$EMBEDDING_CONFIG_SECTION\""
+
+if [[ -n "${BASE_FILE_PATH:-}" ]]; then
+  echo "Using base_file_path override: $BASE_FILE_PATH"
+  CMD="$CMD ++base_file_path=\"$BASE_FILE_PATH\""
+fi
+
+echo "Running: $CMD"
+eval $CMD
 
 embedding_exit_code=$?
 

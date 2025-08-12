@@ -10,6 +10,7 @@ This module provides utilities to:
 """
 
 from pathlib import Path
+import os
 from typing import Dict, Any, List
 from omegaconf import DictConfig, OmegaConf
 import logging
@@ -35,7 +36,12 @@ def generate_paths_from_config(cfg: DictConfig) -> Dict[str, str]:
     dataset_name = cfg.dataset.name
     # Handle missing full_name gracefully
     full_name = cfg.dataset.get("full_name", None)
-    base_file_path = cfg.get("base_file_path", "/scratch/local")
+    # Resolve base_file_path strictly from cfg or environment (no internal defaults)
+    base_file_path = cfg.get("base_file_path", None) or os.environ.get("BASE_FILE_PATH")
+    if not base_file_path:
+        raise ValueError(
+            "base_file_path is not set. Provide it via orchestrator config (preferred) or CLI override ++base_file_path."
+        )
 
     # Determine if this is a training or test dataset
     is_training = cfg.preprocessing.get("split_dataset", True)

@@ -40,10 +40,12 @@ echo "Starting job"
 echo "Using dataset config: $DATASET_CONFIG"
 echo "Output directory: $BASE_OUT"
 # Ensure we're in the correct working directory
-cd /home/menger/git/adata_hf_datasets
+PROJECT_DIR=${PROJECT_DIR:-/home/menger/git/adata_hf_datasets}
+cd "$PROJECT_DIR"
 
 # Source the setup script to ensure the environment is ready
-source .venv/bin/activate
+VENV_PATH=${VENV_PATH:-.venv}
+source "$VENV_PATH"/bin/activate
 echo "venv activated"
 
 # Print working directory for debugging
@@ -52,9 +54,15 @@ echo "Checking if data directory exists: $(ls -la data/ 2>/dev/null || echo 'dat
 
 # Now run your Python script with the dataset config
 echo "Starting preprocessing with config: $DATASET_CONFIG"
-python3 scripts/preprocessing/preprocess.py \
-    --config-name=$DATASET_CONFIG \
-    ++hydra.run.dir="$BASE_OUT"
+
+CMD="python3 scripts/preprocessing/preprocess.py --config-name=$DATASET_CONFIG ++hydra.run.dir=\"$BASE_OUT\""
+if [[ -n "${BASE_FILE_PATH:-}" ]]; then
+  echo "Using base_file_path override: $BASE_FILE_PATH"
+  CMD="$CMD ++base_file_path=\"$BASE_FILE_PATH\""
+fi
+
+echo "Running: $CMD"
+eval $CMD
 
 # Capture the exit code
 EXIT_CODE=$?

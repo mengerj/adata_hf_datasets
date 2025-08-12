@@ -43,7 +43,10 @@ DATASET_CONFIG="${DATASET_CONFIG:-dataset_cellxgene_pseudo_bulk_3_5k}"
 echo "Starting job with RUN_ID: $RUN_ID"
 echo "Output directory: $BASE_OUT"
 echo "Using dataset config: $DATASET_CONFIG"
-source cpu_venv/bin/activate
+PROJECT_DIR=${PROJECT_DIR:-/home/menger/git/adata_hf_datasets}
+cd "$PROJECT_DIR"
+VENV_PATH=${VENV_PATH:-.venv}
+source "$VENV_PATH"/bin/activate
 echo "venv activated"
 
 ###
@@ -73,7 +76,12 @@ else
     echo "Using caption_key from config file"
 fi
 
-# Execute the command
+# Execute the command, enforce base_file_path override if provided
+if [[ -n "${BASE_FILE_PATH:-}" ]]; then
+    echo "Using base_file_path override: $BASE_FILE_PATH"
+    CMD="$CMD ++base_file_path=\"$BASE_FILE_PATH\""
+fi
+
 echo "Running command: $CMD"
 eval $CMD
 

@@ -146,7 +146,7 @@ class EmbeddingLauncher:
         # Use base_file_path from config with processed subdirectory
         # Environment variable takes precedence (passed from workflow orchestrator)
         env_base_path = os.environ.get("BASE_FILE_PATH")
-        config_base_path = self.config.get("base_file_path", "/scratch/local")
+        config_base_path = self.config.get("base_file_path")
         base_file_path = env_base_path or config_base_path
 
         # Debug logging
@@ -154,6 +154,8 @@ class EmbeddingLauncher:
         logger.info(f"Config base_file_path: {config_base_path}")
         logger.info(f"Final base_file_path: {base_file_path}")
 
+        # Persist the resolved base path for other methods (e.g., sbatch/env)
+        self.resolved_base_file_path = str(base_file_path)
         base_dir = Path(base_file_path) / "processed"
         dataset_name = self.config.dataset.name
 
@@ -289,13 +291,24 @@ class EmbeddingLauncher:
         logger.info(f"Using config section: {config_section}")
 
         # Build environment variables - NO TEMPORARY FILES!
+        resolved_base = os.environ.get("BASE_FILE_PATH") or getattr(
+            self, "resolved_base_file_path", ""
+        )
+
         env_vars = {
             "INPUT_DIR": str(input_dir),
             "DATASET_CONFIG": self.config_name,  # Pass original config name
             "EMBEDDING_CONFIG_SECTION": config_section,  # Tell array job which section to use
             "PREPARE_ONLY": str(self.prepare_only).lower(),
             "WORKFLOW_DIR": os.environ.get("WORKFLOW_DIR", ""),
+            # Propagate project and venv so array script can cd/activate correctly
+            "PROJECT_DIR": os.environ.get(
+                "PROJECT_DIR", "/home/menger/git/adata_hf_datasets"
+            ),
+            "VENV_PATH": os.environ.get("VENV_PATH", ".venv"),
         }
+        if resolved_base:
+            env_vars["BASE_FILE_PATH"] = str(resolved_base)
 
         # Add environment variables to sbatch command
         env_str = ",".join([f"{k}={v}" for k, v in env_vars.items()])
@@ -359,7 +372,9 @@ class EmbeddingLauncher:
                     logger.info("✓ SSH connection test successful")
 
                     # Change to project directory before running sbatch
-                    project_dir = "/home/menger/git/adata_hf_datasets"
+                    project_dir = os.environ.get(
+                        "PROJECT_DIR", "/home/menger/git/adata_hf_datasets"
+                    )
                     remote_cmd = f"cd {project_dir} && {' '.join(sbatch_cmd)}"
                     ssh_cmd = ["ssh", "-o", "ConnectTimeout=30", gpu_host, remote_cmd]
                     logger.info(
@@ -492,6 +507,134 @@ class EmbeddingLauncher:
             logger.error(f"Failed to submit array job for {label}: {e}")
             raise
 
+    def _run_local_tasks(
+        self,
+        label: str,
+        input_dir: Path,
+        max_workers: int,
+        prepare_only: bool,
+    ) -> None:
+        """Run embedding tasks locally in parallel without SLURM.
+
+        Each .zarr file in input_dir is processed by invoking embed_core.py directly.
+        """
+        zarr_files = sorted(input_dir.glob("*.zarr"))
+        if not zarr_files:
+            logger.warning(f"No .zarr files found in {input_dir}, skipping {label}")
+            return
+
+        # Determine output base structure consistent with WORKFLOW_DIR, if provided
+        workflow_dir = os.environ.get("WORKFLOW_DIR", "")
+        job_id = f"local_{label}_{int(__import__('time').time())}"
+
+        if workflow_dir:
+            if prepare_only:
+                base_out = Path(workflow_dir) / "embedding_prepare" / f"array_{job_id}"
+            else:
+                base_out = Path(workflow_dir) / "embedding" / f"array_{job_id}"
+        else:
+            # Fallback to outputs structure
+            date_str = __import__("datetime").datetime.now().strftime("%Y-%m-%d")
+            if prepare_only:
+                base_out = Path("outputs") / date_str / "embedding_prepare" / job_id
+            else:
+                base_out = Path("outputs") / date_str / "embedding" / job_id
+
+        log_dir = base_out
+        base_out.mkdir(parents=True, exist_ok=True)
+
+        logger.info(
+            f"Local backend: processing {len(zarr_files)} files for {label} with up to {max_workers} workers"
+        )
+
+        # Choose which embedding config section to use
+        if prepare_only:
+            if (
+                hasattr(self.config, "embedding_preparation")
+                and self.config.embedding_preparation is not None
+            ):
+                config_section = "embedding_preparation"
+            else:
+                config_section = "embedding_cpu"
+        else:
+            config_section = "embedding_cpu" if self.mode == "cpu" else "embedding_gpu"
+
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+
+        def run_one(task_idx: int, file_path: Path) -> Tuple[int, Path]:
+            # Build per-task output dir
+            task_out = base_out / str(task_idx)
+            task_out.mkdir(parents=True, exist_ok=True)
+
+            # Build command similar to embed_array.slurm
+            cmd = [
+                sys.executable,
+                "scripts/embed/embed_core.py",
+                "--config-path=../../conf",
+                f"--config-name={self.config_name}",
+                f'++{config_section}.input_files=["{str(file_path)}"]',
+                f"++prepare_only={str(prepare_only).lower()}",
+                f"++hydra.run.dir={str(task_out)}",
+                f"++embedding_config_section={config_section}",
+            ]
+
+            # Ensure a base_file_path override is passed through (env + CLI)
+            resolved_base_local = os.environ.get("BASE_FILE_PATH") or getattr(
+                self, "resolved_base_file_path", ""
+            )
+            if resolved_base_local:
+                cmd.append(f"++base_file_path={resolved_base_local}")
+
+            env = os.environ.copy()
+            env["EMBEDDING_CONFIG_SECTION"] = config_section
+            env["PREPARE_ONLY"] = str(prepare_only).lower()
+            if resolved_base_local:
+                env["BASE_FILE_PATH"] = resolved_base_local
+
+            # Redirect logs into the per-task directory
+            stdout_path = log_dir / f"{task_idx}.out"
+            stderr_path = log_dir / f"{task_idx}.err"
+
+            with open(stdout_path, "w") as out_f, open(stderr_path, "w") as err_f:
+                proc = subprocess.run(
+                    cmd,
+                    cwd=str(project_root),
+                    env=env,
+                    stdout=out_f,
+                    stderr=err_f,
+                    text=True,
+                )
+                return proc.returncode, file_path
+
+        failures: List[Tuple[Path, int]] = []
+        with ThreadPoolExecutor(max_workers=max_workers) as pool:
+            futures = {
+                pool.submit(run_one, idx, file_path): (idx, file_path)
+                for idx, file_path in enumerate(zarr_files)
+            }
+            for fut in as_completed(futures):
+                idx, file_path = futures[fut]
+                try:
+                    rc, _ = fut.result()
+                    if rc != 0:
+                        failures.append((file_path, rc))
+                        logger.error(
+                            f"Task {idx} failed for file {file_path} with code {rc}"
+                        )
+                    else:
+                        logger.info(f"Task {idx} completed for file {file_path}")
+                except Exception as e:
+                    failures.append((file_path, -1))
+                    logger.error(
+                        f"Task {idx} raised exception for file {file_path}: {e}"
+                    )
+
+        if failures:
+            raise RuntimeError(
+                f"Local embedding encountered {len(failures)} failures for {label}: "
+                + ", ".join([f"{p} (rc={rc})" for p, rc in failures])
+            )
+
     def run(self) -> List[int]:
         """Run the embedding launcher and return list of submitted job IDs."""
         logger.info("=== Starting Embedding Launcher ===")
@@ -520,24 +663,48 @@ class EmbeddingLauncher:
         # Get input directories
         directories = self._get_input_directories()
 
-        # Submit array jobs for each directory
+        backend = os.environ.get("EMBED_BACKEND", "slurm")
+        # Allow CLI override via args; we parse it below in main()
+        self.backend = getattr(self, "backend", backend)
+
         job_ids = []
-        for i, (label, input_dir) in enumerate(directories):
-            # Add staggered delay for GPU jobs to prevent resource conflicts
-            if i > 0 and self.mode == "gpu":
-                delay_seconds = 60  # 1 minute delay between GPU array job submissions
-                logger.info(
-                    f"Adding {delay_seconds}s delay before submitting {label} job "
-                    f"to prevent GPU resource conflicts with previous job"
+        if self.backend == "local":
+            # Local execution path
+            max_workers_env = os.environ.get("LOCAL_MAX_WORKERS")
+            try:
+                max_workers = (
+                    int(max_workers_env) if max_workers_env else os.cpu_count() or 4
                 )
-                import time
+            except Exception:
+                max_workers = os.cpu_count() or 4
 
-                time.sleep(delay_seconds)
+            for label, input_dir in directories:
+                self._run_local_tasks(
+                    label=label,
+                    input_dir=input_dir,
+                    max_workers=max_workers,
+                    prepare_only=self.prepare_only,
+                )
+        else:
+            # Submit array jobs for each directory via SLURM
+            for i, (label, input_dir) in enumerate(directories):
+                # Add staggered delay for GPU jobs to prevent resource conflicts
+                if i > 0 and self.mode == "gpu":
+                    delay_seconds = (
+                        60  # 1 minute delay between GPU array job submissions
+                    )
+                    logger.info(
+                        f"Adding {delay_seconds}s delay before submitting {label} job "
+                        f"to prevent GPU resource conflicts with previous job"
+                    )
+                    import time
 
-            file_count = self._count_zarr_files(input_dir)
-            job_id = self._submit_array_job(label, input_dir, file_count)
-            if job_id:
-                job_ids.append(job_id)
+                    time.sleep(delay_seconds)
+
+                file_count = self._count_zarr_files(input_dir)
+                job_id = self._submit_array_job(label, input_dir, file_count)
+                if job_id:
+                    job_ids.append(job_id)
 
         if not job_ids:
             logger.warning("No array jobs were submitted")
@@ -653,6 +820,12 @@ def main():
         "--prepare-only", action="store_true", help="Run only preparation step"
     )
     parser.add_argument(
+        "--backend",
+        choices=["slurm", "local"],
+        default="slurm",
+        help="Execution backend (slurm submits array jobs, local runs tasks in-process)",
+    )
+    parser.add_argument(
         "--wait",
         action="store_true",
         help="Wait for all jobs to complete before exiting",
@@ -674,11 +847,12 @@ def main():
         launcher = EmbeddingLauncher(
             config_name=args.config_name, mode=args.mode, prepare_only=args.prepare_only
         )
+        launcher.backend = args.backend
 
         job_ids = launcher.run()
         launcher_success = True
 
-        if args.wait:
+        if args.wait and args.backend == "slurm":
             launcher.wait_for_completion()
             # Only clean up temp files if we waited for completion
             launcher.cleanup_temp_files()
