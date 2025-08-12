@@ -52,7 +52,7 @@ embedding_cpu:
   methods: ["hvg", "pca", "scvi_fm", "gs"]
 
 embedding_gpu:
-  enabled: false
+  enabled: true
   methods: ["geneformer"]
 
 # Dataset creation overrides
@@ -60,7 +60,7 @@ dataset_creation:
   # Dataset-specific parameters
   enabled: true
   use_nextcloud: true
-  required_obsm_keys: ["X_pca", "X_scvi_fm", "X_hvg", "X_gs"]
+  required_obsm_keys: ["X_pca", "X_scvi_fm", "X_hvg", "X_geneformer", "X_gs"]
   cs_length: [4096]
   negatives_per_sample: 2
   split_dataset: false # Important for training datasets. Set to false for test datasets.
