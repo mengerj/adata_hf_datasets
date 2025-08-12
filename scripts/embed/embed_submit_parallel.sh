@@ -51,7 +51,7 @@ submit_array() {
 
         # Submit the job and capture the job ID
         job_output=$(sbatch \
-          --array=0-$((n-1)) \
+          --array=0-$((n-1))%1 \
           "${SBATCH_EXTRA[@]}" \
           --export=ALL,INPUT_DIR="${dir}",\
 METHODS="${METHODS}",\
