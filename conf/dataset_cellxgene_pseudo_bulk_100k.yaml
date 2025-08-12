@@ -67,7 +67,7 @@ embedding_gpu:
 dataset_creation:
   enabled: true
   # Dataset-specific parameters
-  required_obsm_keys: ["X_pca", "X_scvi_fm", "X_hvg", "X_geneformer", "X_gs"]
+  required_obsm_keys: ["X_pca", "X_scvi_fm", "X_hvg", "X_gs"]
   caption_keys: ["caption_key"]
   cs_length: [4096]
   negatives_per_sample: 2
