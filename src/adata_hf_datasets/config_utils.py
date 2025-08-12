@@ -735,7 +735,7 @@ def validate_remote_config_sync(
 def ensure_config_sync(
     config_name: str,
     remote_host: str,
-    remote_project_dir: str = "/home/menger/git/adata_hf_datasets",
+    remote_project_dir: str,
     force: bool = False,
 ) -> None:
     """

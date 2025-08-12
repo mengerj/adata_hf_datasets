@@ -35,7 +35,13 @@ logger = logging.getLogger(__name__)
 class WorkflowLogger:
     """Manages comprehensive logging for the entire workflow."""
 
-    def __init__(self, base_dir: Path, master_job_id: str, dataset_config_name: str):
+    def __init__(
+        self,
+        base_dir: Path,
+        master_job_id: str,
+        dataset_config_name: str,
+        workflow_config: DictConfig,
+    ):
         """
         Initialize the workflow logger.
 
@@ -47,6 +53,8 @@ class WorkflowLogger:
             The master SLURM job ID
         dataset_config_name : str
             Name of the dataset config being used
+        workflow_config : DictConfig
+            The workflow config
         """
         self.base_dir = base_dir
         self.master_job_id = master_job_id
@@ -58,8 +66,9 @@ class WorkflowLogger:
         # Set up logging
         self._setup_logging()
 
+        project_dir = workflow_config.get("project_directory")
         # Copy the dataset config
-        self._copy_dataset_config()
+        self._copy_dataset_config(project_dir)
 
         # Initialize timing tracking
         self.workflow_start_time = datetime.now()
@@ -120,9 +129,9 @@ class WorkflowLogger:
 
         logger.info(f"Logging setup complete. Logs in: {log_dir}")
 
-    def _copy_dataset_config(self):
+    def _copy_dataset_config(self, project_path: Path):
         """Copy the dataset config to the workflow directory."""
-        config_path = Path(__file__).parent.parent.parent / "conf"
+        config_path = project_path / "conf"
         config_file = config_path / f"{self.dataset_config_name}.yaml"
 
         if config_file.exists():
@@ -1151,7 +1160,7 @@ class WorkflowOrchestrator:
         )
 
         self.workflow_logger = WorkflowLogger(
-            base_dir, master_job_id, dataset_config_name
+            base_dir, master_job_id, dataset_config_name, workflow_config
         )
 
         logger.info(
@@ -2081,7 +2090,9 @@ def run_workflow_localhost(
     if str(base_dir).startswith("/home/") or not base_dir.is_absolute():
         base_dir = project_dir / "outputs"
 
-    workflow_logger = WorkflowLogger(base_dir, master_job_id, dataset_config_name)
+    workflow_logger = WorkflowLogger(
+        base_dir, master_job_id, dataset_config_name, workflow_config
+    )
 
     def project_root() -> Path:
         return Path(__file__).resolve().parents[2]
