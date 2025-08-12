@@ -56,7 +56,7 @@ embedding_preparation:
 embedding_cpu:
   memory_gb: 120
   overwrite: false
-  enabled: true
+  enabled: false
   methods: ["hvg", "pca", "scvi_fm", "gs"]
 
 embedding_gpu:
