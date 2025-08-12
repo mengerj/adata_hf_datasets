@@ -31,28 +31,28 @@ other_bio_labels: ["AIFI_L1", "AIFI_L2", "AIFI_L3"]
 # =============================================================================
 # Download configuration
 download:
-  enabled: true
+  enabled: false
   subset_size: 50000
 
 # Preprocessing overrides (both dataset-specific and execution parameters)
 preprocessing:
   # Dataset-specific parameters
-  enabled: true
+  enabled: false
   split_dataset: false # Important for training datasets. Set to false for test datasets. (Similar parameters in dataset_creation)
   count_layer_key: "counts" # Key in adata.layers with raw counts. If not present, adata.raw.X is checked.
 
 embedding_preparation:
-  enabled: true
+  enabled: false
   methods: ["geneformer"]
 
 # Embedding overrides (both dataset-specific and execution parameters)
 embedding_cpu:
   # Dataset-specific parameters
-  enabled: true
+  enabled: false
   methods: ["hvg", "pca", "scvi_fm", "gs"]
 
 embedding_gpu:
-  enabled: true
+  enabled: false
   methods: ["geneformer"]
 
 # Dataset creation overrides
@@ -60,7 +60,7 @@ dataset_creation:
   # Dataset-specific parameters
   enabled: true
   use_nextcloud: true
-  required_obsm_keys: ["X_pca", "X_scvi_fm", "X_hvg", "X_geneformer", "X_gs"]
+  required_obsm_keys: ["X_pca", "X_scvi_fm", "X_hvg", "X_gs"]
   cs_length: [4096]
   negatives_per_sample: 2
   split_dataset: false # Important for training datasets. Set to false for test datasets.
