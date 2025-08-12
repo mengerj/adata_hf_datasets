@@ -7,7 +7,7 @@
 # =============================================================================
 workflow:
   # Execution backend: "slurm" (default, submit via SSH + SLURM) or "local" (run on this machine)
-  execution_mode: local
+  execution_mode: slurm
 
   # Legacy flag (ignored if execution_mode is set); kept for backwards-compatibility
   local_mode: false
