@@ -939,6 +939,8 @@ class WorkflowOrchestrator:
                     "CAPTION_KEY_OVERRIDE": str(caption_key_value)
                     if caption_key_value is not None
                     else "",
+                    # Enforce base path from orchestrator for SLURM backend
+                    "BASE_FILE_PATH": workflow_config["slurm_base_file_path"],
                     "PROJECT_DIR": os.environ.get(
                         "PROJECT_DIR", "/home/menger/git/adata_hf_datasets"
                     ),
