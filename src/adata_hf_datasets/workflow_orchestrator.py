@@ -1999,6 +1999,35 @@ class WorkflowOrchestrator:
 
         return config
 
+    def _load_dataset_config_with_base(
+        self, dataset_config_name: str, base_file_path: str
+    ) -> DictConfig:
+        """Load dataset config and force-set base_file_path before transformations."""
+        from hydra import compose, initialize_config_dir
+
+        config_path = Path(__file__).parent.parent.parent / "conf"
+        config_file = config_path / f"{dataset_config_name}.yaml"
+        if not config_file.exists():
+            raise ValueError(f"Dataset config file not found: {config_file}")
+        try:
+            with initialize_config_dir(config_dir=str(config_path), version_base=None):
+                config = compose(config_name=dataset_config_name)
+        except Exception as e:
+            logger.error(f"Failed to load config using Hydra composition: {e}")
+            logger.info("Falling back to OmegaConf.load() without defaults")
+            from omegaconf import OmegaConf as _OC
+
+            config = _OC.load(config_file)
+        # Force base_file_path into config prior to path transformations
+        from omegaconf import OmegaConf as _OC
+
+        cfg_container = _OC.to_container(config, resolve=True)
+        cfg_container["base_file_path"] = str(base_file_path)
+        config = _OC.create(cfg_container)
+        # Apply transformations
+        config = apply_all_transformations(config)
+        return config
+
 
 def create_orchestrator_from_config(config: DictConfig) -> WorkflowOrchestrator:
     workflow_config = config.get("workflow", {})

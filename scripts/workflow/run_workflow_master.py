@@ -51,6 +51,13 @@ with initialize_config_dir(config_dir=config_path, version_base=None):
     execution_mode = os.environ.get(
         "EXECUTION_MODE", workflow_section.get("execution_mode", "slurm")
     )
+    # Set BASE_FILE_PATH early so config transformations use the correct backend path
+    if execution_mode == "local":
+        os.environ["BASE_FILE_PATH"] = workflow_section.get(
+            "local_base_file_path", str(Path.cwd() / "data")
+        )
+    else:
+        os.environ["BASE_FILE_PATH"] = workflow_section["slurm_base_file_path"]
 
     # Convert to plain dicts if needed
     if not isinstance(cpu_login, dict):
