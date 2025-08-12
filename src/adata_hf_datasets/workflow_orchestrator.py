@@ -980,10 +980,10 @@ class WorkflowOrchestrator:
             pass
 
         # Validate config synchronization unless forced
-        project_dir = workflow_config.get("project_directory")
-        self.validate_config_sync(
-            dataset_config_name, force=force, project_directory=project_dir
-        )
+        # project_dir = workflow_config.get("project_directory")
+        # self.validate_config_sync(
+        #    dataset_config_name, force=force, project_directory=project_dir
+        # )
 
         # Load the dataset config to check enabled flags
         # We'll load it here to get the configuration for each step
@@ -1169,10 +1169,10 @@ class WorkflowOrchestrator:
         logger.info(f"Output directory: {base_dir}")
 
         # Validate config synchronization unless forced
-        project_dir = workflow_config.get("project_directory")
-        self.validate_config_sync(
-            dataset_config_name, force=force, project_directory=project_dir
-        )
+        # project_dir = workflow_config.get("project_directory")
+        # self.validate_config_sync(
+        #    dataset_config_name, force=force, project_directory=project_dir
+        # )
 
         # Load the dataset config to check enabled flags
         dataset_config = self._load_dataset_config(dataset_config_name)
