@@ -224,17 +224,17 @@ class EmbeddingLauncher:
         sbatch_cmd = [
             "sbatch",
             f"--job-name=embed_{label}",
-            f"--array=0-{file_count - 1}",
+            f"--array=0-{file_count - 1}%1",
             "--time=24:00:00",
         ]
 
         # Add GPU-specific settings for better resource management
-        if self.mode == "gpu":
-            # Add exclusive node access for GPU jobs to avoid resource contention
-            sbatch_cmd.extend(["--exclusive"])
-            logger.info(
-                "Adding --exclusive flag for GPU jobs to prevent resource contention"
-            )
+        # if self.mode == "gpu":
+        #    # Add exclusive node access for GPU jobs to avoid resource contention
+        #    sbatch_cmd.extend(["--exclusive"])
+        #    logger.info(
+        #        "Adding --exclusive flag for GPU jobs to prevent resource contention"
+        #    )
 
         logger.info(f"🔍 DEBUG: Building sbatch command for {label}")
         logger.info(
@@ -253,7 +253,7 @@ class EmbeddingLauncher:
             sbatch_cmd.extend(
                 [
                     "--mem=64G",
-                    "--cpus-per-task=8",
+                    "--cpus-per-task=4",
                     "--gres=gpu:1",
                 ]
             )
