@@ -359,8 +359,7 @@ class WorkflowOrchestrator:
         ensure_config_sync(
             config_name=dataset_config_name,
             remote_host=self.cpu_login["host"],
-            remote_project_dir=project_directory
-            or "/home/menger/git/adata_hf_datasets",
+            remote_project_dir=project_directory,
             force=force,
         )
 
@@ -972,7 +971,10 @@ class WorkflowOrchestrator:
             pass
 
         # Validate config synchronization unless forced
-        self.validate_config_sync(dataset_config_name, force=force)
+        project_dir = workflow_config.workflow.get("project_directory")
+        self.validate_config_sync(
+            dataset_config_name, force=force, project_directory=project_dir
+        )
 
         # Load the dataset config to check enabled flags
         # We'll load it here to get the configuration for each step
@@ -1158,7 +1160,10 @@ class WorkflowOrchestrator:
         logger.info(f"Output directory: {base_dir}")
 
         # Validate config synchronization unless forced
-        self.validate_config_sync(dataset_config_name, force=force)
+        project_dir = workflow_config.workflow.get("project_directory")
+        self.validate_config_sync(
+            dataset_config_name, force=force, project_directory=project_dir
+        )
 
         # Load the dataset config to check enabled flags
         dataset_config = self._load_dataset_config(dataset_config_name)
