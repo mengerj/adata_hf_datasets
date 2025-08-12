@@ -21,8 +21,8 @@ workflow:
   # SSH connection settings for CPU cluster
   # Using SSH aliases from ~/.ssh/config (handles ProxyJump automatically)
   cpu_login:
-    host: "imbi13" # SSH alias that resolves through biom5
-    user: "menger" # Use the user from SSH config
+    host: "imbi121-ukf" # SSH alias that resolves through biom5
+    user: "mengerj" # Use the user from SSH config
 
   # SSH connection settings for GPU cluster
   # Using SSH aliases from ~/.ssh/config (handles ProxyJump automatically)
