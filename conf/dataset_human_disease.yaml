@@ -6,7 +6,9 @@ defaults:
 
 # =============================================================================
 # DATASET METADATA
-# =============================================================================
+# =============================================================================+
+base_file_path: "/Users/mengerj/repos/adata_hf_datasets/data/RNA"
+
 dataset:
   name: "human_disease"
   description: "Human disease dataset annoted in Schaefer et al. 2024"

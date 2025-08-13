@@ -324,7 +324,7 @@ def validate_file_format(file_path: str) -> bool:
 @hydra.main(
     version_base=None,
     config_path="../../conf",
-    config_name="dataset_tabula_sapiens_bone_marrow",
+    config_name="dataset_human_disease",
 )
 def main(cfg: DictConfig):
     """
