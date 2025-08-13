@@ -57,11 +57,13 @@ def validate_config_sync_before_submission(
     if not cpu_host:
         raise ValueError("CPU host not found in workflow config")
 
+    project_dir = workflow_config.workflow.get("project_directory")
+    logger.info(f"Project directory: {project_dir}")
     # Validate config sync
     ensure_config_sync(
         config_name=dataset_config_name,
         remote_host=cpu_host,
-        remote_project_dir="/home/menger/git/adata_hf_datasets",
+        remote_project_dir=project_dir,
         force=force,
     )
 
@@ -90,7 +92,7 @@ def submit_master_job(
 
     # Build the sbatch command
     script_path = Path("scripts/workflow/run_workflow_master.slurm")
-    project_dir = "/home/menger/git/adata_hf_datasets"
+    project_dir = workflow_config.workflow.get("project_directory")
 
     cmd = ["ssh", cpu_host, f"cd {project_dir} && sbatch"]
 
@@ -100,6 +102,7 @@ def submit_master_job(
     # Add environment variables
     env_vars = {
         "DATASET_CONFIG": dataset_config_name,
+        "PROJECT_DIR": project_dir,
     }
     env_str = ",".join([f"{k}={v}" for k, v in env_vars.items()])
     cmd.extend(["--export", f"ALL,{env_str}"])
