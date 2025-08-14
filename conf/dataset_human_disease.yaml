@@ -6,7 +6,9 @@ defaults:
 
 # =============================================================================
 # DATASET METADATA
-# =============================================================================
+# =============================================================================+
+base_file_path: "/Users/mengerj/repos/adata_hf_datasets/data/RNA"
+
 dataset:
   name: "human_disease"
   description: "Human disease dataset annoted in Schaefer et al. 2024"
@@ -47,10 +49,10 @@ embedding_preparation:
 # Embedding overrides (both dataset-specific and execution parameters)
 embedding_cpu:
   enabled: true
-  methods: ["hvg", "pca", "scvi_fm", "gs"]
+  methods: ["pca", "scvi_fm", "gs"]
 
 embedding_gpu:
-  enabled: true
+  enabled: false
   methods: ["geneformer"]
 
 # Dataset creation overrides
@@ -58,7 +60,7 @@ dataset_creation:
   enabled: true
   use_nextcloud: true
   # Dataset-specific parameters
-  required_obsm_keys: ["X_pca", "X_scvi_fm", "X_hvg", "X_geneformer", "X_gs"]
+  required_obsm_keys: ["X_pca", "X_scvi_fm", "X_gs", "X_geneformer"]
   cs_length: [4096]
   negatives_per_sample: 2
   split_dataset: false # Important for training datasets. Set to false for test datasets.

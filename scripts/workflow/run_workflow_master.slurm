@@ -18,12 +18,14 @@ else
 fi
 
 # ─────────────────────────────────────────────────────────────────────────────
-# 1) Load workflow config to get output directory
+# 1) Load workflow config to get output directory and project dir
 # ─────────────────────────────────────────────────────────────────────────────
-cd /home/menger/git/adata_hf_datasets
+PROJECT_DIR=${PROJECT_DIR:-/home/menger/git/adata_hf_datasets}
+cd "$PROJECT_DIR"
 
-# Activate conda environment
-source .venv/bin/activate
+# Activate venv (configurable)
+VENV_PATH=${VENV_PATH:-.venv}
+source "$VENV_PATH"/bin/activate
 
 # Get output directory from config
 OUTPUT_DIR=$(python -c "
@@ -36,6 +38,7 @@ config_path = str(Path.cwd() / 'conf')
 with initialize_config_dir(config_dir=config_path, version_base=None):
     workflow_config = compose(config_name='workflow_orchestrator')
     output_dir = workflow_config.workflow.get('output_directory', '/home/menger/git/adata_hf_datasets/outputs')
+    project_dir = workflow_config.workflow.get('project_directory', '/home/menger/git/adata_hf_datasets')
     print(output_dir)
 ")
 

@@ -71,10 +71,12 @@ echo "================================="
 # ─────────────────────────────────────────────────────────────────────────────
 
 # Change to project directory
-cd /home/menger/git/adata_hf_datasets
+PROJECT_DIR=${PROJECT_DIR:-/home/menger/git/adata_hf_datasets}
+cd "$PROJECT_DIR"
 
 # Activate environment
-source .venv/bin/activate
+VENV_PATH=${VENV_PATH:-.venv}
+source "$VENV_PATH"/bin/activate
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Launch Array Jobs

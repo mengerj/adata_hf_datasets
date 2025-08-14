@@ -241,8 +241,15 @@ class TestWorkflowLogger:
         base_dir = tmp_path / "outputs"
         master_job_id = "test_12345"
         dataset_config_name = "test_dataset"
+        workflow_config = OmegaConf.create(
+            {
+                "project_directory": str(base_dir),
+            }
+        )
 
-        logger = WorkflowLogger(base_dir, master_job_id, dataset_config_name)
+        logger = WorkflowLogger(
+            base_dir, master_job_id, dataset_config_name, workflow_config
+        )
 
         # Check that directories were created
         assert logger.workflow_dir.exists()
@@ -264,8 +271,15 @@ class TestWorkflowLogger:
         base_dir = tmp_path / "outputs"
         master_job_id = "test_12345"
         dataset_config_name = "test_dataset"
+        workflow_config = OmegaConf.create(
+            {
+                "project_directory": str(base_dir),
+            }
+        )
 
-        logger = WorkflowLogger(base_dir, master_job_id, dataset_config_name)
+        logger = WorkflowLogger(
+            base_dir, master_job_id, dataset_config_name, workflow_config
+        )
 
         # Test step logging
         logger.log_step_start("download", "12345", "test_host")

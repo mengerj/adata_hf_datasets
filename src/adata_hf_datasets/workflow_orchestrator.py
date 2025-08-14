@@ -35,7 +35,13 @@ logger = logging.getLogger(__name__)
 class WorkflowLogger:
     """Manages comprehensive logging for the entire workflow."""
 
-    def __init__(self, base_dir: Path, master_job_id: str, dataset_config_name: str):
+    def __init__(
+        self,
+        base_dir: Path,
+        master_job_id: str,
+        dataset_config_name: str,
+        workflow_config: DictConfig,
+    ):
         """
         Initialize the workflow logger.
 
@@ -47,6 +53,8 @@ class WorkflowLogger:
             The master SLURM job ID
         dataset_config_name : str
             Name of the dataset config being used
+        workflow_config : DictConfig
+            The workflow config
         """
         self.base_dir = base_dir
         self.master_job_id = master_job_id
@@ -58,8 +66,9 @@ class WorkflowLogger:
         # Set up logging
         self._setup_logging()
 
+        project_dir = Path(workflow_config.get("project_directory"))
         # Copy the dataset config
-        self._copy_dataset_config()
+        self._copy_dataset_config(project_dir)
 
         # Initialize timing tracking
         self.workflow_start_time = datetime.now()
@@ -120,9 +129,9 @@ class WorkflowLogger:
 
         logger.info(f"Logging setup complete. Logs in: {log_dir}")
 
-    def _copy_dataset_config(self):
+    def _copy_dataset_config(self, project_path: Path):
         """Copy the dataset config to the workflow directory."""
-        config_path = Path(__file__).parent.parent.parent / "conf"
+        config_path = project_path / "conf"
         config_file = config_path / f"{self.dataset_config_name}.yaml"
 
         if config_file.exists():
@@ -348,15 +357,18 @@ class WorkflowOrchestrator:
             logger.warning(f"Unexpected error during SSH connection test: {e}")
 
     def validate_config_sync(
-        self, dataset_config_name: str, force: bool = False
+        self,
+        dataset_config_name: str,
+        force: bool = False,
+        project_directory: Optional[str] = None,
     ) -> None:
         """Validate that the remote config matches the local one."""
         logger.info(f"Validating config synchronization for {dataset_config_name}...")
-
+        logger.info(f"Project directory: {project_directory}")
         ensure_config_sync(
             config_name=dataset_config_name,
             remote_host=self.cpu_login["host"],
-            remote_project_dir="/home/menger/git/adata_hf_datasets",
+            remote_project_dir=project_directory,
             force=force,
         )
 
@@ -394,7 +406,10 @@ class WorkflowOrchestrator:
         int
             SLURM job ID of the submitted job
         """
-        project_dir = "/home/menger/git/adata_hf_datasets"
+        # Use configured project directory if available via env
+        project_dir = os.environ.get(
+            "PROJECT_DIR", "/home/menger/git/adata_hf_datasets"
+        )
 
         # Build the sbatch command with proper environment setup
         # Start with the base command
@@ -519,6 +534,12 @@ class WorkflowOrchestrator:
             "WORKFLOW_DIR": str(self.workflow_logger.workflow_dir)
             if self.workflow_logger
             else "",
+            "PROJECT_DIR": os.environ.get(
+                "PROJECT_DIR", "/home/menger/git/adata_hf_datasets"
+            ),
+            "VENV_PATH": os.environ.get("VENV_PATH", ".venv"),
+            # Enforce base path from orchestrator for SLURM backend (no internal default)
+            "BASE_FILE_PATH": workflow_config["slurm_base_file_path"],
         }
 
         job_id = self._submit_slurm_job(
@@ -545,17 +566,28 @@ class WorkflowOrchestrator:
         logger.info(f"Using dataset config: {dataset_config_name}")
 
         # Extract required information from dataset config
-        base_file_path = dataset_config.get("base_file_path", "/scratch/local")
+        # Default base_file_path for SLURM backend
+        default_slurm_base = workflow_config.get(
+            "slurm_base_file_path", "/scratch/global/menger/data/RNA"
+        )
+        base_file_path = dataset_config.get("base_file_path", default_slurm_base)
         dataset_name = dataset_config.dataset.name
 
         # Pass the required environment variables
         env_vars = {
             "DATASET_CONFIG": dataset_config_name,
-            "BASE_FILE_PATH": base_file_path,
+            # Enforce base path from orchestrator config only
+            "BASE_FILE_PATH": workflow_config.get(
+                "slurm_base_file_path", base_file_path
+            ),
             "DATASET_NAME": dataset_name,
             "WORKFLOW_DIR": str(self.workflow_logger.workflow_dir)
             if self.workflow_logger
             else "",
+            "PROJECT_DIR": os.environ.get(
+                "PROJECT_DIR", "/home/menger/git/adata_hf_datasets"
+            ),
+            "VENV_PATH": os.environ.get("VENV_PATH", ".venv"),
         }
 
         job_id = self._submit_slurm_job(
@@ -583,17 +615,27 @@ class WorkflowOrchestrator:
         logger.info(f"Using dataset config: {dataset_config_name}")
 
         # Extract required information from dataset config
-        base_file_path = dataset_config.get("base_file_path", "/scratch/local")
+        default_slurm_base = workflow_config.get(
+            "slurm_base_file_path", "/scratch/global/menger/data/RNA"
+        )
+        base_file_path = dataset_config.get("base_file_path", default_slurm_base)
         dataset_name = dataset_config.dataset.name
 
         # Pass the required environment variables
         env_vars = {
             "DATASET_CONFIG": dataset_config_name,
-            "BASE_FILE_PATH": base_file_path,
+            # Enforce base path from orchestrator config only
+            "BASE_FILE_PATH": workflow_config.get(
+                "slurm_base_file_path", base_file_path
+            ),
             "DATASET_NAME": dataset_name,
             "WORKFLOW_DIR": str(self.workflow_logger.workflow_dir)
             if self.workflow_logger
             else "",
+            "PROJECT_DIR": os.environ.get(
+                "PROJECT_DIR", "/home/menger/git/adata_hf_datasets"
+            ),
+            "VENV_PATH": os.environ.get("VENV_PATH", ".venv"),
         }
 
         job_id = self._submit_slurm_job(
@@ -625,6 +667,12 @@ class WorkflowOrchestrator:
             "WORKFLOW_DIR": str(self.workflow_logger.workflow_dir)
             if self.workflow_logger
             else "",
+            "PROJECT_DIR": os.environ.get(
+                "PROJECT_DIR", "/home/menger/git/adata_hf_datasets"
+            ),
+            "VENV_PATH": os.environ.get("VENV_PATH", ".venv"),
+            # Enforce base path from orchestrator for SLURM backend (no internal default)
+            "BASE_FILE_PATH": workflow_config["slurm_base_file_path"],
         }
 
         job_id = self._submit_slurm_job(
@@ -652,7 +700,10 @@ class WorkflowOrchestrator:
 
         # Load dataset config to extract base_file_path and memory settings
         dataset_config = self._load_dataset_config(dataset_config_name)
-        base_file_path = dataset_config.get("base_file_path", "/scratch/local")
+        default_slurm_base = workflow_config.get(
+            "slurm_base_file_path", "/scratch/global/menger/data/RNA"
+        )
+        base_file_path = dataset_config.get("base_file_path", default_slurm_base)
 
         # Extract memory setting from embedding_preparation config (default: 60GB)
         memory_gb = getattr(dataset_config.embedding_preparation, "memory_gb", 60)
@@ -661,13 +712,20 @@ class WorkflowOrchestrator:
         # Pass the dataset config name, workflow directory, and mode settings as environment variables
         env_vars = {
             "DATASET_CONFIG": dataset_config_name,
-            "BASE_FILE_PATH": base_file_path,
+            # Enforce base path from orchestrator config only
+            "BASE_FILE_PATH": workflow_config.get(
+                "slurm_base_file_path", base_file_path
+            ),
             "WORKFLOW_DIR": str(self.workflow_logger.workflow_dir)
             if self.workflow_logger
             else "",
             "MODE": "cpu",  # Preparation typically runs on CPU
             "PREPARE_ONLY": "true",  # This is preparation mode
             "SLURM_PARTITION": workflow_config.cpu_partition,
+            "PROJECT_DIR": os.environ.get(
+                "PROJECT_DIR", "/home/menger/git/adata_hf_datasets"
+            ),
+            "VENV_PATH": os.environ.get("VENV_PATH", ".venv"),
         }
 
         job_id = self._submit_slurm_job(
@@ -696,7 +754,10 @@ class WorkflowOrchestrator:
 
         # Load dataset config to extract base_file_path and memory settings
         dataset_config = self._load_dataset_config(dataset_config_name)
-        base_file_path = dataset_config.get("base_file_path", "/scratch/local")
+        default_slurm_base = workflow_config.get(
+            "slurm_base_file_path", "/scratch/global/menger/data/RNA"
+        )
+        base_file_path = dataset_config.get("base_file_path", default_slurm_base)
 
         # Extract memory setting from embedding_cpu config (default: 60GB)
         memory_gb = getattr(dataset_config.embedding_cpu, "memory_gb", 60)
@@ -705,13 +766,20 @@ class WorkflowOrchestrator:
         # Pass the dataset config name, workflow directory, and mode settings as environment variables
         env_vars = {
             "DATASET_CONFIG": dataset_config_name,
-            "BASE_FILE_PATH": base_file_path,
+            # Enforce base path from orchestrator config only
+            "BASE_FILE_PATH": workflow_config.get(
+                "slurm_base_file_path", base_file_path
+            ),
             "WORKFLOW_DIR": str(self.workflow_logger.workflow_dir)
             if self.workflow_logger
             else "",
             "MODE": "cpu",  # Force CPU mode
             "PREPARE_ONLY": "false",  # This is full embedding mode
             "SLURM_PARTITION": workflow_config.cpu_partition,
+            "PROJECT_DIR": os.environ.get(
+                "PROJECT_DIR", "/home/menger/git/adata_hf_datasets"
+            ),
+            "VENV_PATH": os.environ.get("VENV_PATH", ".venv"),
         }
 
         job_id = self._submit_slurm_job(
@@ -740,7 +808,9 @@ class WorkflowOrchestrator:
 
         # Load dataset config to extract base_file_path and memory settings
         dataset_config = self._load_dataset_config(dataset_config_name)
-        base_file_path = dataset_config.get("base_file_path", "/scratch/local")
+        base_file_path = dataset_config.get(
+            "base_file_path", "/scratch/global/menger/data/RNA"
+        )
 
         # Extract memory setting from embedding_gpu config (default: 60GB)
         memory_gb = getattr(dataset_config.embedding_gpu, "memory_gb", 60)
@@ -751,7 +821,10 @@ class WorkflowOrchestrator:
         # Only the array jobs will use GPU resources
         env_vars = {
             "DATASET_CONFIG": dataset_config_name,
-            "BASE_FILE_PATH": base_file_path,
+            # Enforce base path from orchestrator config only
+            "BASE_FILE_PATH": workflow_config.get(
+                "slurm_base_file_path", base_file_path
+            ),
             "WORKFLOW_DIR": str(self.workflow_logger.workflow_dir)
             if self.workflow_logger
             else "",
@@ -761,6 +834,10 @@ class WorkflowOrchestrator:
             "GPU_HOST": f"{self.gpu_login['user']}@{self.gpu_login['host']}"
             if self.gpu_login
             else "",  # GPU cluster info for array job submission
+            "PROJECT_DIR": os.environ.get(
+                "PROJECT_DIR", "/home/menger/git/adata_hf_datasets"
+            ),
+            "VENV_PATH": os.environ.get("VENV_PATH", ".venv"),
         }
 
         job_id = self._submit_slurm_job(
@@ -870,6 +947,12 @@ class WorkflowOrchestrator:
                     "CAPTION_KEY_OVERRIDE": str(caption_key_value)
                     if caption_key_value is not None
                     else "",
+                    # Enforce base path from orchestrator for SLURM backend
+                    "BASE_FILE_PATH": workflow_config["slurm_base_file_path"],
+                    "PROJECT_DIR": os.environ.get(
+                        "PROJECT_DIR", "/home/menger/git/adata_hf_datasets"
+                    ),
+                    "VENV_PATH": os.environ.get("VENV_PATH", ".venv"),
                 }
 
                 job_id = self._submit_slurm_job(
@@ -890,8 +973,17 @@ class WorkflowOrchestrator:
         """Run the complete workflow."""
         logger.info(f"Starting workflow for dataset config: {dataset_config_name}")
 
+        # Ensure base path is available for any config transformations in this process
+        try:
+            os.environ["BASE_FILE_PATH"] = workflow_config["slurm_base_file_path"]
+        except Exception:
+            pass
+
         # Validate config synchronization unless forced
-        self.validate_config_sync(dataset_config_name, force=force)
+        # project_dir = workflow_config.get("project_directory")
+        # self.validate_config_sync(
+        #    dataset_config_name, force=force, project_directory=project_dir
+        # )
 
         # Load the dataset config to check enabled flags
         # We'll load it here to get the configuration for each step
@@ -1068,7 +1160,7 @@ class WorkflowOrchestrator:
         )
 
         self.workflow_logger = WorkflowLogger(
-            base_dir, master_job_id, dataset_config_name
+            base_dir, master_job_id, dataset_config_name, workflow_config
         )
 
         logger.info(
@@ -1077,7 +1169,10 @@ class WorkflowOrchestrator:
         logger.info(f"Output directory: {base_dir}")
 
         # Validate config synchronization unless forced
-        self.validate_config_sync(dataset_config_name, force=force)
+        # project_dir = workflow_config.get("project_directory")
+        # self.validate_config_sync(
+        #    dataset_config_name, force=force, project_directory=project_dir
+        # )
 
         # Load the dataset config to check enabled flags
         dataset_config = self._load_dataset_config(dataset_config_name)
@@ -1920,9 +2015,45 @@ class WorkflowOrchestrator:
 
         return config
 
+    def _load_dataset_config_with_base(
+        self, dataset_config_name: str, base_file_path: str
+    ) -> DictConfig:
+        """Load dataset config and force-set base_file_path before transformations."""
+        from hydra import compose, initialize_config_dir
+
+        config_path = Path(__file__).parent.parent.parent / "conf"
+        config_file = config_path / f"{dataset_config_name}.yaml"
+        if not config_file.exists():
+            raise ValueError(f"Dataset config file not found: {config_file}")
+        try:
+            with initialize_config_dir(config_dir=str(config_path), version_base=None):
+                config = compose(config_name=dataset_config_name)
+        except Exception as e:
+            logger.error(f"Failed to load config using Hydra composition: {e}")
+            logger.info("Falling back to OmegaConf.load() without defaults")
+            from omegaconf import OmegaConf as _OC
+
+            config = _OC.load(config_file)
+        # Force base_file_path into config prior to path transformations
+        from omegaconf import OmegaConf as _OC
+
+        cfg_container = _OC.to_container(config, resolve=True)
+        cfg_container["base_file_path"] = str(base_file_path)
+        config = _OC.create(cfg_container)
+        # Apply transformations
+        config = apply_all_transformations(config)
+        return config
+
 
 def create_orchestrator_from_config(config: DictConfig) -> WorkflowOrchestrator:
     workflow_config = config.get("workflow", {})
+    # Prefer explicit execution_mode when present
+    execution_mode = workflow_config.get("execution_mode", None)
+    if execution_mode == "local":
+        logger.info("Execution mode is 'local' - orchestrator (SSH/SLURM) not created")
+        raise RuntimeError(
+            "create_orchestrator_from_config called in local mode. Use run_workflow_localhost via run_workflow_master.py"
+        )
     cpu_login = workflow_config.get("cpu_login")
     gpu_login = workflow_config.get("gpu_login")
     if not cpu_login:
@@ -1932,6 +2063,266 @@ def create_orchestrator_from_config(config: DictConfig) -> WorkflowOrchestrator:
         cpu_login=cpu_login,
         gpu_login=gpu_login,
     )
+
+
+def run_workflow_localhost(
+    dataset_config_name: str, workflow_config: DictConfig, force: bool = False
+) -> None:
+    """Run the complete workflow on the local machine (no SSH/SLURM).
+
+    This mirrors the step ordering and logging of run_workflow_local, but executes
+    each step via local subprocesses and bounded parallelism inside the step scripts.
+    """
+    logger.info(
+        f"Starting localhost workflow for dataset config: {dataset_config_name}"
+    )
+
+    # Initialize the workflow logger
+    master_job_id = f"local_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+
+    # Get output directory from config, with fallback to project outputs on macOS
+    project_dir = Path(__file__).resolve().parents[2]
+    configured_output = workflow_config.get(
+        "output_directory", str(project_dir / "outputs")
+    )
+    base_dir = Path(configured_output)
+    # If the configured path points to a cluster-specific location, fall back locally
+    if str(base_dir).startswith("/home/") or not base_dir.is_absolute():
+        base_dir = project_dir / "outputs"
+
+    workflow_logger = WorkflowLogger(
+        base_dir, master_job_id, dataset_config_name, workflow_config
+    )
+
+    def project_root() -> Path:
+        return Path(__file__).resolve().parents[2]
+
+    def run_logged(
+        cmd: List[str],
+        step: str,
+        out_name: str,
+        err_name: str,
+        env: Optional[Dict[str, str]] = None,
+    ) -> None:
+        job_id = master_job_id
+        step_dir = workflow_logger.get_step_log_dir(step, job_id)
+        step_dir.mkdir(parents=True, exist_ok=True)
+        stdout_path = step_dir / out_name
+        stderr_path = step_dir / err_name
+        logger.info(f"Executing local step '{step}': {' '.join(cmd)}")
+        with open(stdout_path, "w") as out_f, open(stderr_path, "w") as err_f:
+            result = subprocess.run(
+                cmd,
+                cwd=str(project_root()),
+                env=env,
+                text=True,
+                stdout=out_f,
+                stderr=err_f,
+            )
+        if result.returncode != 0:
+            raise RuntimeError(f"Step {step} failed with exit code {result.returncode}")
+
+    # Load dataset config to check flags
+    # Reuse internal config loader
+    try:
+        # Ensure base path is available to config transformations for local backend
+        local_base = workflow_config.get(
+            "local_base_file_path", str(project_dir / "data")
+        )
+        os.environ["BASE_FILE_PATH"] = str(local_base)
+        # Create a minimal orchestrator just to access _load_dataset_config
+        # but we cannot construct it due to SSH requirements. So call the function pattern instead:
+        from hydra import compose, initialize_config_dir
+
+        config_path = Path(__file__).parent.parent.parent / "conf"
+        with initialize_config_dir(config_dir=str(config_path), version_base=None):
+            dataset_config = compose(config_name=dataset_config_name)
+        dataset_config = apply_all_transformations(dataset_config)
+    except Exception as e:
+        logger.error(f"Failed to load dataset config {dataset_config_name}: {e}")
+        raise
+
+    # Log workflow start
+    workflow_logger.log_workflow_start(dataset_config)
+
+    # Transfers unsupported
+    transfers_enabled = workflow_config.get("enable_transfers", True)
+    if transfers_enabled:
+        raise RuntimeError(
+            "Transfer mode is enabled but not supported in local backend"
+        )
+
+    env_base = os.environ.copy()
+    env_base["DATASET_CONFIG"] = dataset_config_name
+    env_base["WORKFLOW_DIR"] = str(workflow_logger.workflow_dir)
+    # Allow local parallelism override
+    local_max = str(workflow_config.get("local_max_workers", 4))
+    env_base["LOCAL_MAX_WORKERS"] = local_max
+
+    # Resolve default base_file_path for local backend if dataset config didn't specify
+    if not dataset_config.get("base_file_path", None):
+        dataset_config["base_file_path"] = workflow_config.get(
+            "local_base_file_path",
+            str(project_dir / "data"),
+        )
+
+    # Step: Download
+    if getattr(dataset_config, "download", None) is None or getattr(
+        dataset_config.download, "enabled", True
+    ):
+        cmd = [
+            sys.executable,
+            "scripts/download/download_dataset_config.py",
+            "--config-name",
+            dataset_config_name,
+            f"++hydra.run.dir={workflow_logger.get_step_log_dir('download', master_job_id)}",
+        ]
+        run_logged(cmd, "download", "download.out", "download.err", env=env_base)
+        workflow_logger.log_step_complete("Download", master_job_id)
+    else:
+        workflow_logger.log_step_skipped("Download", "disabled in config")
+
+    # Step: Preprocessing
+    if getattr(dataset_config.preprocessing, "enabled", True):
+        cmd = [
+            sys.executable,
+            "scripts/preprocessing/preprocess.py",
+            "--config-name",
+            dataset_config_name,
+            f"++hydra.run.dir={workflow_logger.get_step_log_dir('preprocessing', master_job_id)}",
+        ]
+        run_logged(
+            cmd, "preprocessing", "preprocessing.out", "preprocessing.err", env=env_base
+        )
+        workflow_logger.log_step_complete("Preprocessing", master_job_id)
+    else:
+        workflow_logger.log_step_skipped("Preprocessing", "disabled in config")
+
+    # Step: Embedding Preparation
+    if getattr(dataset_config.embedding_preparation, "enabled", True):
+        env_prep = env_base.copy()
+        env_prep["MODE"] = "cpu"
+        cmd = [
+            sys.executable,
+            "scripts/embed/embed_launcher.py",
+            "--config-name",
+            dataset_config_name,
+            "--mode",
+            "cpu",
+            "--backend",
+            "local",
+            "--prepare-only",
+        ]
+        run_logged(cmd, "embedding_prepare", "master.out", "master.err", env=env_prep)
+        workflow_logger.log_step_complete("Embedding Preparation", master_job_id)
+    else:
+        workflow_logger.log_step_skipped("Embedding Preparation", "disabled in config")
+
+    # Step: CPU Embedding
+    if getattr(dataset_config.embedding_cpu, "enabled", True):
+        env_cpu = env_base.copy()
+        env_cpu["MODE"] = "cpu"
+        cmd = [
+            sys.executable,
+            "scripts/embed/embed_launcher.py",
+            "--config-name",
+            dataset_config_name,
+            "--mode",
+            "cpu",
+            "--backend",
+            "local",
+        ]
+        run_logged(cmd, "embedding", "cpu_master.out", "cpu_master.err", env=env_cpu)
+        workflow_logger.log_step_complete("CPU Embedding", master_job_id)
+    else:
+        workflow_logger.log_step_skipped("CPU Embedding", "disabled in config")
+
+    # Step: GPU Embedding (local backend)
+    if getattr(dataset_config.embedding_gpu, "enabled", True):
+        # Controlled by workflow.local_enable_gpu to prevent OOM on laptops
+        if workflow_config.get("local_enable_gpu", False):
+            env_gpu = env_base.copy()
+            env_gpu["MODE"] = "gpu"
+            cmd = [
+                sys.executable,
+                "scripts/embed/embed_launcher.py",
+                "--config-name",
+                dataset_config_name,
+                "--mode",
+                "gpu",
+                "--backend",
+                "local",
+            ]
+            run_logged(
+                cmd, "embedding", "gpu_master.out", "gpu_master.err", env=env_gpu
+            )
+            workflow_logger.log_step_complete("GPU Embedding", master_job_id)
+        else:
+            logger.info(
+                "GPU embedding enabled in config but disabled for local backend (local_enable_gpu=false)"
+            )
+            workflow_logger.log_step_skipped(
+                "GPU Embedding", "disabled for local backend"
+            )
+
+    # Step: Dataset Creation
+    if getattr(dataset_config.dataset_creation, "enabled", True):
+        from omegaconf import ListConfig
+
+        cs_lengths = dataset_config.dataset_creation.cs_length
+        cs_values = (
+            list(cs_lengths)
+            if isinstance(cs_lengths, (list, tuple, ListConfig))
+            else [cs_lengths]
+        )
+        caption_keys = dataset_config.dataset_creation.get("caption_keys", None)
+        if caption_keys is None:
+            caption_values = [dataset_config.get("caption_key", None)]
+        else:
+            caption_values = (
+                list(caption_keys)
+                if isinstance(caption_keys, (list, tuple, ListConfig))
+                else [caption_keys]
+            )
+
+        for idx, (cs_len, cap_key_name) in enumerate(
+            [(c, k) for c in cs_values for k in caption_values]
+        ):
+            # Resolve cap_key_name to value from top-level config if it's a param name
+            cap_value = (
+                getattr(dataset_config, cap_key_name)
+                if cap_key_name and hasattr(dataset_config, cap_key_name)
+                else cap_key_name
+            )
+            env_dc = env_base.copy()
+            if cs_len is not None:
+                env_dc["CS_LENGTH_OVERRIDE"] = str(cs_len)
+            if cap_value is not None:
+                env_dc["CAPTION_KEY_OVERRIDE"] = str(cap_value)
+            cmd = [
+                sys.executable,
+                "scripts/dataset_creation/create_dataset.py",
+                "--config-name",
+                dataset_config_name,
+                f"++hydra.run.dir={workflow_logger.get_step_log_dir('dataset_creation', master_job_id) / f'job_{idx}'}",
+            ]
+            # Also pass as CLI overrides for transparency
+            if cs_len is not None:
+                cmd.append(f"++dataset_creation.cs_length={cs_len}")
+            if cap_value is not None:
+                cmd.append(f"++caption_key={cap_value}")
+            run_logged(
+                cmd,
+                "dataset_creation",
+                f"create_ds_{idx}.out",
+                f"create_ds_{idx}.err",
+                env=env_dc,
+            )
+        workflow_logger.log_step_complete("Dataset Creation", master_job_id)
+    else:
+        workflow_logger.log_step_skipped("Dataset Creation", "disabled in config")
+
+    workflow_logger.log_workflow_complete()
 
 
 @hydra.main(
