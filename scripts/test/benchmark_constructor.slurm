@@ -21,12 +21,12 @@ fi
 
 ZARR_PATH_OVERRIDE="${1:-}"
 
-DEFAULT_ZARR="/Users/mengerj/repos/adata_hf_datasets/data/RNA/processed_with_emb/train/cellxgene_pseudo_bulk_10k/train/chunk_0.zarr"
+DEFAULT_ZARR="/scratch/global/menger/data/RNA/processed_with_emb/train/cellxgene_pseudo_bulk_10k/train/chunk_0.zarr"
 ZARR_PATH="${ZARR_PATH_OVERRIDE:-$DEFAULT_ZARR}"
 
 echo "Using ZARR_PATH=${ZARR_PATH}"
 
-SCRIPT="/Users/mengerj/repos/adata_hf_datasets/scripts/test/test_constructor_speed.py"
+SCRIPT="/home/menger/git/adata_hf_datasets/scripts/test/test_constructor_speed.py"
 
 echo "=== Run 1: add_anndata path ==="
 date
