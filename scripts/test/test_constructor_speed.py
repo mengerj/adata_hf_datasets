@@ -60,6 +60,26 @@ def main() -> None:
             "If set, build the dataset using only .obs via add_df instead of add_anndata."
         ),
     )
+    parser.add_argument(
+        "--num-sentences",
+        type=int,
+        default=1,
+        help="Number of sentence_* columns to include (default: 1)",
+    )
+    parser.add_argument(
+        "--long-sentence-cols",
+        type=str,
+        default="",
+        help=(
+            "Comma-separated 1-based indices of sentence columns to fill with a long string (e.g. '2,3')."
+        ),
+    )
+    parser.add_argument(
+        "--long-sentence-words",
+        type=int,
+        default=5000,
+        help="Number of space-separated tokens to include in the long sentence string (default: 5000)",
+    )
     args = parser.parse_args()
 
     logging.basicConfig(level=logging.INFO)
@@ -88,17 +108,43 @@ def main() -> None:
         dataset_format=args.dataset_format,
     )
 
+    # determine sentence keys and prepare long sentence payload, if any
+    sentence_keys = [f"sentence_{i}" for i in range(1, args.num_sentences + 1)]
+    long_cols = set()
+    if args.long_sentence_cols.strip():
+        try:
+            long_cols = {
+                int(tok.strip())
+                for tok in args.long_sentence_cols.split(",")
+                if tok.strip()
+            }
+        except ValueError:
+            raise ValueError(
+                "--long-sentence-cols must be a comma-separated list of integers"
+            )
+    # Precompute a constant long sentence to avoid generating per-row strings
+    long_sentence_value = (
+        " ".join(f"GENE{i}" for i in range(1, args.long_sentence_words + 1))
+        if long_cols
+        else None
+    )
+
     if args.use_add_df:
         # Create a standalone DataFrame from obs and drop AnnData immediately
         t_add_start = time.perf_counter()
         obs_df = adata.obs.copy(deep=True)
-        # Add dummy sentence column with enumerated sentences
-        obs_df["sentence_1"] = [f"sentence {i}" for i in range(n_obs)]
+        # Add sentence columns (some potentially very long)
+        for i in range(1, args.num_sentences + 1):
+            col = f"sentence_{i}"
+            if i in long_cols and long_sentence_value is not None:
+                obs_df[col] = long_sentence_value
+            else:
+                obs_df[col] = [f"row {r} sentence_col {i}" for r in range(n_obs)]
         # Free AnnData as early as possible to avoid touching X/var/etc.
         del adata
         constructor.add_df(
             df=obs_df,
-            sentence_keys=["sentence_1"],
+            sentence_keys=sentence_keys,
             caption_key=args.caption_key,
             batch_key=args.batch_key,
             share_link=args.share_link,
@@ -107,10 +153,15 @@ def main() -> None:
     else:
         # Add dummy sentence column with enumerated sentences on AnnData.obs
         t_add_start = time.perf_counter()
-        adata.obs["sentence_1"] = [f"sentence {i}" for i in range(n_obs)]
+        for i in range(1, args.num_sentences + 1):
+            col = f"sentence_{i}"
+            if i in long_cols and long_sentence_value is not None:
+                adata.obs[col] = long_sentence_value
+            else:
+                adata.obs[col] = [f"row {r} sentence_col {i}" for r in range(n_obs)]
         constructor.add_anndata(
             adata=adata,
-            sentence_keys=["sentence_1"],
+            sentence_keys=sentence_keys,
             caption_key=args.caption_key,
             batch_key=args.batch_key,
             share_link=args.share_link,
@@ -138,6 +189,12 @@ def main() -> None:
     print(f"get_dataset time: {elapsed_build:.2f} s")
     print(f"Total elapsed: {elapsed_total:.2f} s")
     print(f"Throughput: {samples_per_second:.2f} samples/s")
+    print(
+        "Sentence config: keys="
+        + ", ".join(sentence_keys)
+        + f" | long_cols={sorted(list(long_cols)) if long_cols else []}"
+        + (f" | long_words={args.long_sentence_words}" if long_cols else "")
+    )
 
 
 if __name__ == "__main__":

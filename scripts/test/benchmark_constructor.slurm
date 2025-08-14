@@ -35,7 +35,10 @@ srun -c ${SLURM_CPUS_PER_TASK:-4} python "$SCRIPT" \
   --negatives-per-sample 2 \
   --dataset-format multiplets \
   --caption-key natural_language_annotation \
-  --batch-key dataset_title | cat
+  --batch-key dataset_title \
+  --num-sentences 4 \
+  --long-sentence-cols 2,3 \
+  --long-sentence-words 5000 | cat
 date
 
 echo
@@ -47,6 +50,9 @@ srun -c ${SLURM_CPUS_PER_TASK:-4} python "$SCRIPT" \
   --dataset-format multiplets \
   --caption-key natural_language_annotation \
   --batch-key dataset_title \
+  --num-sentences 4 \
+  --long-sentence-cols 2,3 \
+  --long-sentence-words 5000 \
   --use-add-df | cat
 date
 
