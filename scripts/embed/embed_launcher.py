@@ -229,14 +229,6 @@ class EmbeddingLauncher:
         ]
 
         # Add GPU-specific settings for better resource management
-        # if self.mode == "gpu":
-        #    # Add exclusive node access for GPU jobs to avoid resource contention
-        #    sbatch_cmd.extend(["--exclusive"])
-        #    logger.info(
-        #        "Adding --exclusive flag for GPU jobs to prevent resource contention"
-        #    )
-
-        logger.info(f"🔍 DEBUG: Building sbatch command for {label}")
         logger.info(
             f"🔍 DEBUG: File count: {file_count}, so array will be 0-{file_count - 1}"
         )
