@@ -438,10 +438,10 @@ def main(cfg: DictConfig):
                 raise FileNotFoundError(f"Input file not found: {infile}")
 
             # Load AnnData with format detection
-            adata = load_adata_file(infile, input_format)
-            logger.info(
-                "Loaded AnnData with %d cells, %d vars", adata.n_obs, adata.n_vars
-            )
+            # adata = load_adata_file(infile, input_format)
+            # logger.info(
+            #    "Loaded AnnData with %d cells, %d vars", adata.n_obs, adata.n_vars
+            # )
 
             if prepare_only:
                 # PREPARE_ONLY MODE: Only run prepare() step

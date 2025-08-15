@@ -828,8 +828,11 @@ class GeneformerEmbedder(BaseEmbedder):
         elif file_path.suffix == ".zarr":
             import zarr
 
+            logger.debug("Trying to open zarr store from %s", file_path)
             store = zarr.DirectoryStore(file_path)
+            logger.debug("Opened zarr store from %s", file_path)
             root = zarr.group(store=store)
+            logger.debug("Opened zarr group from %s", file_path)
             if "obs" not in root or "sample_index" not in root["obs"]:
                 raise ValueError("sample_index not found in obs")
             return root["obs/sample_index"][:]
@@ -1049,6 +1052,7 @@ class GeneformerEmbedder(BaseEmbedder):
 
         # Get sample indices efficiently without loading the entire AnnData
         if adata_path is not None:
+            logger.info("Reading sample indices from %s", adata_path)
             og_ids = self._read_sample_indices(adata_path)
         else:
             og_ids = adata.obs["sample_index"].values
