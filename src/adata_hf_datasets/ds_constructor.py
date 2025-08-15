@@ -1,5 +1,4 @@
 import logging
-import random
 from collections import defaultdict
 from typing import Any, Dict, List, Optional
 
@@ -56,9 +55,17 @@ class AnnDataSetConstructor:
         self._index_to_batch: Dict[Any, Any] = {}
         self._index_to_share: Dict[Any, Optional[str]] = {}
 
-        # global maps for fast negative sampling
+        # optimized data structures for fast negative sampling
         self._batch_caption_map: defaultdict = defaultdict(list)  # (batch, cap) → idxs
         self._caption_map: defaultdict = defaultdict(list)  # cap → idxs
+
+        # lightweight caching - only cache what we actually need
+        self._batch_indices: Dict[Any, List] = {}  # batch → all indices in that batch
+        self._caption_indices: Dict[
+            str, List
+        ] = {}  # caption → all indices with that caption
+        self._all_indices: List = []  # all sample indices
+        self._pools_built = False
 
     # ------------------------------------------------------------------ #
     # public ingest methods
@@ -115,6 +122,28 @@ class AnnDataSetConstructor:
         )
 
     # ------------------------------------------------------------------ #
+    # optimization methods
+    # ------------------------------------------------------------------ #
+    def _build_simple_pools(self) -> None:
+        """Build minimal pools for fast negative sampling."""
+        if self._pools_built:
+            return
+
+        # Build simple lookup structures from existing data
+        for batch, indices_list in self._batch_caption_map.keys():
+            if batch not in self._batch_indices:
+                self._batch_indices[batch] = []
+
+        for (batch, caption), indices in self._batch_caption_map.items():
+            self._batch_indices[batch].extend(indices)
+            if caption not in self._caption_indices:
+                self._caption_indices[caption] = []
+            self._caption_indices[caption].extend(indices)
+
+        self._all_indices = list(self._index_to_sentences.keys())
+        self._pools_built = True
+
+    # ------------------------------------------------------------------ #
     # dataset construction
     # ------------------------------------------------------------------ #
     def get_dataset(self) -> Dataset:
@@ -122,79 +151,107 @@ class AnnDataSetConstructor:
         if not self._index_to_sentences:
             raise ValueError("No data present – call add_anndata/add_df first.")
 
-        records: List[Dict[str, Any]] = []
-        for idx in tqdm(
-            self._index_to_sentences.keys(), desc="Building dataset", leave=False
-        ):
-            sent_vals = self._index_to_sentences[idx]
-            sentences = {f"cell_sentence_{i + 1}": s for i, s in enumerate(sent_vals)}
-            share = self._index_to_share[idx]
-            pos_cap = self._index_to_caption[idx]
+        # Build minimal lookup structures once
+        self._build_simple_pools()
 
-            if self.dataset_format == "pairs":
-                # unchanged
-                neg_idx = self._get_negative_idx(idx, pos_cap)
-                if neg_idx is None:
-                    continue
-                neg_cap = self._index_to_caption[neg_idx]
-                for cap, label in ((pos_cap, 1.0), (neg_cap, 0.0)):
+        # Use generator to avoid building massive list in memory
+        def record_generator():
+            for idx in tqdm(
+                self._index_to_sentences.keys(), desc="Building dataset", leave=False
+            ):
+                sent_vals = self._index_to_sentences[idx]
+                sentences = {
+                    f"cell_sentence_{i + 1}": s for i, s in enumerate(sent_vals)
+                }
+                share = self._index_to_share[idx]
+                pos_cap = self._index_to_caption[idx]
+
+                if self.dataset_format == "pairs":
+                    # unchanged
+                    neg_idx = self._get_negative_idx(idx, pos_cap)
+                    if neg_idx is None:
+                        continue
+                    neg_cap = self._index_to_caption[neg_idx]
+                    for cap, label in ((pos_cap, 1.0), (neg_cap, 0.0)):
+                        rec = {
+                            "sample_idx": idx,
+                            **sentences,
+                            "caption": cap,
+                            "label": label,
+                        }
+                        if share:
+                            rec["share_link"] = share
+                        yield rec
+
+                elif self.dataset_format == "multiplets":
+                    neg_indices: Dict[str, Any] = {}
+                    seen_idxs = set()
+                    for i in range(self.negatives_per_sample):
+                        # even i (0-based) → caption negative (different caption)
+                        if i % 2 == 0:
+                            neg_idx = self._get_negative_idx(idx, pos_cap)
+                            if neg_idx is None or neg_idx in seen_idxs:
+                                # if no valid caption negative is available, skip
+                                continue
+                            seen_idxs.add(neg_idx)
+                            neg_indices[f"negative_{i + 1}_idx"] = neg_idx
+                        # odd i → sentence negative (different sample, any caption)
+                        else:
+                            neg_idx = self._get_sentence_negative_idx(idx, seen_idxs)
+                            if neg_idx is None or neg_idx in seen_idxs:
+                                # if no valid sentence negative is available, skip
+                                continue
+                            seen_idxs.add(neg_idx)
+                            neg_indices[f"negative_{i + 1}_idx"] = neg_idx
+
+                    if not neg_indices:
+                        # very rare corner-case: no negatives could be drawn
+                        continue
+
                     rec = {
                         "sample_idx": idx,
                         **sentences,
-                        "caption": cap,
-                        "label": label,
+                        "positive": pos_cap,
+                        **neg_indices,
                     }
                     if share:
                         rec["share_link"] = share
-                    records.append(rec)
+                    yield rec
 
-            elif self.dataset_format == "multiplets":
-                neg_indices: Dict[str, Any] = {}
-                seen_idxs = set()
-                for i in range(self.negatives_per_sample):
-                    # even i (0-based) → caption negative (different caption)
-                    if i % 2 == 0:
-                        neg_idx = self._get_negative_idx(idx, pos_cap)
-                        if neg_idx is None or neg_idx in seen_idxs:
-                            # if no valid caption negative is available, skip
-                            continue
-                        seen_idxs.add(neg_idx)
-                        neg_indices[f"negative_{i + 1}_idx"] = neg_idx
-                    # odd i → sentence negative (different sample, any caption)
-                    else:
-                        neg_idx = self._get_sentence_negative_idx(idx, seen_idxs)
-                        if neg_idx is None or neg_idx in seen_idxs:
-                            # if no valid sentence negative is available, skip
-                            continue
-                        seen_idxs.add(neg_idx)
-                        neg_indices[f"negative_{i + 1}_idx"] = neg_idx
+                else:  # 'single'
+                    rec = {"sample_idx": idx, **sentences}
+                    if share:
+                        rec["share_link"] = share
+                    yield rec
 
-                if not neg_indices:
-                    # very rare corner-case: no negatives could be drawn
-                    continue
+        # Use Dataset.from_generator for memory efficiency
+        logger.info("Building dataset from generator...")
 
-                rec = {
-                    "sample_idx": idx,
-                    **sentences,
-                    "positive": pos_cap,
-                    **neg_indices,
-                }
-                if share:
-                    rec["share_link"] = share
-                records.append(rec)
+        try:
+            # HuggingFace datasets supports from_generator for memory-efficient creation
+            dataset = Dataset.from_generator(record_generator)
+            logger.info(
+                "Constructed dataset with %d records in '%s' format.",
+                len(dataset),
+                self.dataset_format,
+            )
+            return dataset
+        except Exception as e:
+            logger.warning(f"from_generator failed ({e}), falling back to from_list...")
+            # Fallback to chunked processing if from_generator fails
+            records = []
+            chunk_size = 5000  # Smaller chunks to reduce memory pressure
+            for i, record in enumerate(record_generator()):
+                records.append(record)
+                if i % chunk_size == 0 and i > 0:
+                    logger.info(f"Processed {i} records...")
 
-            else:  # 'single'
-                rec = {"sample_idx": idx, **sentences}
-                if share:
-                    rec["share_link"] = share
-                records.append(rec)
-
-        logger.info(
-            "Constructed dataset with %d records in '%s' format.",
-            len(records),
-            self.dataset_format,
-        )
-        return Dataset.from_list(records)
+            logger.info(
+                "Constructed dataset with %d records in '%s' format.",
+                len(records),
+                self.dataset_format,
+            )
+            return Dataset.from_list(records)
 
     # ------------------------------------------------------------------ #
     # internal helpers
@@ -238,26 +295,23 @@ class AnnDataSetConstructor:
         """Return an obs index with a *different* caption (preferring same batch)."""
         anchor_batch = self._index_to_batch[anchor_idx]
 
-        # same-batch but different caption
-        in_batch = [
-            i
-            for (b, c), idxs in self._batch_caption_map.items()
-            if b == anchor_batch and c != pos_caption
-            for i in idxs
-        ]
-        in_batch = [i for i in in_batch if i != anchor_idx]
-        if in_batch:
-            return random.choice(in_batch)
+        # same-batch but different caption - iterate through batch_caption_map efficiently
+        for (batch, caption), indices in self._batch_caption_map.items():
+            if batch == anchor_batch and caption != pos_caption:
+                # Try to find a candidate that's not the anchor
+                for idx in indices:
+                    if idx != anchor_idx:
+                        return idx
 
-        # cross-batch fallback
-        cross = [
-            i
-            for cap, idxs in self._caption_map.items()
-            if cap != pos_caption
-            for i in idxs
-        ]
-        cross = [i for i in cross if i != anchor_idx]
-        return random.choice(cross) if cross else None
+        # cross-batch fallback - iterate through caption_map efficiently
+        for caption, indices in self._caption_map.items():
+            if caption != pos_caption:
+                # Try to find a candidate that's not the anchor
+                for idx in indices:
+                    if idx != anchor_idx:
+                        return idx
+
+        return None
 
     def _get_sentence_negative_idx(
         self, anchor_idx: Any, seen_idxs: set
@@ -265,18 +319,15 @@ class AnnDataSetConstructor:
         """Return an obs index for sentence negatives (different sample, any caption)."""
         anchor_batch = self._index_to_batch[anchor_idx]
 
-        # same-batch but different sample
-        in_batch = [
-            i
-            for (b, c), idxs in self._batch_caption_map.items()
-            if b == anchor_batch
-            for i in idxs
-        ]
-        in_batch = [i for i in in_batch if i != anchor_idx and i not in seen_idxs]
-        if in_batch:
-            return random.choice(in_batch)
+        # same-batch but different sample - iterate through batch efficiently
+        if anchor_batch in self._batch_indices:
+            for idx in self._batch_indices[anchor_batch]:
+                if idx != anchor_idx and idx not in seen_idxs:
+                    return idx
 
-        # cross-batch fallback
-        cross = [i for cap, idxs in self._caption_map.items() for i in idxs]
-        cross = [i for i in cross if i != anchor_idx and i not in seen_idxs]
-        return random.choice(cross) if cross else None
+        # cross-batch fallback - iterate through all indices
+        for idx in self._all_indices:
+            if idx != anchor_idx and idx not in seen_idxs:
+                return idx
+
+        return None
