@@ -28,21 +28,7 @@ echo "Using ZARR_PATH=${ZARR_PATH}"
 
 SCRIPT="/home/menger/git/adata_hf_datasets/scripts/test/test_constructor_speed.py"
 
-echo "=== Run 1: add_anndata path ==="
-date
-srun -c ${SLURM_CPUS_PER_TASK:-4} python "$SCRIPT" \
-  --zarr-path "$ZARR_PATH" \
-  --negatives-per-sample 2 \
-  --dataset-format multiplets \
-  --caption-key natural_language_annotation \
-  --batch-key dataset_title \
-  --num-sentences 4 \
-  --long-sentence-cols 2,3 \
-  --long-sentence-words 5000 | cat
-date
-
-echo
-echo "=== Run 2: add_df path (obs-only) ==="
+echo "=== Run 1: add_anndata path (10x replicated, 3x added) ==="
 date
 srun -c ${SLURM_CPUS_PER_TASK:-4} python "$SCRIPT" \
   --zarr-path "$ZARR_PATH" \
@@ -53,6 +39,24 @@ srun -c ${SLURM_CPUS_PER_TASK:-4} python "$SCRIPT" \
   --num-sentences 4 \
   --long-sentence-cols 2,3 \
   --long-sentence-words 5000 \
+  --replicate-rows 10 \
+  --add-multiple-times 3 | cat
+date
+
+echo
+echo "=== Run 2: add_df path (obs-only, 10x replicated, 3x added) ==="
+date
+srun -c ${SLURM_CPUS_PER_TASK:-4} python "$SCRIPT" \
+  --zarr-path "$ZARR_PATH" \
+  --negatives-per-sample 2 \
+  --dataset-format multiplets \
+  --caption-key natural_language_annotation \
+  --batch-key dataset_title \
+  --num-sentences 4 \
+  --long-sentence-cols 2,3 \
+  --long-sentence-words 5000 \
+  --replicate-rows 10 \
+  --add-multiple-times 3 \
   --use-add-df | cat
 date
 

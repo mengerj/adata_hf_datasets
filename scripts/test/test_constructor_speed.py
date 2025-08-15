@@ -4,6 +4,7 @@ import time
 from pathlib import Path
 
 import anndata as ad
+import pandas as pd
 
 from adata_hf_datasets.ds_constructor import AnnDataSetConstructor
 
@@ -63,13 +64,13 @@ def main() -> None:
     parser.add_argument(
         "--num-sentences",
         type=int,
-        default=1,
+        default=4,
         help="Number of sentence_* columns to include (default: 1)",
     )
     parser.add_argument(
         "--long-sentence-cols",
         type=str,
-        default="",
+        default="2,3",
         help=(
             "Comma-separated 1-based indices of sentence columns to fill with a long string (e.g. '2,3')."
         ),
@@ -79,6 +80,18 @@ def main() -> None:
         type=int,
         default=5000,
         help="Number of space-separated tokens to include in the long sentence string (default: 5000)",
+    )
+    parser.add_argument(
+        "--replicate-rows",
+        type=int,
+        default=10,
+        help="Replicate the dataset rows this many times to artificially increase size (default: 1)",
+    )
+    parser.add_argument(
+        "--add-multiple-times",
+        type=int,
+        default=5,
+        help="Call add_anndata/add_df this many times with the same data (default: 1)",
     )
     args = parser.parse_args()
 
@@ -140,15 +153,37 @@ def main() -> None:
                 obs_df[col] = long_sentence_value
             else:
                 obs_df[col] = [f"row {r} sentence_col {i}" for r in range(n_obs)]
+
+        # Replicate rows if requested
+        if args.replicate_rows > 1:
+            print(f"Replicating DataFrame {args.replicate_rows} times...")
+            replicated_dfs = []
+            for rep in range(args.replicate_rows):
+                df_copy = obs_df.copy()
+                # Modify index to avoid duplicates
+                df_copy.index = [f"{idx}_rep{rep}" for idx in df_copy.index]
+                replicated_dfs.append(df_copy)
+            obs_df = pd.concat(replicated_dfs, ignore_index=False)
+            print(f"DataFrame now has {len(obs_df)} rows after replication")
+
         # Free AnnData as early as possible to avoid touching X/var/etc.
         del adata
-        constructor.add_df(
-            df=obs_df,
-            sentence_keys=sentence_keys,
-            caption_key=args.caption_key,
-            batch_key=args.batch_key,
-            share_link=args.share_link,
-        )
+
+        # Add the DataFrame multiple times if requested
+        print(f"Adding DataFrame {args.add_multiple_times} times...")
+        for add_idx in range(args.add_multiple_times):
+            # Create unique indices for each addition to avoid conflicts
+            df_to_add = obs_df.copy()
+            if args.add_multiple_times > 1:
+                df_to_add.index = [f"{idx}_add{add_idx}" for idx in df_to_add.index]
+
+            constructor.add_df(
+                df=df_to_add,
+                sentence_keys=sentence_keys,
+                caption_key=args.caption_key,
+                batch_key=args.batch_key,
+                share_link=args.share_link,
+            )
         t_add_end = time.perf_counter()
     else:
         # Add dummy sentence column with enumerated sentences on AnnData.obs
@@ -159,13 +194,63 @@ def main() -> None:
                 adata.obs[col] = long_sentence_value
             else:
                 adata.obs[col] = [f"row {r} sentence_col {i}" for r in range(n_obs)]
-        constructor.add_anndata(
-            adata=adata,
-            sentence_keys=sentence_keys,
-            caption_key=args.caption_key,
-            batch_key=args.batch_key,
-            share_link=args.share_link,
-        )
+
+        # For replication with add_anndata, we need to use the DataFrame approach
+        # because AnnData enforces obs/X size consistency
+        if args.replicate_rows > 1:
+            print("Replicating via DataFrame (add_anndata path with replication)...")
+            obs_df = adata.obs.copy()
+            replicated_dfs = []
+            for rep in range(args.replicate_rows):
+                df_copy = obs_df.copy()
+                # Modify index to avoid duplicates
+                df_copy.index = [f"{idx}_rep{rep}" for idx in df_copy.index]
+                replicated_dfs.append(df_copy)
+            obs_df = pd.concat(replicated_dfs, ignore_index=False)
+            print(f"DataFrame now has {len(obs_df)} rows after replication")
+            # Free AnnData and use DataFrame approach
+            del adata
+
+            # Add the DataFrame multiple times if requested
+            print(f"Adding DataFrame {args.add_multiple_times} times...")
+            for add_idx in range(args.add_multiple_times):
+                # Create unique indices for each addition to avoid conflicts
+                df_to_add = obs_df.copy()
+                if args.add_multiple_times > 1:
+                    df_to_add.index = [f"{idx}_add{add_idx}" for idx in df_to_add.index]
+
+                constructor.add_df(
+                    df=df_to_add,
+                    sentence_keys=sentence_keys,
+                    caption_key=args.caption_key,
+                    batch_key=args.batch_key,
+                    share_link=args.share_link,
+                )
+        else:
+            # Add AnnData multiple times if requested
+            print(f"Adding AnnData {args.add_multiple_times} times...")
+            for add_idx in range(args.add_multiple_times):
+                # For multiple additions, we need to create copies with unique indices
+                if args.add_multiple_times > 1:
+                    adata_copy = adata.copy()
+                    adata_copy.obs.index = [
+                        f"{idx}_add{add_idx}" for idx in adata_copy.obs.index
+                    ]
+                    constructor.add_anndata(
+                        adata=adata_copy,
+                        sentence_keys=sentence_keys,
+                        caption_key=args.caption_key,
+                        batch_key=args.batch_key,
+                        share_link=args.share_link,
+                    )
+                else:
+                    constructor.add_anndata(
+                        adata=adata,
+                        sentence_keys=sentence_keys,
+                        caption_key=args.caption_key,
+                        batch_key=args.batch_key,
+                        share_link=args.share_link,
+                    )
         t_add_end = time.perf_counter()
 
     t_build_start = time.perf_counter()
@@ -190,10 +275,12 @@ def main() -> None:
     print(f"Total elapsed: {elapsed_total:.2f} s")
     print(f"Throughput: {samples_per_second:.2f} samples/s")
     print(
-        "Sentence config: keys="
+        "Config: keys="
         + ", ".join(sentence_keys)
         + f" | long_cols={sorted(list(long_cols)) if long_cols else []}"
         + (f" | long_words={args.long_sentence_words}" if long_cols else "")
+        + f" | replicate_rows={args.replicate_rows}"
+        + f" | add_multiple_times={args.add_multiple_times}"
     )
 
 
