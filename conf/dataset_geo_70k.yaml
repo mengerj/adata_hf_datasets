@@ -59,7 +59,6 @@ embedding_cpu:
   methods: ["pca", "scvi_fm", "gs"]
 
 embedding_gpu:
-  memory_gb: 90
   enabled: true
   methods: ["geneformer"]
 
