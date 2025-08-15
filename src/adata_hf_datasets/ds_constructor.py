@@ -56,9 +56,20 @@ class AnnDataSetConstructor:
         self._index_to_batch: Dict[Any, Any] = {}
         self._index_to_share: Dict[Any, Optional[str]] = {}
 
-        # global maps for fast negative sampling
+        # optimized data structures for fast negative sampling
         self._batch_caption_map: defaultdict = defaultdict(list)  # (batch, cap) → idxs
         self._caption_map: defaultdict = defaultdict(list)  # cap → idxs
+
+        # simple caching for negative sampling pools
+        self._negative_pools_built = False
+        self._same_batch_diff_caption: Dict[
+            tuple, List
+        ] = {}  # (batch, pos_cap) → candidate idxs
+        self._cross_batch_diff_caption: Dict[str, List] = {}  # pos_cap → candidate idxs
+        self._batch_sentence_negatives: Dict[
+            Any, List
+        ] = {}  # batch → all idxs in batch
+        self._all_sentence_negatives: List = []  # all indices for cross-batch fallback
 
     # ------------------------------------------------------------------ #
     # public ingest methods
@@ -115,12 +126,65 @@ class AnnDataSetConstructor:
         )
 
     # ------------------------------------------------------------------ #
+    # optimization methods
+    # ------------------------------------------------------------------ #
+    def _build_negative_pools(self) -> None:
+        """Build simple cached pools for fast negative sampling."""
+        if self._negative_pools_built:
+            return
+
+        logger.info("Building negative sampling pools...")
+
+        # Pre-compute same-batch different-caption pools
+        all_batches = set(self._index_to_batch.values())
+        all_captions = set(
+            cap for cap in self._index_to_caption.values() if cap is not None
+        )
+
+        for batch in all_batches:
+            for pos_caption in all_captions:
+                candidates = []
+                # Find all indices in same batch with different caption
+                for (b, c), indices in self._batch_caption_map.items():
+                    if b == batch and c != pos_caption:
+                        candidates.extend(indices)
+                self._same_batch_diff_caption[(batch, pos_caption)] = candidates
+
+        # Pre-compute cross-batch different-caption pools
+        for pos_caption in all_captions:
+            candidates = []
+            for caption, indices in self._caption_map.items():
+                if caption != pos_caption:
+                    candidates.extend(indices)
+            self._cross_batch_diff_caption[pos_caption] = candidates
+
+        # Pre-compute batch sentence negatives (all samples in each batch)
+        for batch in all_batches:
+            batch_indices = []
+            for (b, c), indices in self._batch_caption_map.items():
+                if b == batch:
+                    batch_indices.extend(indices)
+            self._batch_sentence_negatives[batch] = batch_indices
+
+        # All indices for cross-batch sentence negatives
+        self._all_sentence_negatives = list(self._index_to_sentences.keys())
+
+        self._negative_pools_built = True
+        logger.info(
+            "Negative sampling pools built for %d samples",
+            len(self._all_sentence_negatives),
+        )
+
+    # ------------------------------------------------------------------ #
     # dataset construction
     # ------------------------------------------------------------------ #
     def get_dataset(self) -> Dataset:
         """Assemble the Hugging Face dataset according to ``dataset_format``."""
         if not self._index_to_sentences:
             raise ValueError("No data present – call add_anndata/add_df first.")
+
+        # Build optimized lookup structures once
+        self._build_negative_pools()
 
         records: List[Dict[str, Any]] = []
         for idx in tqdm(
@@ -238,26 +302,21 @@ class AnnDataSetConstructor:
         """Return an obs index with a *different* caption (preferring same batch)."""
         anchor_batch = self._index_to_batch[anchor_idx]
 
-        # same-batch but different caption
-        in_batch = [
-            i
-            for (b, c), idxs in self._batch_caption_map.items()
-            if b == anchor_batch and c != pos_caption
-            for i in idxs
-        ]
-        in_batch = [i for i in in_batch if i != anchor_idx]
-        if in_batch:
-            return random.choice(in_batch)
+        # same-batch but different caption - direct lookup
+        candidates = self._same_batch_diff_caption.get((anchor_batch, pos_caption), [])
+        # Filter out anchor_idx
+        candidates = [idx for idx in candidates if idx != anchor_idx]
+        if candidates:
+            return random.choice(candidates)
 
-        # cross-batch fallback
-        cross = [
-            i
-            for cap, idxs in self._caption_map.items()
-            if cap != pos_caption
-            for i in idxs
-        ]
-        cross = [i for i in cross if i != anchor_idx]
-        return random.choice(cross) if cross else None
+        # cross-batch fallback - direct lookup
+        candidates = self._cross_batch_diff_caption.get(pos_caption, [])
+        # Filter out anchor_idx
+        candidates = [idx for idx in candidates if idx != anchor_idx]
+        if candidates:
+            return random.choice(candidates)
+
+        return None
 
     def _get_sentence_negative_idx(
         self, anchor_idx: Any, seen_idxs: set
@@ -265,18 +324,22 @@ class AnnDataSetConstructor:
         """Return an obs index for sentence negatives (different sample, any caption)."""
         anchor_batch = self._index_to_batch[anchor_idx]
 
-        # same-batch but different sample
-        in_batch = [
-            i
-            for (b, c), idxs in self._batch_caption_map.items()
-            if b == anchor_batch
-            for i in idxs
+        # same-batch but different sample - direct lookup
+        candidates = self._batch_sentence_negatives.get(anchor_batch, [])
+        # Filter out anchor_idx and seen_idxs
+        candidates = [
+            idx for idx in candidates if idx != anchor_idx and idx not in seen_idxs
         ]
-        in_batch = [i for i in in_batch if i != anchor_idx and i not in seen_idxs]
-        if in_batch:
-            return random.choice(in_batch)
+        if candidates:
+            return random.choice(candidates)
 
-        # cross-batch fallback
-        cross = [i for cap, idxs in self._caption_map.items() for i in idxs]
-        cross = [i for i in cross if i != anchor_idx and i not in seen_idxs]
-        return random.choice(cross) if cross else None
+        # cross-batch fallback - use all indices
+        candidates = [
+            idx
+            for idx in self._all_sentence_negatives
+            if idx != anchor_idx and idx not in seen_idxs
+        ]
+        if candidates:
+            return random.choice(candidates)
+
+        return None
