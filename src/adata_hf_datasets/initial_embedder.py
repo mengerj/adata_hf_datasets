@@ -839,6 +839,165 @@ class GeneformerEmbedder(BaseEmbedder):
         else:
             raise ValueError(f"Unsupported file format: {file_path.suffix}")
 
+    def _detect_file_format(self, file_path: str | Path) -> str:
+        """
+        Detect file format based on file extension.
+
+        Parameters
+        ----------
+        file_path : str | Path
+            Path to the file
+
+        Returns
+        -------
+        str
+            'zarr' or 'h5ad'
+
+        Raises
+        ------
+        ValueError
+            If file format cannot be determined
+        """
+        file_path = Path(file_path)
+        if file_path.suffix == ".zarr":
+            return "zarr"
+        elif file_path.suffix == ".h5ad":
+            return "h5ad"
+        else:
+            raise ValueError(f"Unsupported file format: {file_path.suffix}")
+
+    def _check_required_columns(self, file_path: str | Path, file_format: str) -> None:
+        """
+        Check if required columns exist in var and obs without loading full AnnData.
+
+        Parameters
+        ----------
+        file_path : str | Path
+            Path to the AnnData file
+        file_format : str
+            'zarr' or 'h5ad'
+
+        Raises
+        ------
+        ValueError
+            If required columns are missing
+        """
+        file_path = Path(file_path)
+        required_var_cols = ["ensembl_id"]
+        required_obs_cols = ["n_counts", "sample_index"]
+
+        if file_format == "zarr":
+            # For zarr, we can read groups directly
+            import zarr
+
+            store = zarr.DirectoryStore(file_path)
+            root = zarr.group(store=store)
+
+            # Check var columns
+            if "var" in root:
+                var_cols = list(root["var"].keys())
+                for col in required_var_cols:
+                    if col not in var_cols:
+                        raise ValueError(
+                            f"{col} not found in adata.var. Run preprocessing script or pp_geneformer first."
+                        )
+            else:
+                raise ValueError("var not found in zarr store")
+
+            # Check obs columns
+            if "obs" in root:
+                obs_cols = list(root["obs"].keys())
+                for col in required_obs_cols:
+                    if col not in obs_cols:
+                        raise ValueError(
+                            f"{col} not found in adata.obs. Run preprocessing script or pp_geneformer first."
+                        )
+            else:
+                raise ValueError("obs not found in zarr store")
+
+        elif file_format == "h5ad":
+            # For h5ad, we need to use h5py to read metadata without loading full data
+            import h5py
+
+            with h5py.File(file_path, "r") as f:
+                # Check var columns
+                if "var" in f:
+                    var_cols = list(f["var"].keys())
+                    for col in required_var_cols:
+                        if col not in var_cols:
+                            raise ValueError(
+                                f"{col} not found in adata.var. Run preprocessing script or pp_geneformer first."
+                            )
+                else:
+                    raise ValueError("var not found in h5ad file")
+
+                # Check obs columns
+                if "obs" in f:
+                    obs_cols = list(f["obs"].keys())
+                    for col in required_obs_cols:
+                        if col not in obs_cols:
+                            raise ValueError(
+                                f"{col} not found in adata.obs. Run preprocessing script or pp_geneformer first."
+                            )
+                else:
+                    raise ValueError("obs not found in h5ad file")
+
+    def _copy_file_efficiently(
+        self, src_path: str | Path, dest_path: str | Path, file_format: str
+    ) -> str:
+        """
+        Efficiently copy file to destination with compression for zarr.
+
+        Parameters
+        ----------
+        src_path : str | Path
+            Source file path
+        dest_path : str | Path
+            Destination file path
+        file_format : str
+            'zarr' or 'h5ad'
+
+        Returns
+        -------
+        str
+            File format to use for tokenization ('h5ad' or 'zarr')
+        """
+        import shutil
+        import zipfile
+
+        src_path = Path(src_path)
+        dest_path = Path(dest_path)
+
+        if file_format == "zarr":
+            # For zarr, create a compressed zip and then extract
+            temp_zip = dest_path.parent / f"{dest_path.stem}_temp.zip"
+
+            logger.info("Creating compressed zarr archive at %s", temp_zip)
+            with zipfile.ZipFile(
+                temp_zip, "w", zipfile.ZIP_DEFLATED, compresslevel=3
+            ) as zipf:
+                for file_path in src_path.rglob("*"):
+                    if file_path.is_file():
+                        arcname = file_path.relative_to(src_path)
+                        zipf.write(file_path, arcname)
+
+            logger.info("Extracting zarr archive to %s", dest_path)
+            with zipfile.ZipFile(temp_zip, "r") as zipf:
+                zipf.extractall(dest_path)
+
+            # Clean up temp zip
+            temp_zip.unlink()
+            logger.info("Zarr store copied efficiently with compression")
+            return "zarr"
+
+        elif file_format == "h5ad":
+            # For h5ad, simple copy
+            logger.info("Copying h5ad file from %s to %s", src_path, dest_path)
+            shutil.copy2(src_path, dest_path)
+            return "h5ad"
+        else:
+            raise ValueError(f"Unsupported file format: {file_format}")
+
     def prepare(
         self,
         adata: anndata.AnnData | None = None,
@@ -850,18 +1009,17 @@ class GeneformerEmbedder(BaseEmbedder):
         Prepare (preprocess + tokenize) the data for Geneformer embeddings.
 
         This includes:
-         - Adding Ensembl IDs to `adata.var["ensembl_id"]` if not present.
-         - Calculating and storing `adata.obs["n_counts"]` if not present.
-         - Writing the AnnData to a temporary H5AD file.
+         - Checking required attributes (ensembl_id, n_counts, sample_index) without loading full data.
+         - Efficiently copying the AnnData file (with compression for zarr).
          - Optionally tokenizing the data using `TranscriptomeTokenizer` if it
            has not been tokenized previously (i.e., if the .dataset file doesn't exist).
 
         Parameters
         ----------
         adata : anndata.AnnData, optional
-            Single-cell dataset to prepare.
+            Single-cell dataset to prepare. If provided, adata_path is ignored.
         adata_path : str, optional
-            Path to the AnnData file (.h5ad).
+            Path to the AnnData file (.h5ad or .zarr).
         do_tokenization : bool
             Whether to run the tokenization step if no tokenized dataset is found.
         **kwargs : dict
@@ -880,57 +1038,74 @@ class GeneformerEmbedder(BaseEmbedder):
                 "run 'git submodule update --init --recursive'. Then install geneformer: "
                 "`pip install external/Geneformer`."
             )
-        if adata_path is None:
-            raise ValueError(
-                "adata_path must be provided to save the tokenized dataset."
+
+        if adata is not None:
+            # If adata object is provided, we still need to save it temporarily to use the efficient methods
+            logger.warning(
+                "AnnData object provided directly. For memory efficiency, consider providing adata_path instead."
             )
+            if adata_path is None:
+                # Create a temporary path
+                from tempfile import NamedTemporaryFile
+
+                temp_file = NamedTemporaryFile(delete=False, suffix=".h5ad")
+                temp_file.close()
+                adata_path = temp_file.name
+                adata.write_h5ad(adata_path)
+                logger.info("Wrote temporary AnnData to %s", adata_path)
+            else:
+                adata.write_h5ad(adata_path)
+
+        if adata_path is None:
+            raise ValueError("Either adata or adata_path must be provided.")
+
         # quick fix: Always use "processed" dir and not "processed_with_emb" to avoid retokenization
         if "processed_with_emb" in adata_path:
             adata_path = adata_path.replace("processed_with_emb", "processed")
-        adata = _check_load_adata(adata, adata_path)
+
         self.in_adata_path = Path(adata_path)
         adata_name = self.in_adata_path.stem
-        # save the tokenized dataset in the same directory as the adata
+
+        # Detect file format without loading data
+        file_format = self._detect_file_format(self.in_adata_path)
+        logger.info("Detected file format: %s", file_format)
+
+        # Check required attributes without loading full data
+        logger.info("Checking required attributes without loading full data...")
+        self._check_required_columns(self.in_adata_path, file_format)
+        logger.info("All required attributes found!")
+
+        # Set up directory structure
         self.og_adata_dir = self.in_adata_path.parent
         self.adata_dir = self.og_adata_dir / "geneformer" / adata_name / "adata"
         self.adata_dir.mkdir(parents=True, exist_ok=True)
-        # write the adata to the directory, if the file doesnt exist yet
-        gf_adata_file = self.adata_dir / f"{adata_name}.h5ad"
+
+        # Determine target file path and format
+        if file_format == "zarr":
+            gf_adata_file = self.adata_dir / f"{adata_name}.zarr"
+            tokenize_format = "zarr"
+        else:  # h5ad
+            gf_adata_file = self.adata_dir / f"{adata_name}.h5ad"
+            tokenize_format = "h5ad"
+
+        # Copy file efficiently if it doesn't exist
         if not gf_adata_file.exists():
-            logger.info("Writing AnnData to %s", gf_adata_file)
-            adata.write_h5ad(gf_adata_file)
+            logger.info("Efficiently copying file to %s", gf_adata_file)
+            actual_format = self._copy_file_efficiently(
+                self.in_adata_path, gf_adata_file, file_format
+            )
+            tokenize_format = actual_format
         else:
             logger.info(
-                "AnnData already exists at %s. Skipping writing.",
+                "AnnData already exists at %s. Skipping copying.",
                 gf_adata_file,
             )
+
         self.out_dataset_dir = (
             self.og_adata_dir / "geneformer" / adata_name / "tokenized_ds"
         )
-        # 1. Make sure the data has the required fields
-        if "ensembl_id" not in adata.var.columns:
-            logger.error(
-                "ensembl_id not found in adata.var. Run preprocessing script or pp_geneformer first."
-            )
-            raise ValueError(
-                "ensembl_id not found in adata.var. Run preprocessing script or pp_geneformer first."
-            )
-        if "n_counts" not in adata.obs.columns:
-            logger.error(
-                "n_counts not found in adata.obs. Run preprocessing script or pp_geneformer first."
-            )
-            raise ValueError(
-                "n_counts not found in adata.obs. Run preprocessing script or pp_geneformer first."
-            )
-        if "sample_index" not in adata.obs.columns:
-            logger.error(
-                "sample_index not found in adata.obs. Run preprocessing script or pp_geneformer first."
-            )
-            raise ValueError(
-                "sample_index not found in adata.obs. Run preprocessing script or pp_geneformer first."
-            )
 
-        # 4. Tokenize data if needed
+        # Check if tokenization is needed
         dataset_path = self.out_dataset_dir / f"{self.dataset_name}.dataset"
         if dataset_path.exists():
             logger.info(
@@ -948,12 +1123,12 @@ class GeneformerEmbedder(BaseEmbedder):
                 token_dictionary_file=self.token_dictionary_file,
                 gene_mapping_file=self.ensembl_mapping_dict,
             )
-            # The tokenizer expects a directory containing .h5ad => pass self.tmp_adata_dir
+            # The tokenizer uses the file format that we actually have
             tk.tokenize_data(
                 str(self.adata_dir),
                 str(self.out_dataset_dir),
                 self.dataset_name,
-                file_format="h5ad",
+                file_format=tokenize_format,
             )
             logger.info("Created tokenized dataset: %s", dataset_path)
         else:
