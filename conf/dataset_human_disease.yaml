@@ -52,7 +52,7 @@ embedding_cpu:
   methods: ["pca", "scvi_fm", "gs"]
 
 embedding_gpu:
-  enabled: false
+  enabled: true
   methods: ["geneformer"]
 
 # Dataset creation overrides
