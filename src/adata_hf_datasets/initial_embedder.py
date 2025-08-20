@@ -664,7 +664,7 @@ class GeneformerEmbedder(BaseEmbedder):
 
     def __init__(
         self,
-        model_name: str = "Geneformer-V2-316M",
+        model_name: str = "Geneformer-V2-104M",
         emb_extractor_init: dict = None,
         **kwargs,
     ):
@@ -675,7 +675,7 @@ class GeneformerEmbedder(BaseEmbedder):
         ----------
         model_name : str, optional
             Name of the Geneformer model to use. This will be used to construct the
-            model directory path. Default is "Geneformer-V2-316M".
+            model directory path. Default is "Geneformer-V2-104M".
         emb_extractor_init : dict, optional
             Dictionary with additional parameters for the EmbExtractor from Geneformer.
             See geneformer documentation for more information.
