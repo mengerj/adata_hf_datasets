@@ -64,6 +64,7 @@ embedding_gpu:
 
 # Dataset creation overrides
 dataset_creation:
+  memory_gb: 256
   enabled: true
   # Dataset-specific parameters
   required_obsm_keys: ["X_pca", "X_scvi_fm", "X_gs", "X_geneformer"]
