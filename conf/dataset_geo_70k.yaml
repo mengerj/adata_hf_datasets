@@ -55,11 +55,11 @@ embedding_preparation:
 
 # Embedding overrides (both dataset-specific and execution parameters)
 embedding_cpu:
-  enabled: true
+  enabled: false
   methods: ["pca", "scvi_fm", "gs"]
 
 embedding_gpu:
-  enabled: true
+  enabled: false
   methods: ["geneformer"]
 
 # Dataset creation overrides
@@ -68,7 +68,7 @@ dataset_creation:
   # Dataset-specific parameters
   required_obsm_keys: ["X_pca", "X_scvi_fm", "X_gs", "X_geneformer"]
   cs_length: [4096] # Multiple cs_length values - will create separate datasets
-  caption_keys: ["caption_key"] # Multiple caption keys - will resolve to actual values and create separate datasets
+  caption_keys: ["annotation_key"] # Multiple caption keys - will resolve to actual values and create separate datasets
   negatives_per_sample: 2
   split_dataset: true # Important for training datasets. Set to false for test datasets.
   dataset_format: "multiplets" # Important for training datasets. Set to "single" for test datasets.
