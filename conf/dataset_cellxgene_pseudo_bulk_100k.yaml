@@ -68,7 +68,7 @@ dataset_creation:
   enabled: true
   # Dataset-specific parameters
   required_obsm_keys: ["X_pca", "X_scvi_fm", "X_gs", "X_geneformer"]
-  caption_keys: ["annotation_key"]
+  caption_keys: ["caption_key"]
   cs_length: [4096]
   negatives_per_sample: 2
   split_dataset: true # Important for training datasets. Set to false for test datasets.
