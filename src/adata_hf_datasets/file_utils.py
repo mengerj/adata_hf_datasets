@@ -399,7 +399,10 @@ def upload_folder_to_nextcloud(
         - "username": Environment variable name containing the Nextcloud username
         - "password": Environment variable name containing the Nextcloud password
         Optional keys:
-        - "chunk_size": Upload chunk size in bytes (default: 1MB)
+        - "chunk_size": Upload chunk size for single-PUT streaming in bytes (default: 1MB)
+        - "chunked_threshold_bytes": If file size ≥ this, use WebDAV chunked upload (default: 1_000_000_000)
+        - "force_chunked": Force WebDAV chunked upload for all files (default: False)
+        - "chunk_bytes": Size of each WebDAV chunk (default: 50 MiB)
     max_workers : int, optional
         Maximum number of worker threads for parallel uploads (default: 4).
 
@@ -545,30 +548,29 @@ def upload_folder_to_nextcloud(
                     session.mount("https://", adapter)
                     session.mount("http://", adapter)
 
-                    # Use streaming upload with progress bar
-                    with open(local_p, "rb") as fh:
-                        # Create progress reader
-                        reader = ReadWithProgress(
-                            fh,
-                            size,
-                            chunk_size=nextcloud_config.get("chunk_size", 1024 * 1024),
-                            desc=f"Uploading {local_p.name} (attempt {attempt + 1})",
-                        )
+                    # Decide whether to use chunked WebDAV upload
+                    use_chunked = nextcloud_config.get(
+                        "force_chunked", False
+                    ) or size >= nextcloud_config.get(
+                        "chunked_threshold_bytes", 1_000_000_000
+                    )
 
-                        # Increased timeouts for large files
-                        # Connect timeout: 30s, Read timeout: 30 minutes
-                        timeout = (30, 1800)
-
-                        r = session.put(
-                            full_url,
-                            data=reader,
-                            headers={"Content-Length": str(size)},
-                            auth=auth,
-                            timeout=timeout,
-                        )
-
-                        if r.ok:
-                            logger.info("✅ Upload successful: %s", local_p.name)
+                    if use_chunked:
+                        try:
+                            upload_file_to_nextcloud_chunked(
+                                file_path=str(local_p),
+                                nextcloud_url=nc_url,
+                                username=auth.username,
+                                password=auth.password,
+                                remote_path=remote_rel,
+                                chunk_bytes=nextcloud_config.get(
+                                    "chunk_bytes", 50 * 1024 * 1024
+                                ),
+                                timeout=(30, 1800),
+                            )
+                            logger.info(
+                                "✅ Chunked upload successful: %s", local_p.name
+                            )
                             upload_success = True
 
                             # Save successful upload immediately to share_map
@@ -586,20 +588,78 @@ def upload_folder_to_nextcloud(
                             )
                             if share_link:
                                 share_map[rel_key] = share_link
-                                # Save progress immediately
                                 mapping_path.write_text(json.dumps(share_map, indent=2))
                                 logger.info(
                                     "💾 Saved progress: %s → %s", rel_key, share_link
                                 )
 
                             break
-                        else:
+                        except Exception as e:
                             logger.warning(
-                                "Upload failed (HTTP %s) for %s on attempt %d",
-                                r.status_code,
+                                "Chunked upload failed for %s on attempt %d: %s",
                                 local_p.name,
                                 attempt + 1,
+                                e,
                             )
+                    else:
+                        # Use single-PUT streaming upload with progress bar
+                        with open(local_p, "rb") as fh:
+                            reader = ReadWithProgress(
+                                fh,
+                                size,
+                                chunk_size=nextcloud_config.get(
+                                    "chunk_size", 1024 * 1024
+                                ),
+                                desc=f"Uploading {local_p.name} (attempt {attempt + 1})",
+                            )
+
+                            timeout = (30, 1800)  # (connect, read)
+
+                            r = session.put(
+                                full_url,
+                                data=reader,
+                                headers={"Content-Length": str(size)},
+                                auth=auth,
+                                timeout=timeout,
+                            )
+
+                            if r.ok:
+                                logger.info("✅ Upload successful: %s", local_p.name)
+                                upload_success = True
+
+                                # Save successful upload immediately to share_map
+                                rel_key = local_p.relative_to(data_folder).as_posix()
+                                remote_tail = (
+                                    rel_key
+                                    if "data/" not in str(local_p)
+                                    else str(local_p).split("data/", 1)[1]
+                                )
+                                share_link = get_share_link(
+                                    nc_url,
+                                    auth.username,
+                                    auth.password,
+                                    f"data/{remote_tail}",
+                                )
+                                if share_link:
+                                    share_map[rel_key] = share_link
+                                    # Save progress immediately
+                                    mapping_path.write_text(
+                                        json.dumps(share_map, indent=2)
+                                    )
+                                    logger.info(
+                                        "💾 Saved progress: %s → %s",
+                                        rel_key,
+                                        share_link,
+                                    )
+
+                                break
+                            else:
+                                logger.warning(
+                                    "Upload failed (HTTP %s) for %s on attempt %d",
+                                    r.status_code,
+                                    local_p.name,
+                                    attempt + 1,
+                                )
 
             except (requests.exceptions.RequestException, TimeoutError) as e:
                 logger.warning(
@@ -1060,6 +1120,120 @@ def upload_file_to_nextcloud(
                 raise
 
     return response
+
+
+def upload_file_to_nextcloud_chunked(
+    file_path: str | Path,
+    nextcloud_url: str,
+    username: str,
+    password: str,
+    remote_path: str,
+    chunk_bytes: int = 50 * 1024 * 1024,
+    timeout: tuple[int, int] = (30, 1800),
+    move_max_retries: int = 5,
+) -> None:
+    """
+    Upload a file using Nextcloud's WebDAV chunked upload API.
+
+    Flow:
+      1) MKCOL /remote.php/dav/uploads/{user}/{upload_id}
+      2) PUT chunks to .../{upload_id}/{offset:016d}
+      3) MOVE assembled upload to /remote.php/dav/files/{user}/{remote_path}
+    """
+    import requests
+
+    base = nextcloud_url.rstrip("/")
+    auth = requests.auth.HTTPBasicAuth(username, password)
+
+    uploads_base = f"{base}/remote.php/dav/uploads/{username}"
+    files_base = f"{base}/remote.php/dav/files/{username}"
+
+    upload_id = uuid.uuid4().hex
+    session_dir = f"{uploads_base}/{upload_id}"
+
+    # 1) Create upload session directory
+    r = requests.request("MKCOL", session_dir, auth=auth, timeout=30)
+    if r.status_code not in (201, 405):
+        raise RuntimeError(f"MKCOL failed ({r.status_code}): {r.text}")
+
+    size = os.path.getsize(file_path)
+    offset = 0
+
+    with (
+        open(file_path, "rb") as fh,
+        tqdm(
+            total=size,
+            unit="B",
+            unit_scale=True,
+            unit_divisor=1024,
+            desc=f"Chunked upload {Path(file_path).name}",
+        ) as bar,
+    ):
+        while True:
+            buf = fh.read(chunk_bytes)
+            if not buf:
+                break
+            chunk_name = f"{offset:016d}"
+            put_url = f"{session_dir}/{chunk_name}"
+            res = requests.put(
+                put_url,
+                data=buf,
+                headers={"Content-Length": str(len(buf))},
+                auth=auth,
+                timeout=timeout,
+            )
+            if not res.ok:
+                raise RuntimeError(
+                    f"PUT chunk failed ({res.status_code}) at offset {offset}"
+                )
+            offset += len(buf)
+            bar.update(len(buf))
+
+    # 3) Finalize: MOVE to files area
+    # Build a proper URL; do not use pathlib on URLs (it collapses // after scheme)
+    dest_path = f"{files_base}/{str(remote_path).lstrip('/')}"
+
+    # Try moving the virtual '.file' first, then the session dir as fallback
+    move_sources = (f"{session_dir}/.file", session_dir)
+    last_status = None
+    last_text = None
+    for src in move_sources:
+        for attempt in range(1, move_max_retries + 1):
+            try:
+                res = requests.request(
+                    "MOVE",
+                    src,
+                    headers={"Destination": dest_path, "Overwrite": "T"},
+                    auth=auth,
+                    timeout=timeout,
+                )
+                last_status = res.status_code
+                last_text = res.text
+                if res.status_code in (201, 204):
+                    return
+            except requests.exceptions.ReadTimeout:
+                # Server may still be finalizing; probe destination
+                pass
+            except requests.exceptions.RequestException as e:
+                logger.warning(
+                    "Finalize MOVE error on attempt %d/%d for %s: %s",
+                    attempt,
+                    move_max_retries,
+                    Path(file_path).name,
+                    e,
+                )
+
+            # Probe destination: if present, treat as success
+            try:
+                head = requests.head(dest_path, auth=auth, timeout=30)
+                if head.status_code in (200, 204):
+                    return
+            except requests.RequestException:
+                pass
+
+            time.sleep(min(30, 2 ** (attempt - 1)))
+
+    raise RuntimeError(f"Finalize MOVE failed: {last_status} {last_text or ''}".strip())
 
 
 def create_nested_directories(nextcloud_url, username, password, remote_path):
