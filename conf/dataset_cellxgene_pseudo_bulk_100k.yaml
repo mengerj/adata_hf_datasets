@@ -49,7 +49,7 @@ preprocessing:
 
 # Embedding preparation overrides
 embedding_preparation:
-  enabled: true # Set to false to skip embedding preparation
+  enabled: false # Set to false to skip embedding preparation
   methods: ["geneformer"] #run the prepare step on cpu to save gpu time
 
 # Embedding overrides (both dataset-specific and execution parameters)
@@ -59,17 +59,18 @@ embedding_cpu:
   methods: ["pca", "scvi_fm", "gs"]
 
 embedding_gpu:
-  enabled: true
+  enabled: false
   overwrite: true
   methods: ["geneformer"]
 
 # Dataset creation overrides
 dataset_creation:
   enabled: true
+  use_nextcloud: true
   # Dataset-specific parameters
   required_obsm_keys: ["X_pca", "X_scvi_fm", "X_gs", "X_geneformer"]
   caption_keys: ["caption_key"]
-  cs_length: [4096]
+  cs_length: 4096
   negatives_per_sample: 2
   split_dataset: true # Important for training datasets. Set to false for test datasets.
   dataset_format: "multiplets" # Important for training datasets. Set to "single" for test datasets.

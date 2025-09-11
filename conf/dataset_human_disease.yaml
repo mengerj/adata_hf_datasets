@@ -61,7 +61,7 @@ dataset_creation:
   use_nextcloud: true
   # Dataset-specific parameters
   required_obsm_keys: ["X_pca", "X_scvi_fm", "X_gs", "X_geneformer"]
-  cs_length: [4096]
+  cs_length: 4096
   negatives_per_sample: 2
   split_dataset: false # Important for training datasets. Set to false for test datasets.
   dataset_format: "single" # Important for training datasets. Set to "single" for test datasets.
