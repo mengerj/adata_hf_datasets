@@ -7,7 +7,7 @@ defaults:
 # =============================================================================
 # DATASET METADATA
 # =============================================================================+
-base_file_path: "/Users/mengerj/repos/adata_hf_datasets/data/RNA"
+#base_file_path: "/Users/mengerj/repos/adata_hf_datasets/data/RNA"
 
 dataset:
   name: "human_disease"
