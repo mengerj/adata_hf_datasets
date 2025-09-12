@@ -1999,6 +1999,21 @@ class GeneSelectEmbedder(BaseEmbedder):
         return embedding_matrix
 
 
+class GeneSelectEmbedder10k(GeneSelectEmbedder):
+    """
+    Gene selection embedder variant that uses a 10k gene list.
+
+    This class inherits from `GeneSelectEmbedder` but defaults the
+    `gene_list_path` to `resources/gene_selection_10k.txt`.
+    """
+
+    def __init__(self, embedding_dim: int = None, **init_kwargs):
+        # Ensure default gene list path points to 10k gene list unless overridden
+        init_kwargs = dict(init_kwargs)
+        init_kwargs.setdefault("gene_list_path", "resources/gene_selection_10k.txt")
+        super().__init__(embedding_dim=embedding_dim, **init_kwargs)
+
+
 class InitialEmbedder:
     """
     Manager for creating embeddings of single-cell data.
@@ -2015,6 +2030,7 @@ class InitialEmbedder:
         - "pca"
         - "hvg"
         - "gs" (gene select)
+        - "gs_10k" (gene select with 10k gene list)
     embedding_dim : int, default=64
         Dimensionality of the output embedding.
     **init_kwargs
@@ -2034,6 +2050,7 @@ class InitialEmbedder:
             "pca": PCAEmbedder,
             "hvg": HighlyVariableGenesEmbedder,
             "gs": GeneSelectEmbedder,
+            "gs_10k": GeneSelectEmbedder10k,
         }
         if method not in embedder_classes:
             raise ValueError(f"Unknown embedding method: {method}")
