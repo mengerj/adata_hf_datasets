@@ -554,6 +554,7 @@ def upload_folder_to_nextcloud(
                     ) or size >= nextcloud_config.get(
                         "chunked_threshold_bytes", 1_000_000_000
                     )
+                    logger.info(f"use_chunked: {use_chunked}")
 
                     if use_chunked:
                         try:
@@ -1158,7 +1159,9 @@ def upload_file_to_nextcloud_chunked(
 
     size = os.path.getsize(file_path)
     offset = 0
-
+    logging.info("Chunked upload")
+    logger.info(f"file_path: {file_path}")
+    logger.info(f"size: {size}")
     with (
         open(file_path, "rb") as fh,
         tqdm(
