@@ -377,6 +377,8 @@ def upload_folder_to_nextcloud(
     data_folder: str | Path,
     nextcloud_config: dict[str, Any],
     max_workers: int = 4,
+    *,
+    force_reupload: bool = False,
 ) -> dict[str, str]:
     """
     Upload *.zarr directories and *.h5ad files to Nextcloud and create share links.
@@ -485,8 +487,10 @@ def upload_folder_to_nextcloud(
             remote_dirs.add(f"data/{parent.as_posix()}")
             parent = parent.parent
 
-        if rel_key not in share_map or not verify_share_link(
-            share_map[rel_key], ".zip"
+        if (
+            force_reupload
+            or rel_key not in share_map
+            or not verify_share_link(share_map.get(rel_key, ""), ".zip")
         ):
             uploads.append((z, remote_rel))
 

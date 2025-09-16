@@ -405,6 +405,7 @@ def main(cfg: DictConfig):
             share_links = upload_folder_to_nextcloud(
                 data_folder=str(split_dir),
                 nextcloud_config=nextcloud_cfg | {"progress": True},
+                force_reupload=True,
             )
             logger.info("Uploaded files to Nextcloud for split '%s'", split)
         else:
