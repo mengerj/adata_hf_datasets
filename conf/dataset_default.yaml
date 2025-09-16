@@ -107,7 +107,7 @@ embedding_preparation:
     geneformer: 512
     pca: 50
     hvg: 512
-    gs: 8000
+    gs: 39
 
 # =============================================================================
 # CPU EMBEDDING CONFIGURATION (dataset-specific overrides)
@@ -131,7 +131,8 @@ embedding_cpu:
     geneformer: 512
     pca: 50
     hvg: 512
-    gs: 8000
+    gs: 3936
+    gs10k: 10000
 
   # Execution parameters (accessed by embedding script)
   input_format: "auto" # Input format detection
