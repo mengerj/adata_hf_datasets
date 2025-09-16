@@ -2030,7 +2030,7 @@ class InitialEmbedder:
         - "pca"
         - "hvg"
         - "gs" (gene select)
-        - "gs_10k" (gene select with 10k gene list)
+        - "gs10k" (gene select with 10k gene list)
     embedding_dim : int, default=64
         Dimensionality of the output embedding.
     **init_kwargs
@@ -2050,7 +2050,7 @@ class InitialEmbedder:
             "pca": PCAEmbedder,
             "hvg": HighlyVariableGenesEmbedder,
             "gs": GeneSelectEmbedder,
-            "gs_10k": GeneSelectEmbedder10k,
+            "gs10k": GeneSelectEmbedder10k,
         }
         if method not in embedder_classes:
             raise ValueError(f"Unknown embedding method: {method}")
