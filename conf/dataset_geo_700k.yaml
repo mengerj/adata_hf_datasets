@@ -67,7 +67,7 @@ embedding_gpu:
 dataset_creation:
   memory_gb: 256
   enabled: true
-  use_nextcloud: true
+  use_nextcloud: false
   # Dataset-specific parameters
   required_obsm_keys: ["X_pca", "X_scvi_fm", "X_gs", "X_geneformer", "X_gs10k"]
   cs_length: 4096
