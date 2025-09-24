@@ -415,10 +415,10 @@ class PCAEmbedder(BaseEmbedder):
 
         # Set default paths
         self.model_path = kwargs.get(
-            "model_path", "resources/cellxgene_geo_pca_3936_to_50.pkl"
+            "model_path", "resources/cellxgene_geo_pca_10000_to_50.pkl"
         )
         self.gene_list_path = kwargs.get(
-            "gene_list_path", "resources/gene_selection_ENSG_8k.txt"
+            "gene_list_path", "resources/gene_selection_10k.txt"
         )
 
         # Initialize model components
