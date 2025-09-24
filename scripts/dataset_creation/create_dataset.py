@@ -295,7 +295,7 @@ def push_dataset_to_hub(
 @hydra.main(
     version_base=None,
     config_path="../../conf",
-    config_name="dataset_cellxgene_pseudo_bulk_3_5k",
+    config_name="dataset_human_disease",
 )
 def main(cfg: DictConfig):
     """
@@ -405,6 +405,7 @@ def main(cfg: DictConfig):
             share_links = upload_folder_to_nextcloud(
                 data_folder=str(split_dir),
                 nextcloud_config=nextcloud_cfg | {"progress": True},
+                force_reupload=True,
             )
             logger.info("Uploaded files to Nextcloud for split '%s'", split)
         else:

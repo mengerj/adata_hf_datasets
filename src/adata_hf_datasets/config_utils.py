@@ -400,7 +400,7 @@ def _validate_embedding_section(embedding_cfg: DictConfig, section_name: str) ->
     """
     # Validate embedding methods
     if hasattr(embedding_cfg, "methods"):
-        valid_methods = ["hvg", "scvi_fm", "geneformer", "pca", "gs"]
+        valid_methods = ["hvg", "scvi_fm", "geneformer", "pca", "gs", "gs10k"]
         invalid_methods = [
             method for method in embedding_cfg.methods if method not in valid_methods
         ]

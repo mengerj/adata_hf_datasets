@@ -46,7 +46,7 @@ embedding_preparation:
 # Embedding overrides (both dataset-specific and execution parameters)
 embedding_cpu:
   enabled: false
-  methods: ["hvg", "pca", "scvi_fm", "gs"]
+  methods: ["pca", "scvi_fm", "gs"]
 
 embedding_gpu:
   enabled: true
@@ -57,7 +57,7 @@ dataset_creation:
   enabled: true
   use_nextcloud: true
   # Dataset-specific parameters
-  required_obsm_keys: ["X_pca", "X_scvi_fm", "X_hvg", "X_gs"] #, "X_geneformer"]
+  required_obsm_keys: ["X_pca", "X_scvi_fm", "X_geneformer", "X_gs"] #, "X_geneformer"]
   cs_length: [4096]
   caption_keys: ["caption_key"]
   negatives_per_sample: 2

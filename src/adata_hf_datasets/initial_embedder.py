@@ -415,10 +415,10 @@ class PCAEmbedder(BaseEmbedder):
 
         # Set default paths
         self.model_path = kwargs.get(
-            "model_path", "resources/cellxgene_geo_pca_3936_to_50.pkl"
+            "model_path", "resources/cellxgene_geo_pca_10000_to_50.pkl"
         )
         self.gene_list_path = kwargs.get(
-            "gene_list_path", "resources/gene_selection_ENSG_8k.txt"
+            "gene_list_path", "resources/gene_selection_10k.txt"
         )
 
         # Initialize model components
@@ -664,9 +664,7 @@ class GeneformerEmbedder(BaseEmbedder):
 
     def __init__(
         self,
-        model_input_size: int = 4096,
-        num_layers: int = 12,
-        special_model: bool | str = False,
+        model_name: str = "Geneformer-V2-104M",
         emb_extractor_init: dict = None,
         **kwargs,
     ):
@@ -675,96 +673,35 @@ class GeneformerEmbedder(BaseEmbedder):
 
         Parameters
         ----------
-        model_input_size : int, optional
-            The input size of the Geneformer model. Valid options are 2048 or 4096.
-            Older models were trained with 2048 genes per cell, newer models with 4096.
-        num_layers : int, optional
-            Number of layers in the Geneformer model. Valid options depend on `model_input_size`:
-            - For 2048 genes: 6 or 12 layers
-            - For 4096 genes: 12 or 20 layers
-        special_model : bool or str, optional
-            If False, the default model is used. If a string (e.g., "CLcancer"),
-            uses a specialized, fine-tuned model variant with that suffix.
+        model_name : str, optional
+            Name of the Geneformer model to use. This will be used to construct the
+            model directory path. Default is "Geneformer-V2-104M".
         emb_extractor_init : dict, optional
             Dictionary with additional parameters for the EmbExtractor from Geneformer.
             See geneformer documentation for more information.
         kwargs : dict
             Additional keyword arguments for the embedder, not used here but included
             for interface consistency.
-
-        Raises
-        ------
-        ValueError
-            If `model_input_size` or `num_layers` are invalid.
         """
         super().__init__(embedding_dim=512)
         self.model = None
-        self.model_input_size = model_input_size
-        if model_input_size not in [2048, 4096]:
-            raise ValueError(
-                "Geneformer only supports model_input_size in [2048, 4096]."
-            )
-
-        # Check num_layers against model_input_size.
-        valid_combinations = {
-            2048: [6, 12],
-            4096: [12, 20],
-        }
-        if num_layers not in valid_combinations[model_input_size]:
-            raise ValueError(
-                f"For model_input_size={model_input_size}, valid layers are {valid_combinations[model_input_size]}."
-            )
-
-        # Construct directory paths
-        self.num_layers = num_layers
-        self.special_model = special_model
+        self.model_name = model_name
+        self.model_input_size = 4096  # Always 4096 for new models
         self.project_dir = Path(__file__).resolve().parents[2]
 
-        # Set up dictionary paths based on model size
-        if model_input_size == 2048:
-            dictionary_dir = (
-                self.project_dir
-                / "external"
-                / "Geneformer"
-                / "geneformer"
-                / "gene_dictionaries_30M"
-            )
-            self.model_dir = (
-                self.project_dir
-                / "external"
-                / "Geneformer"
-                / f"gf-{num_layers}L-30M-i2048"
-            )
-            self.ensembl_mapping_dict = str(
-                dictionary_dir / "ensembl_mapping_dict_gc30M.pkl"
-            )
-            self.token_dictionary_file = str(
-                dictionary_dir / "token_dictionary_gc30M.pkl"
-            )
-            self.gene_median_file = str(
-                dictionary_dir / "gene_median_dictionary_gc30M.pkl"
-            )
-        else:  # model_input_size == 4096
-            dictionary_dir = self.project_dir / "external" / "Geneformer" / "geneformer"
-            base_dir_4096 = (
-                self.project_dir
-                / "external"
-                / "Geneformer"
-                / f"gf-{num_layers}L-95M-i4096"
-            )
-            if special_model:
-                base_dir_4096 = Path(str(base_dir_4096) + f"_{special_model}")
-            self.model_dir = base_dir_4096
-            self.ensembl_mapping_dict = str(
-                dictionary_dir / "ensembl_mapping_dict_gc95M.pkl"
-            )
-            self.token_dictionary_file = str(
-                dictionary_dir / "token_dictionary_gc95M.pkl"
-            )
-            self.gene_median_file = str(
-                dictionary_dir / "gene_median_dictionary_gc95M.pkl"
-            )
-            self.gene_name_id_dict = str(dictionary_dir / "gene_name_id_dict_gc95M.pkl")
+        # Construct directory paths
+        dictionary_dir = self.project_dir / "external" / "Geneformer" / "geneformer"
+        self.model_dir = self.project_dir / "external" / "Geneformer" / model_name
+
+        # Set up dictionary file paths (updated to gc104M)
+        self.ensembl_mapping_dict = str(
+            dictionary_dir / "ensembl_mapping_dict_gc104M.pkl"
+        )
+        self.token_dictionary_file = str(dictionary_dir / "token_dictionary_gc104M.pkl")
+        self.gene_median_file = str(
+            dictionary_dir / "gene_median_dictionary_gc104M.pkl"
+        )
+        self.gene_name_id_dict = str(dictionary_dir / "gene_name_id_dict_gc104M.pkl")
 
         # Default parameters for EmbExtractor
         self.emb_extractor_init = {
@@ -792,10 +729,9 @@ class GeneformerEmbedder(BaseEmbedder):
         self.dataset_name = "geneformer"
 
         logger.info(
-            "Initialized GeneformerEmbedder with model_input_size=%d, num_layers=%d, special_model=%s",
+            "Initialized GeneformerEmbedder with model_name=%s, model_input_size=%d",
+            self.model_name,
             self.model_input_size,
-            self.num_layers,
-            self.special_model,
         )
 
     def _read_sample_indices(self, file_path: str | Path) -> np.ndarray:
@@ -2063,6 +1999,21 @@ class GeneSelectEmbedder(BaseEmbedder):
         return embedding_matrix
 
 
+class GeneSelectEmbedder10k(GeneSelectEmbedder):
+    """
+    Gene selection embedder variant that uses a 10k gene list.
+
+    This class inherits from `GeneSelectEmbedder` but defaults the
+    `gene_list_path` to `resources/gene_selection_10k.txt`.
+    """
+
+    def __init__(self, embedding_dim: int = None, **init_kwargs):
+        # Ensure default gene list path points to 10k gene list unless overridden
+        init_kwargs = dict(init_kwargs)
+        init_kwargs.setdefault("gene_list_path", "resources/gene_selection_10k.txt")
+        super().__init__(embedding_dim=embedding_dim, **init_kwargs)
+
+
 class InitialEmbedder:
     """
     Manager for creating embeddings of single-cell data.
@@ -2079,6 +2030,7 @@ class InitialEmbedder:
         - "pca"
         - "hvg"
         - "gs" (gene select)
+        - "gs10k" (gene select with 10k gene list)
     embedding_dim : int, default=64
         Dimensionality of the output embedding.
     **init_kwargs
@@ -2098,6 +2050,7 @@ class InitialEmbedder:
             "pca": PCAEmbedder,
             "hvg": HighlyVariableGenesEmbedder,
             "gs": GeneSelectEmbedder,
+            "gs10k": GeneSelectEmbedder10k,
         }
         if method not in embedder_classes:
             raise ValueError(f"Unknown embedding method: {method}")
