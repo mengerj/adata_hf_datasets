@@ -638,6 +638,8 @@ class PCAEmbedder(BaseEmbedder):
 
         # 3. Apply PCA transformation
         X_pca = self.pca_model.transform(X_prepared)
+        # Ensure consistent dtype for downstream storage/writing
+        X_pca = X_pca.astype(np.float32, copy=False)
 
         # 4. Store results in original adata
         adata.obsm[obsm_key] = X_pca
