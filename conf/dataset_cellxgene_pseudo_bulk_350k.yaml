@@ -68,6 +68,7 @@ dataset_creation:
   # Dataset-specific parameters
   required_obsm_keys: ["X_pca", "X_scvi_fm", "X_gs", "X_geneformer", "X_gs10k"]
   cs_length: 4096
+  caption_keys: "annotation_key"
   negatives_per_sample: 2
   split_dataset: true # Important for training datasets. Set to false for test datasets.
   dataset_format: "multiplets" # Important for training datasets. Set to "single" for test datasets.
