@@ -1751,7 +1751,7 @@ class GeneformerV1Embedder(GeneformerEmbedder):
         self._setup_git_lfs()
 
         legacy_dir = (
-            self.project_dir / "external" / "Geneformer_v1" / "geneformer-12L-30M"
+            self.project_dir / "external" / "Geneformer_v1" / "geneformer"
         )
 
         # Override dictionary file paths to legacy resources
@@ -1761,7 +1761,7 @@ class GeneformerV1Embedder(GeneformerEmbedder):
         self.gene_name_id_dict = str(legacy_dir / "gene_name_id_dict.pkl")
 
         # Override model directory to legacy model
-        self.model_dir = legacy_dir / "geneformer-12L-30M"
+        self.model_dir = legacy_dir.parent / "geneformer-12L-30M"
 
         # Use a distinct dataset name to avoid collisions with V2 tokenized outputs
         self.dataset_name = "geneformer_v1"
