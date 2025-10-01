@@ -1,3 +1,7 @@
-[submodule "external"]
+[submodule "external/Geneformer"]
 	path = external/Geneformer
 	url = https://huggingface.co/ctheodoris/Geneformer
+
+[submodule "external/Geneformer_v1"]
+	path = external/Geneformer_v1
+	url = https://github.com/epigen/Geneformer.git

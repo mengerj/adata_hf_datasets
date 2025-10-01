@@ -654,7 +654,7 @@ class GeneformerEmbedder(BaseEmbedder):
     """
     Geneformer Encoder for single-cell data embeddings.
 
-    This class uses the Geneformer package to generate a 512-dimensional embedding
+    This class uses the Geneformer package to generate a 768-dimensional embedding
     for single-cell data. It supports pre-trained models with either 2048 or 4096
     input genes, as well as different numbers of layers.
 
@@ -668,6 +668,7 @@ class GeneformerEmbedder(BaseEmbedder):
         self,
         model_name: str = "Geneformer-V2-104M",
         emb_extractor_init: dict = None,
+        tokenizer_kwargs: dict | None = None,
         **kwargs,
     ):
         """
@@ -685,7 +686,7 @@ class GeneformerEmbedder(BaseEmbedder):
             Additional keyword arguments for the embedder, not used here but included
             for interface consistency.
         """
-        super().__init__(embedding_dim=512)
+        super().__init__(embedding_dim=768)
         self.model = None
         self.model_name = model_name
         self.model_input_size = 4096  # Always 4096 for new models
@@ -726,6 +727,9 @@ class GeneformerEmbedder(BaseEmbedder):
         }
         if emb_extractor_init is not None:
             self.emb_extractor_init.update(emb_extractor_init)
+
+        # Options forwarded to TranscriptomeTokenizer
+        self.tokenizer_kwargs = tokenizer_kwargs or {}
 
         # Name of the tokenized dataset
         self.dataset_name = "geneformer"
@@ -1060,6 +1064,7 @@ class GeneformerEmbedder(BaseEmbedder):
                 gene_median_file=self.gene_median_file,
                 token_dictionary_file=self.token_dictionary_file,
                 gene_mapping_file=self.ensembl_mapping_dict,
+                **self.tokenizer_kwargs,
             )
             # The tokenizer uses the file format that we actually have
             tk.tokenize_data(
@@ -1714,6 +1719,123 @@ class SCVIEmbedder(BaseEmbedder):
         return embedding_matrix
 
 
+class GeneformerV1Embedder(GeneformerEmbedder):
+    """
+    Geneformer V1 embedder using legacy resources under `resources/old_geneformer`.
+
+    Differences to the default Geneformer embedder:
+    - Input size is 2048 genes
+    - Embedding dimensionality is 512
+    - Uses legacy dictionary files and model directory:
+      - model_dir: project_dir/resources/old_geneformer/geneformer-12L-30M
+      - token_dictionary_file: token_dictionary.pkl
+      - gene_median_file: gene_median_dictionary.pkl
+      - ensembl/gene mapping file: gene_name_id_dict.pkl
+    """
+
+    def __init__(self, **kwargs):
+        tokenizer_kwargs = kwargs.get("tokenizer_kwargs", {})
+        # Ensure special_token=False for legacy tokenizer behavior unless explicitly overridden
+        tokenizer_kwargs = {**{"special_token": False}, **tokenizer_kwargs}
+
+        super().__init__(
+            model_name="geneformer-12L-30M",
+            emb_extractor_init=kwargs.get("emb_extractor_init"),
+            tokenizer_kwargs=tokenizer_kwargs,
+        )
+
+        self.embedding_dim = 512
+        self.model_input_size = 2048
+
+        # Setup Git LFS for Geneformer_v1
+        self._setup_git_lfs()
+
+        legacy_dir = (
+            self.project_dir / "external" / "Geneformer_v1" / "geneformer-12L-30M"
+        )
+
+        # Override dictionary file paths to legacy resources
+        self.ensembl_mapping_dict = str(legacy_dir / "gene_name_id_dict.pkl")
+        self.token_dictionary_file = str(legacy_dir / "token_dictionary.pkl")
+        self.gene_median_file = str(legacy_dir / "gene_median_dictionary.pkl")
+        self.gene_name_id_dict = str(legacy_dir / "gene_name_id_dict.pkl")
+
+        # Override model directory to legacy model
+        self.model_dir = legacy_dir / "geneformer-12L-30M"
+
+        # Use a distinct dataset name to avoid collisions with V2 tokenized outputs
+        self.dataset_name = "geneformer_v1"
+
+        logger.info(
+            "Initialized GeneformerV1Embedder with model_dir=%s and legacy dictionaries in %s",
+            self.model_dir,
+            legacy_dir,
+        )
+
+    def _setup_git_lfs(self):
+        """Setup Git LFS for Geneformer_v1 submodule."""
+        import subprocess
+        import os
+        from pathlib import Path
+
+        # Ensure project_dir is a Path object
+        project_dir = Path(self.project_dir)
+        geneformer_v1_dir = project_dir / "external" / "Geneformer_v1"
+        gitattributes_path = geneformer_v1_dir / ".gitattributes"
+
+        # Check if .gitattributes exists and has the correct content
+        needs_setup = True
+        if gitattributes_path.exists():
+            try:
+                with open(gitattributes_path, "r") as f:
+                    content = f.read()
+                    if "*.bin filter=lfs diff=lfs merge=lfs -text" in content:
+                        needs_setup = False
+            except Exception:
+                pass
+
+        if needs_setup:
+            logger.info("Setting up Git LFS for Geneformer_v1...")
+
+            # Ensure the directory exists
+            geneformer_v1_dir.mkdir(parents=True, exist_ok=True)
+
+            # Create .gitattributes file
+            with open(gitattributes_path, "w") as f:
+                f.write("*.bin filter=lfs diff=lfs merge=lfs -text\n")
+
+            # Change to the Geneformer_v1 directory and setup Git LFS
+            original_cwd = os.getcwd()
+            try:
+                os.chdir(geneformer_v1_dir)
+
+                # Install Git LFS
+                result = subprocess.run(
+                    ["git", "lfs", "install"],
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                )
+                if result.returncode != 0:
+                    logger.warning(f"Git LFS install failed: {result.stderr}")
+
+                # Pull LFS files
+                result = subprocess.run(
+                    ["git", "lfs", "pull"], capture_output=True, text=True, check=False
+                )
+                if result.returncode != 0:
+                    logger.warning(f"Git LFS pull failed: {result.stderr}")
+                else:
+                    logger.info("Successfully pulled Git LFS files for Geneformer_v1")
+
+            except Exception as e:
+                logger.error(f"Error setting up Git LFS: {e}")
+            finally:
+                os.chdir(original_cwd)
+        else:
+            logger.info("Git LFS already configured for Geneformer_v1")
+
+
 class SCVIEmbedderFM(SCVIEmbedder):
     """
     SCVI embedder preconfigured as a foundation model (FM) loading weights from an scvi model trained on the cellxgene corpus.
@@ -2049,6 +2171,7 @@ class InitialEmbedder:
         embedder_classes = {
             "scvi_fm": SCVIEmbedderFM,
             "geneformer": GeneformerEmbedder,
+            "geneformer-v1": GeneformerV1Embedder,
             "pca": PCAEmbedder,
             "hvg": HighlyVariableGenesEmbedder,
             "gs": GeneSelectEmbedder,
