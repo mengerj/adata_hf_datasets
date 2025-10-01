@@ -130,11 +130,12 @@ embedding_cpu:
   # Embedding dimensions (dataset-specific)
   embedding_dim_map:
     scvi_fm: 50 # Can't be changed as the pretrained scvi model is fixed.
-    geneformer: 512
+    geneformer: 768
     pca: 50
     hvg: 512
     gs: 3936
     gs10k: 10000
+    geneformer-v1: 512
 
   # Execution parameters (accessed by embedding script)
   input_format: "auto" # Input format detection
@@ -161,10 +162,12 @@ embedding_gpu:
   # Embedding dimensions (dataset-specific)
   embedding_dim_map:
     scvi_fm: 50 # Can't be changed as the pretrained scvi model is fixed.
-    geneformer: 512
+    geneformer: 768
     pca: 50
     hvg: 512
-    gs: 8000
+    gs: 3936
+    gs10k: 10000
+    geneformer-v1: 512
 
   # Execution parameters (accessed by embedding script)
   input_format: "auto" # Input format detection
