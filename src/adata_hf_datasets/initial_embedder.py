@@ -740,6 +740,30 @@ class GeneformerEmbedder(BaseEmbedder):
             self.model_input_size,
         )
 
+    def _patch_transformers_hybrid_cache(self):
+        """
+        Patch transformers to make HybridCache available at the top level.
+
+        This fixes the ImportError where peft tries to import HybridCache from
+        transformers but it's only available in transformers.cache_utils.
+        """
+        try:
+            import transformers
+            from transformers.cache_utils import HybridCache
+
+            # Check if HybridCache is already available at top level
+            if hasattr(transformers, "HybridCache"):
+                logger.debug("HybridCache already available in transformers")
+                return
+
+            # Add HybridCache to transformers module
+            setattr(transformers, "HybridCache", HybridCache)
+            logger.debug("Successfully patched transformers to include HybridCache")
+
+        except ImportError as e:
+            logger.warning(f"Could not patch transformers.HybridCache: {e}")
+            # Don't raise here, let the original import error surface
+
     def _read_sample_indices(self, file_path: str | Path) -> np.ndarray:
         """
         Efficiently read sample indices from an AnnData file (h5ad or zarr) without loading the entire object.
@@ -989,6 +1013,9 @@ class GeneformerEmbedder(BaseEmbedder):
         - Geneformer tokenization is performed by `TranscriptomeTokenizer`.
         """
 
+        # Patch transformers to make HybridCache available at top level
+        self._patch_transformers_hybrid_cache()
+
         try:
             from geneformer import TranscriptomeTokenizer
         except ImportError:
@@ -1145,6 +1172,9 @@ class GeneformerEmbedder(BaseEmbedder):
         ValueError
             If the tokenized dataset is missing and cannot be embedded.
         """
+
+        # Patch transformers to make HybridCache available at top level
+        self._patch_transformers_hybrid_cache()
 
         try:
             from geneformer import EmbExtractor
@@ -1793,7 +1823,7 @@ class GeneformerV1Embedder(GeneformerEmbedder):
         self.dataset_name = "geneformer_v1"
 
         # old token dict doesnt have the cls token
-        self.emb_extractor_init["emb_mode"] = "cls"
+        self.emb_extractor_init["emb_mode"] = "cell"
 
         logger.info(
             "Initialized GeneformerV1Embedder with model_dir=%s and legacy dictionaries in %s",
