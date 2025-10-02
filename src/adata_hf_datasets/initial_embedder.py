@@ -2406,6 +2406,8 @@ class InitialEmbedder:
             batch_key=batch_key,
             **embed_kwargs,
         )
+        # cast to float32
+        embedding_matrix = embedding_matrix.astype(np.float32)
 
         logger.info("Embedding complete. Returning the embedding matrix")
         return embedding_matrix
