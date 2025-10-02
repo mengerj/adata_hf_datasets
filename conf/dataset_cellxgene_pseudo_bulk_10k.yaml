@@ -27,13 +27,13 @@ other_bio_labels: ["tissue", "disease"]
 # =============================================================================
 # Download configuration
 download:
-  enabled: false
+  enabled: true
   subset_size: 10000
 
 # Preprocessing overrides (both dataset-specific and execution parameters)
 preprocessing:
   # Dataset-specific parameters
-  enabled: false
+  enabled: true
   chunk_size: 10000
   split_dataset: true # Important for training datasets. Set to false for test datasets. (Similar parameters in dataset_creation)
   count_layer_key: "counts" # Key in adata.layers with raw counts. If not present, adata.raw.X is checked.
@@ -54,15 +54,10 @@ embedding_gpu:
 
 # Dataset creation overrides
 dataset_creation:
-  enabled: true
+  enabled: false
   use_nextcloud: true
   # Dataset-specific parameters
-  required_obsm_keys: [
-      "X_pca",
-      "X_scvi_fm",
-      "X_gs",
-      "X_geneformer-v1",
-    ] #, "X_geneformer"]
+  required_obsm_keys: ["X_pca", "X_scvi_fm", "X_gs", "X_geneformer-v1"] #, "X_geneformer"]
   cs_length: [4096]
   caption_keys: ["caption_key"]
   negatives_per_sample: 2
