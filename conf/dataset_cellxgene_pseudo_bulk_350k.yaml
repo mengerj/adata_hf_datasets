@@ -47,8 +47,8 @@ preprocessing:
     ] # Remove replicate layers to reduce file size
 # Embedding preparation overrides
 embedding_preparation:
-  enabled: false # Set to false to skip embedding preparation
-  methods: ["geneformer"] #run the prepare step on cpu to save gpu time
+  enabled: true # Set to false to skip embedding preparation
+  methods: ["geneformer-v1"] #run the prepare step on cpu to save gpu time
 
 # Embedding overrides (both dataset-specific and execution parameters)
 embedding_cpu:
@@ -57,8 +57,8 @@ embedding_cpu:
   methods: ["pca"] #, "scvi_fm", "gs", "gs10k"]
 
 embedding_gpu:
-  enabled: false
-  methods: ["geneformer"]
+  enabled: true
+  methods: ["geneformer-v1"]
 
 # Dataset creation overrides
 dataset_creation:
@@ -66,9 +66,10 @@ dataset_creation:
   use_nextcloud: true
   force_reupload: false
   # Dataset-specific parameters
-  required_obsm_keys: ["X_pca", "X_scvi_fm", "X_gs", "X_geneformer", "X_gs10k"]
+  required_obsm_keys:
+    ["X_pca", "X_scvi_fm", "X_geneformer", "X_gs10k", "X_geneformer-v1"]
   cs_length: 4096
-  caption_keys: "annotation_key"
+  caption_keys: "caption_key"
   negatives_per_sample: 2
   split_dataset: true # Important for training datasets. Set to false for test datasets.
   dataset_format: "multiplets" # Important for training datasets. Set to "single" for test datasets.
