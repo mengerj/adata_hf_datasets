@@ -854,6 +854,14 @@ class GeneformerEmbedder(BaseEmbedder):
                         raise ValueError(
                             f"{col} not found in adata.obs. Run preprocessing script or pp_geneformer first."
                         )
+                # Additional validation for n_counts
+            #        if "n_counts" in obs_cols:
+            #            n_counts_values = root["obs/n_counts"][:]
+            #            if np.any(np.isnan(n_counts_values)):
+            #                raise ValueError(
+            #                    "n_counts column exists but contains only NaN values. "
+            #                    "Please run preprocessing first."
+            #                )
             else:
                 raise ValueError("obs not found in zarr store")
 
@@ -880,6 +888,14 @@ class GeneformerEmbedder(BaseEmbedder):
                         if col not in obs_cols:
                             raise ValueError(
                                 f"{col} not found in adata.obs. Run preprocessing script or pp_geneformer first."
+                            )
+                    # Additional validation for n_counts
+                    if "n_counts" in obs_cols:
+                        n_counts_values = f["obs/n_counts"][:]
+                        if np.all(np.isnan(n_counts_values)):
+                            raise ValueError(
+                                "n_counts column exists but contains only NaN values. "
+                                "Please run preprocessing first."
                             )
                 else:
                     raise ValueError("obs not found in h5ad file")
@@ -972,6 +988,7 @@ class GeneformerEmbedder(BaseEmbedder):
         - The data is user-provided.
         - Geneformer tokenization is performed by `TranscriptomeTokenizer`.
         """
+
         try:
             from geneformer import TranscriptomeTokenizer
         except ImportError:
@@ -1044,7 +1061,7 @@ class GeneformerEmbedder(BaseEmbedder):
             )
 
         self.out_dataset_dir = (
-            self.og_adata_dir / "geneformer" / adata_name / "tokenized_ds"
+            self.og_adata_dir / self.dataset_name / adata_name / "tokenized_ds"
         )
 
         # Check if tokenization is needed
@@ -1128,6 +1145,7 @@ class GeneformerEmbedder(BaseEmbedder):
         ValueError
             If the tokenized dataset is missing and cannot be embedded.
         """
+
         try:
             from geneformer import EmbExtractor
         except ImportError:
@@ -1737,6 +1755,7 @@ class GeneformerV1Embedder(GeneformerEmbedder):
         tokenizer_kwargs = kwargs.get("tokenizer_kwargs", {})
         # Ensure special_token=False for legacy tokenizer behavior unless explicitly overridden
         tokenizer_kwargs = {**{"special_token": False}, **tokenizer_kwargs}
+        # tokenizer_kwargs = None
 
         super().__init__(
             model_name="geneformer-12L-30M",
@@ -1750,12 +1769,18 @@ class GeneformerV1Embedder(GeneformerEmbedder):
         # Setup Git LFS for Geneformer_v1
         self._setup_git_lfs()
 
-        legacy_dir = (
-            self.project_dir / "external" / "Geneformer_v1" / "geneformer"
-        )
+        legacy_dir = self.project_dir / "external" / "Geneformer_v1" / "geneformer"
 
         # Override dictionary file paths to legacy resources
-        self.ensembl_mapping_dict = str(legacy_dir / "gene_name_id_dict.pkl")
+        # The ensembl mapping dict is mapping ensembl ids to ensemmbl ids. The gene_name_id_dict file present in the legacy dir cannot be used for this purpose.
+        self.ensembl_mapping_dict = str(
+            self.project_dir
+            / "external"
+            / "Geneformer"
+            / "geneformer"
+            / "gene_dictionaries_30m"
+            / "ensembl_mapping_dict_gc30M.pkl"
+        )
         self.token_dictionary_file = str(legacy_dir / "token_dictionary.pkl")
         self.gene_median_file = str(legacy_dir / "gene_median_dictionary.pkl")
         self.gene_name_id_dict = str(legacy_dir / "gene_name_id_dict.pkl")
@@ -1765,6 +1790,9 @@ class GeneformerV1Embedder(GeneformerEmbedder):
 
         # Use a distinct dataset name to avoid collisions with V2 tokenized outputs
         self.dataset_name = "geneformer_v1"
+
+        # old token dict doesnt have the cls token
+        self.emb_extractor_init["emb_mode"] = "cell"
 
         logger.info(
             "Initialized GeneformerV1Embedder with model_dir=%s and legacy dictionaries in %s",
@@ -1785,11 +1813,16 @@ class GeneformerV1Embedder(GeneformerEmbedder):
 
         # Check if .gitattributes exists and has the correct content
         needs_setup = True
+        lfs_content = [
+            "*.bin filter=lfs diff=lfs merge=lfs -text",
+            "*.pkl filter=lfs diff=lfs merge=lfs -text",
+        ]
+
         if gitattributes_path.exists():
             try:
                 with open(gitattributes_path, "r") as f:
                     content = f.read()
-                    if "*.bin filter=lfs diff=lfs merge=lfs -text" in content:
+                    if all(pattern in content for pattern in lfs_content):
                         needs_setup = False
             except Exception:
                 pass
@@ -1800,14 +1833,24 @@ class GeneformerV1Embedder(GeneformerEmbedder):
             # Ensure the directory exists
             geneformer_v1_dir.mkdir(parents=True, exist_ok=True)
 
-            # Create .gitattributes file
+            # Create .gitattributes file with both .bin and .pkl patterns
             with open(gitattributes_path, "w") as f:
-                f.write("*.bin filter=lfs diff=lfs merge=lfs -text\n")
+                f.write("\n".join(lfs_content) + "\n")
 
             # Change to the Geneformer_v1 directory and setup Git LFS
             original_cwd = os.getcwd()
             try:
                 os.chdir(geneformer_v1_dir)
+
+                # Add .gitattributes to git
+                result = subprocess.run(
+                    ["git", "add", ".gitattributes"],
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                )
+                if result.returncode != 0:
+                    logger.warning(f"Git add .gitattributes failed: {result.stderr}")
 
                 # Install Git LFS
                 result = subprocess.run(
@@ -1818,6 +1861,16 @@ class GeneformerV1Embedder(GeneformerEmbedder):
                 )
                 if result.returncode != 0:
                     logger.warning(f"Git LFS install failed: {result.stderr}")
+
+                # Migrate existing .pkl files to LFS
+                result = subprocess.run(
+                    ["git", "lfs", "migrate", "import", "--include=*.pkl"],
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                )
+                if result.returncode != 0:
+                    logger.warning(f"Git LFS migrate failed: {result.stderr}")
 
                 # Pull LFS files
                 result = subprocess.run(
