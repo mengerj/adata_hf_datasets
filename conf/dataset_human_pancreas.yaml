@@ -53,11 +53,12 @@ embedding_cpu:
 
 embedding_gpu:
   enabled: true
-  methods: ["geneformer-v1"]
+  overwrite: true
+  methods: ["geneformer"]
 
 # Dataset creation overrides
 dataset_creation:
-  enabled: true
+  enabled: false
   use_nextcloud: true
   # Dataset-specific parameters
   required_obsm_keys:
