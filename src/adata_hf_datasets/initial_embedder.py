@@ -1793,7 +1793,7 @@ class GeneformerV1Embedder(GeneformerEmbedder):
         self.dataset_name = "geneformer_v1"
 
         # old token dict doesnt have the cls token
-        self.emb_extractor_init["emb_mode"] = "cell"
+        self.emb_extractor_init["emb_mode"] = "cls"
 
         logger.info(
             "Initialized GeneformerV1Embedder with model_dir=%s and legacy dictionaries in %s",
