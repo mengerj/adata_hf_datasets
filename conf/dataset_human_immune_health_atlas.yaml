@@ -42,27 +42,28 @@ preprocessing:
   count_layer_key: "counts" # Key in adata.layers with raw counts. If not present, adata.raw.X is checked.
 
 embedding_preparation:
-  enabled: false
-  methods: ["geneformer"]
+  enabled: true
+  methods: ["geneformer-v1"]
 
 # Embedding overrides (both dataset-specific and execution parameters)
 embedding_cpu:
   # Dataset-specific parameters
-  enabled: true
+  enabled: false
   overwrite: true
   memory_gb: 120
   methods: ["pca"] #, "scvi_fm", "gs", "gs10k"]
 
 embedding_gpu:
-  enabled: false
-  methods: ["geneformer"]
+  enabled: true
+  methods: ["geneformer-v1"]
 
 # Dataset creation overrides
 dataset_creation:
   # Dataset-specific parameters
   enabled: true
   use_nextcloud: true
-  required_obsm_keys: ["X_pca", "X_scvi_fm", "X_geneformer", "X_gs", "X_gs10k"]
+  required_obsm_keys:
+    ["X_pca", "X_scvi_fm", "X_geneformer", "X_gs", "X_gs10k", "X_geneformer-v1"]
   cs_length: 4096
   negatives_per_sample: 2
   split_dataset: false # Important for training datasets. Set to false for test datasets.
