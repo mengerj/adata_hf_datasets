@@ -1765,6 +1765,7 @@ class GeneformerV1Embedder(GeneformerEmbedder):
 
         self.embedding_dim = 512
         self.model_input_size = 2048
+        tokenizer_kwargs["model_input_size"] = self.model_input_size
 
         # Setup Git LFS for Geneformer_v1
         self._setup_git_lfs()
