@@ -29,6 +29,13 @@ instrument_key: null # e.g., "assay", "instrument", null if not available
 other_bio_labels: [] # e.g., ["tissue", "disease", "age", "sex"]
 
 # =============================================================================
+# DATASET-LEVEL CONFIGURATION
+# =============================================================================
+# Split dataset into train/val (true for training datasets, false for test datasets)
+# This setting applies to both preprocessing and dataset creation
+split_dataset: true # true = training dataset with train/val split, false = test dataset with single "all" split
+
+# =============================================================================
 # DOWNLOAD CONFIGURATION (dataset-specific)
 # =============================================================================
 download:
@@ -72,7 +79,8 @@ preprocessing:
   chunk_size: 200000 # Processing chunk size
   output_format: "zarr" # Output format preference
   geneformer_pp: true # Geneformer preprocessing
-  train_split: 0.9 # Train/validation split ratio
+  split_dataset: ${split_dataset} # Reference dataset-level split configuration
+  train_split: 0.9 # Train/validation split ratio (only used if split_dataset=true)
   random_seed: 42 # Random seed for splits
   metrics_of_interest: # Quality control metrics
     - "n_genes_by_counts"
@@ -179,6 +187,10 @@ embedding_gpu:
 # DATASET CREATION CONFIGURATION (dataset-specific overrides)
 # =============================================================================
 dataset_creation:
+  # Dataset structure
+  split_dataset: ${split_dataset} # Reference dataset-level split configuration
+  dataset_format: "multiplets" # "multiplets" for training, "single" for test datasets
+
   # Sentence generation parameters
   sentence_keys:
     - "sample_id_og" # Will be added to obs within the script
@@ -194,8 +206,10 @@ dataset_creation:
   include_label_prob: 0
   cs_length: 4096
   caption_keys: ["caption_key"]
+
   # Caption and negative sampling
   negatives_per_sample: 2
+  resolve_negatives: false # If true, resolve negative indices to content (only works with single sentence_key)
 
   # Output configuration
   output_dir: "data/hf_datasets"
