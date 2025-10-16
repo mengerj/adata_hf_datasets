@@ -62,7 +62,8 @@ embedding_gpu:
 # Dataset creation overrides
 dataset_creation:
   enabled: true
-  use_nextcloud: true
+  push_to_hub: false
+  use_nextcloud: false
   dataset_format: "multiplets" # "multiplets" for training datasets, "single" for test datasets
   # Dataset-specific parameters
   required_obsm_keys: ["X_pca", "X_scvi_fm", "X_gs10k"] #, "X_geneformer"]

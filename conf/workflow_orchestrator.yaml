@@ -41,7 +41,7 @@ workflow:
   # This is the base directory where all workflow outputs and logs will be stored
   # The actual workflow directory will be: {output_directory}/{date}/workflow_{job_id}/
   #output_directory: "/home/menger/git/adata_hf_datasets/outputs" #"/Users/mengerj/repos/adata_hf_datasets/outputs" #"/home/menger/git/adata_hf_datasets/outputs"
-  output_directory: "/Users/mengerj/repos/adata_hf_datasets/outputs"
+  output_directory: "../outputs"
   # Local backend settings (effective only when execution_mode == "local")
   # Maximum number of parallel workers for local embedding array tasks
   local_max_workers: 2
@@ -50,13 +50,13 @@ workflow:
 
   # Base data directories depending on backend
   # Used as default when dataset config doesn't set base_file_path explicitly
-  local_base_file_path: "/Users/mengerj/repos/adata_hf_datasets/data/RNA"
+  local_base_file_path: "../data/RNA"
   slurm_base_file_path: "/scratch/global/menger/data/RNA"
 
   # Project directory on the cluster hosts (used for SSH/SLURM submissions)
   # All sbatch commands will `cd` into this directory before running
   #project_directory: "/home/menger/git/adata_hf_datasets"
-  project_directory: "/Users/mengerj/repos/adata_hf_datasets"
+  project_directory: ".."
 
   # Virtual environment path (relative to project_directory) used by SLURM scripts
   venv_path: ".venv"
