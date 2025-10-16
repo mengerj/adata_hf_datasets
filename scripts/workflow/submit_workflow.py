@@ -19,7 +19,7 @@ from datetime import datetime
 
 from omegaconf import DictConfig
 
-from adata_hf_datasets.config_utils import ensure_config_sync
+from adata_hf_datasets.workflow import ensure_config_sync
 
 logger = logging.getLogger(__name__)
 

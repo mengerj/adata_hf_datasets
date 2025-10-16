@@ -35,9 +35,9 @@ import numpy as np
 
 from adata_hf_datasets.utils import setup_logging
 from adata_hf_datasets.file_utils import safe_read_h5ad
-from adata_hf_datasets.initial_embedder import InitialEmbedder
+from adata_hf_datasets.embed import InitialEmbedder
 from adata_hf_datasets.sys_monitor import SystemMonitor
-from adata_hf_datasets.config_utils import apply_all_transformations, validate_config
+from adata_hf_datasets.workflow import apply_all_transformations, validate_config
 from hydra.core.hydra_config import HydraConfig
 
 logger = setup_logging()

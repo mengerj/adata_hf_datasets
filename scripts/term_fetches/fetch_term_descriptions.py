@@ -15,8 +15,8 @@ Requirements:
 - HuggingFace account and valid token (in hf_config.py) for dataset upload
 """
 
-from adata_hf_datasets.config import Config, TermDescriptionConfig
-from adata_hf_datasets.term_descriptions import gen_term_descriptions
+from adata_hf_datasets.term_fetches import Config, TermDescriptionConfig
+from adata_hf_datasets.term_fetches import gen_term_descriptions
 
 
 def main():
@@ -97,7 +97,7 @@ def main():
     # Database options (GENES ONLY - skip slow searches)
     search_mesh = True  # Skip MeSH for genes (use Gene DB directly)
     search_gene = True  # Only use Gene database for genes
-    search_books = False  # Skip slow Books database
+    search_books = True  # Skip slow Books database
 
     # Token length calculation options (DISABLED FOR SPEED)
     tokenizer_model = "neuml/pubmedbert-base-embeddings"  # Not used when disabled

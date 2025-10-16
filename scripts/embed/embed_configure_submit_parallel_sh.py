@@ -14,7 +14,7 @@ from pathlib import Path
 import os
 from omegaconf import DictConfig
 
-from adata_hf_datasets.config_utils import apply_all_transformations
+from adata_hf_datasets.workflow import apply_all_transformations
 
 # Add src directory to Python path for imports
 project_root = Path(__file__).parent.parent.parent

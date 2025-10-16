@@ -1,7 +1,7 @@
 import logging
 import scanpy as sc
 from anndata import AnnData
-from adata_hf_datasets.pp.pybiomart_utils import add_ensembl_ids
+from .pybiomart_utils import add_ensembl_ids
 import numpy as np
 
 logger = logging.getLogger(__name__)

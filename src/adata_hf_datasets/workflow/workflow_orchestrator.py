@@ -24,7 +24,7 @@ from datetime import datetime
 import hydra
 from omegaconf import DictConfig, OmegaConf
 
-from adata_hf_datasets.config_utils import (
+from .config_utils import (
     apply_all_transformations,
     ensure_config_sync,
 )
@@ -693,7 +693,7 @@ class WorkflowOrchestrator:
     ) -> Optional[int]:
         """Run the embedding preparation step using the new simplified structure."""
         logger.info("=== Starting Embedding Preparation Step (New) ===")
-        script_path = Path("scripts/embed/run_embed_new.slurm")
+        script_path = Path("scripts/embed/run_embed.slurm")
         dependencies = [dependency_job_id] if dependency_job_id else None
 
         logger.info(f"Using dataset config: {dataset_config_name}")
@@ -747,7 +747,7 @@ class WorkflowOrchestrator:
     ) -> Optional[int]:
         """Run the CPU embedding step using the new simplified structure."""
         logger.info("=== Starting CPU Embedding Step (New) ===")
-        script_path = Path("scripts/embed/run_embed_new.slurm")
+        script_path = Path("scripts/embed/run_embed.slurm")
         dependencies = [dependency_job_id] if dependency_job_id else None
 
         logger.info(f"Using dataset config: {dataset_config_name}")
@@ -801,7 +801,7 @@ class WorkflowOrchestrator:
     ) -> Optional[int]:
         """Run the GPU embedding step using the new simplified structure."""
         logger.info("=== Starting GPU Embedding Step (New) ===")
-        script_path = Path("scripts/embed/run_embed_new.slurm")
+        script_path = Path("scripts/embed/run_embed.slurm")
         dependencies = [dependency_job_id] if dependency_job_id else None
 
         logger.info(f"Using dataset config: {dataset_config_name}")
@@ -1994,7 +1994,7 @@ class WorkflowOrchestrator:
         """Load the dataset configuration using proper Hydra composition."""
         from hydra import compose, initialize_config_dir
 
-        config_path = Path(__file__).parent.parent.parent / "conf"
+        config_path = Path(__file__).resolve().parents[3] / "conf"
         config_file = config_path / f"{dataset_config_name}.yaml"
 
         if not config_file.exists():
@@ -2021,7 +2021,7 @@ class WorkflowOrchestrator:
         """Load dataset config and force-set base_file_path before transformations."""
         from hydra import compose, initialize_config_dir
 
-        config_path = Path(__file__).parent.parent.parent / "conf"
+        config_path = Path(__file__).resolve().parents[3] / "conf"
         config_file = config_path / f"{dataset_config_name}.yaml"
         if not config_file.exists():
             raise ValueError(f"Dataset config file not found: {config_file}")
@@ -2081,7 +2081,7 @@ def run_workflow_localhost(
     master_job_id = f"local_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
 
     # Get output directory from config, with fallback to project outputs on macOS
-    project_dir = Path(__file__).resolve().parents[2]
+    project_dir = Path(__file__).resolve().parents[3]
     configured_output = workflow_config.get(
         "output_directory", str(project_dir / "outputs")
     )
@@ -2095,7 +2095,7 @@ def run_workflow_localhost(
     )
 
     def project_root() -> Path:
-        return Path(__file__).resolve().parents[2]
+        return Path(__file__).resolve().parents[3]
 
     def run_logged(
         cmd: List[str],
@@ -2134,7 +2134,7 @@ def run_workflow_localhost(
         # but we cannot construct it due to SSH requirements. So call the function pattern instead:
         from hydra import compose, initialize_config_dir
 
-        config_path = Path(__file__).parent.parent.parent / "conf"
+        config_path = Path(__file__).resolve().parents[3] / "conf"
         with initialize_config_dir(config_dir=str(config_path), version_base=None):
             dataset_config = compose(config_name=dataset_config_name)
         dataset_config = apply_all_transformations(dataset_config)
@@ -2172,7 +2172,7 @@ def run_workflow_localhost(
     ):
         cmd = [
             sys.executable,
-            "scripts/download/download_dataset_config.py",
+            "scripts/download/download_dataset.py",
             "--config-name",
             dataset_config_name,
             f"++hydra.run.dir={workflow_logger.get_step_log_dir('download', master_job_id)}",

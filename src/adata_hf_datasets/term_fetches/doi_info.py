@@ -5,7 +5,10 @@ from bs4 import BeautifulSoup
 import pandas as pd
 import anndata
 
-def map_dataset_to_doi(census_datasets: pd.DataFrame, adata: anndata.AnnData) -> anndata.AnnData:
+
+def map_dataset_to_doi(
+    census_datasets: pd.DataFrame, adata: anndata.AnnData
+) -> anndata.AnnData:
     """
     Maps dataset IDs in an AnnData object to their corresponding collection DOIs using the census datasets DataFrame.
     This works only for adata obtained from the cellxgene census.
@@ -30,13 +33,21 @@ def map_dataset_to_doi(census_datasets: pd.DataFrame, adata: anndata.AnnData) ->
     unique_dataset_ids = adata.obs["dataset_id"].unique()
 
     # Filter census_datasets for relevant dataset IDs
-    filtered_census = census_datasets[census_datasets["dataset_id"].isin(unique_dataset_ids)]
+    filtered_census = census_datasets[
+        census_datasets["dataset_id"].isin(unique_dataset_ids)
+    ]
 
     # Build a mapping dictionary {dataset_id: collection_doi}, handling missing DOIs
-    dataset_to_doi = dict(zip(filtered_census["dataset_id"], filtered_census["collection_doi"].fillna("No DOI")))
+    dataset_to_doi = dict(
+        zip(
+            filtered_census["dataset_id"],
+            filtered_census["collection_doi"].fillna("No DOI"),
+        )
+    )
 
     # Map the collection DOI to adata.obs["collection_doi"]
     return dataset_to_doi
+
 
 class DOIFetcher:
     """A class to fetch metadata and full-text of a research paper using its DOI from Europe PMC."""
@@ -142,10 +153,10 @@ class DOIFetcher:
         str
             The cleaned and formatted text.
         """
-        text = re.sub(r'\n+', '\n', text)  # Remove excessive newlines
-        text = re.sub(r'\s{2,}', ' ', text)  # Remove excessive spaces
-        text = re.sub(r'(\w)\n(\w)', r'\1 \2', text)  # Join words broken across lines
-        text = re.sub(r'(\.|\;|\:)\n', r'\1 ', text)  # Ensure punctuation spacing
+        text = re.sub(r"\n+", "\n", text)  # Remove excessive newlines
+        text = re.sub(r"\s{2,}", " ", text)  # Remove excessive spaces
+        text = re.sub(r"(\w)\n(\w)", r"\1 \2", text)  # Join words broken across lines
+        text = re.sub(r"(\.|\;|\:)\n", r"\1 ", text)  # Ensure punctuation spacing
         return text.strip()
 
     def extract_section(self, text, section_name):

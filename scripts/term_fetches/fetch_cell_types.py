@@ -135,8 +135,8 @@ from scripts.fetch_cell_types import load_cell_types_from_file
 cell_types = load_cell_types_from_file()
 
 # Use with your term description system
-from src.adata_hf_datasets.config import Config, TermDescriptionConfig
-from src.adata_hf_datasets.term_descriptions import gen_term_descriptions
+from adata_hf_datasets.term_fetches import Config, TermDescriptionConfig
+from adata_hf_datasets.term_fetches import gen_term_descriptions
 
 config = Config(data_dir="cell_type_descriptions")
 description_config = TermDescriptionConfig(

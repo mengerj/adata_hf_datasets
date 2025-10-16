@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
 """
+This is currently not used.
+
 SSH Transfer Utilities for Inter-Cluster File Operations
 
 This module provides utility functions for efficiently transferring files
@@ -741,7 +743,7 @@ cd /home/menger/git/adata_hf_datasets
 python3 -c "
 import sys
 sys.path.append('scripts/util')
-from adata_hf_datasets.ssh_transfer_utils import SSHTransferUtils
+from adata_hf_datasets.workflow.ssh_transfer_utils import SSHTransferUtils
 
 # Initialize transfer utilities
 cpu_login = {{'host': '{self.cpu_login["host"]}', 'user': '{self.cpu_login["user"]}'}}

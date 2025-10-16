@@ -6,12 +6,15 @@ from tqdm import tqdm
 from Bio import Entrez
 from pathlib import Path
 from datasets import Dataset
-from adata_hf_datasets.hf_config import hf_config
 import logging
 import mygene
-
+from dotenv import load_dotenv
+import os
 
 logger = logging.getLogger(__name__)
+
+load_dotenv()
+HF_TOKEN = os.getenv("HF_TOKEN")
 
 
 def save_to_csv(dataframe, dataframe_name, config, subfolder):
@@ -835,7 +838,7 @@ def gen_term_descriptions(description_config):
                         repo_id=full_repo_name,
                         repo_type="dataset",
                         private=True,
-                        token=hf_config.HF_TOKEN_UPLOAD,
+                        token=HF_TOKEN,
                         exist_ok=True,  # Don't fail if repo already exists
                     )
                     print(f"📁 Repository created/verified: {full_repo_name}")
@@ -843,9 +846,7 @@ def gen_term_descriptions(description_config):
                     print(f"⚠️  Repository creation warning: {create_error}")
 
                 # Upload dataset
-                dataset.push_to_hub(
-                    full_repo_name, private=True, token=hf_config.HF_TOKEN_UPLOAD
-                )
+                dataset.push_to_hub(full_repo_name, private=True, token=HF_TOKEN)
 
                 # Small delay to ensure repository is fully available
                 time.sleep(5)
@@ -853,7 +854,7 @@ def gen_term_descriptions(description_config):
                 # Create and upload README.md file
                 try:
                     # Get user info to construct full repo path (username/repo_name)
-                    user_info = api.whoami(token=hf_config.HF_TOKEN_UPLOAD)
+                    user_info = api.whoami(token=HF_TOKEN)
                     username = user_info["name"]
                     full_repo_path = f"{username}/{full_repo_name}"
 
@@ -872,7 +873,7 @@ def gen_term_descriptions(description_config):
                         path_in_repo="README.md",
                         repo_id=full_repo_path,
                         repo_type="dataset",
-                        token=hf_config.HF_TOKEN_UPLOAD,
+                        token=HF_TOKEN,
                         commit_message="Add comprehensive dataset documentation",
                     )
 

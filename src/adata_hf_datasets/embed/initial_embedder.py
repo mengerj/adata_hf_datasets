@@ -407,19 +407,21 @@ class PCAEmbedder(BaseEmbedder):
             This should match the number of components in the saved model.
         kwargs : dict
             Additional keyword arguments including:
-            - model_path: Path to saved PCA model (default: resources/cellxgene_geo_pca_3936_to_50.pkl)
-            - gene_list_path: Path to gene list file (default: resources/gene_selection_ENSG_8k.txt)
+            - resources_dir: Directory containing resource files (default: "resources")
+            - model_file: Name of the PCA model file (default: "cellxgene_geo_pca_10000_to_50.pkl")
+            - gene_list_file: Name of the gene list file (default: "gene_selection_10k.txt")
         """
         super().__init__(embedding_dim=embedding_dim)
         self.embedding_dim = embedding_dim
 
-        # Set default paths
-        self.model_path = kwargs.get(
-            "model_path", "resources/cellxgene_geo_pca_10000_to_50.pkl"
-        )
-        self.gene_list_path = kwargs.get(
-            "gene_list_path", "resources/gene_selection_10k.txt"
-        )
+        # Set default resource directory and file names
+        resources_dir = kwargs.get("resources_dir", "resources")
+        model_file = kwargs.get("model_file", "cellxgene_geo_pca_10000_to_50.pkl")
+        gene_list_file = kwargs.get("gene_list_file", "gene_selection_10k.txt")
+
+        # Construct full paths
+        self.model_path = str(Path(resources_dir) / model_file)
+        self.gene_list_path = str(Path(resources_dir) / gene_list_file)
 
         # Initialize model components
         self.pca_model = None
@@ -690,7 +692,7 @@ class GeneformerEmbedder(BaseEmbedder):
         self.model = None
         self.model_name = model_name
         self.model_input_size = 4096  # Always 4096 for new models
-        self.project_dir = Path(__file__).resolve().parents[2]
+        self.project_dir = Path(__file__).resolve().parents[3]
 
         # Construct directory paths
         dictionary_dir = self.project_dir / "external" / "Geneformer" / "geneformer"
@@ -2013,7 +2015,8 @@ class GeneSelectEmbedder(BaseEmbedder):
             If provided, it will be ignored with a warning.
         init_kwargs : dict
             Additional keyword arguments including:
-            - gene_list_path: Path to gene list file (default: resources/gene_selection_ENSG_8k.txt)
+            - resources_dir: Directory containing resource files (default: "resources")
+            - gene_list_file: Name of the gene list file (default: "gene_selection_common_genes.txt")
         """
         if embedding_dim is not None:
             logger.warning(
@@ -2024,10 +2027,14 @@ class GeneSelectEmbedder(BaseEmbedder):
         # Initialize with a placeholder - will be updated after loading the gene list
         super().__init__(embedding_dim=0)
 
-        # Set default gene list path
-        self.gene_list_path = init_kwargs.get(
-            "gene_list_path", "resources/gene_selection_common_genes.txt"
+        # Set default resource directory and file name
+        resources_dir = init_kwargs.get("resources_dir", "resources")
+        gene_list_file = init_kwargs.get(
+            "gene_list_file", "gene_selection_common_genes.txt"
         )
+
+        # Construct full path
+        self.gene_list_path = str(Path(resources_dir) / gene_list_file)
 
         # Initialize gene list
         self.gene_order = None
@@ -2212,13 +2219,13 @@ class GeneSelectEmbedder10k(GeneSelectEmbedder):
     Gene selection embedder variant that uses a 10k gene list.
 
     This class inherits from `GeneSelectEmbedder` but defaults the
-    `gene_list_path` to `resources/gene_selection_10k.txt`.
+    `gene_list_file` to `gene_selection_10k.txt`.
     """
 
     def __init__(self, embedding_dim: int = None, **init_kwargs):
-        # Ensure default gene list path points to 10k gene list unless overridden
+        # Ensure default gene list file points to 10k gene list unless overridden
         init_kwargs = dict(init_kwargs)
-        init_kwargs.setdefault("gene_list_path", "resources/gene_selection_10k.txt")
+        init_kwargs.setdefault("gene_list_file", "gene_selection_10k.txt")
         super().__init__(embedding_dim=embedding_dim, **init_kwargs)
 
 
@@ -2243,6 +2250,10 @@ class InitialEmbedder:
         Dimensionality of the output embedding.
     **init_kwargs
         Additional keyword arguments passed to the chosen embedder.
+        Common parameters include:
+        - resources_dir: Directory containing resource files (default: "resources")
+        - For PCA: model_file, gene_list_file
+        - For GeneSelect: gene_list_file
     """
 
     def __init__(

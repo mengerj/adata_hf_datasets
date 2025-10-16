@@ -13,7 +13,7 @@ from huggingface_hub import ModelCard
 import sys
 import traceback
 import pathlib
-from adata_hf_datasets.initial_embedder import SCVIEmbedder
+from adata_hf_datasets.embed.initial_embedder import SCVIEmbedder
 
 
 def _train_tiny_scvi(model_dir: Path) -> None:
@@ -101,7 +101,7 @@ def test_stale_handle_queue(tmp_path):
 def test_robust_copy_file_with_retries(tmp_path):
     """Test the robust file copying mechanism with simulated NFS errors."""
     import shutil
-    from adata_hf_datasets.initial_embedder import SCVIEmbedder
+    from adata_hf_datasets.embed.initial_embedder import SCVIEmbedder
 
     # Create a test file
     src_file = tmp_path / "test_source.txt"
@@ -159,7 +159,7 @@ def test_robust_copy_file_with_retries(tmp_path):
 def test_robust_copy_file_max_retries_exceeded(tmp_path):
     """Test that robust copying fails after max retries are exceeded."""
     import shutil
-    from adata_hf_datasets.initial_embedder import SCVIEmbedder
+    from adata_hf_datasets.embed.initial_embedder import SCVIEmbedder
 
     # Create a test file
     src_file = tmp_path / "test_source.txt"
@@ -207,7 +207,7 @@ def test_robust_copy_file_max_retries_exceeded(tmp_path):
 
 def test_chunked_copy(tmp_path):
     """Test the chunked copy mechanism."""
-    from adata_hf_datasets.initial_embedder import SCVIEmbedder
+    from adata_hf_datasets.embed.initial_embedder import SCVIEmbedder
 
     # Create a test file with some content
     src_file = tmp_path / "test_source.txt"

@@ -12,10 +12,10 @@ from hydra.core.hydra_config import HydraConfig
 import os
 
 import adata_hf_datasets.pp as pp
-from adata_hf_datasets.plotting import qc_evaluation_plots
+from adata_hf_datasets.pp.plotting import qc_evaluation_plots
 from adata_hf_datasets.sys_monitor import SystemMonitor
 from adata_hf_datasets.utils import subset_sra_and_plot
-from adata_hf_datasets.config_utils import apply_all_transformations, validate_config
+from adata_hf_datasets.workflow import apply_all_transformations, validate_config
 from adata_hf_datasets.file_utils import safe_write_h5ad
 from adata_hf_datasets.pp.utils import safe_read_h5ad_backed
 

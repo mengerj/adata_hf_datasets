@@ -11,7 +11,7 @@ import os
 from omegaconf import OmegaConf
 
 from hydra import compose, initialize_config_dir
-from adata_hf_datasets.workflow_orchestrator import (
+from adata_hf_datasets.workflow import (
     WorkflowOrchestrator,
     run_workflow_localhost,
 )

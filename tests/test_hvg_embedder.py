@@ -4,7 +4,9 @@ import scanpy as sc
 import pytest
 from anndata import AnnData
 
-from adata_hf_datasets.initial_embedder import HighlyVariableGenesEmbedder  # ← adjust
+from adata_hf_datasets.embed.initial_embedder import (
+    HighlyVariableGenesEmbedder,
+)  # ← adjust
 
 
 # ---------------------------------------------------------------------

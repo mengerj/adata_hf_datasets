@@ -6,14 +6,14 @@ This script downloads datasets using the unified dataset configuration system.
 It supports automatic path generation, stratification, and comprehensive logging.
 
 Usage:
-    python download_dataset_config.py --config-name=dataset_name [OPTIONS]
+    python download_dataset.py --config-name=dataset_name [OPTIONS]
 
 Examples:
     # Download using dataset config
-    python download_dataset_config.py --config-name=dataset_cellxgene_pseudo_bulk_3_5k
+    python download_dataset.py --config-name=dataset_cellxgene_pseudo_bulk_3_5k
 
     # Override subset size
-    python download_dataset_config.py --config-name=dataset_cellxgene_pseudo_bulk_3_5k \
+    python download_dataset.py --config-name=dataset_cellxgene_pseudo_bulk_3_5k \
         ++download.subset_size=10000
 """
 
@@ -30,7 +30,7 @@ from omegaconf import DictConfig
 from hydra.core.hydra_config import HydraConfig
 
 from adata_hf_datasets.file_utils import download_from_link
-from adata_hf_datasets.config_utils import apply_all_transformations
+from adata_hf_datasets.workflow import apply_all_transformations
 from adata_hf_datasets.utils import setup_logging
 
 logger = logging.getLogger(__name__)

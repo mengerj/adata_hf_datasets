@@ -11,24 +11,82 @@ logger = logging.getLogger(__name__)  # best–practice logger
 
 class AnnDataSetConstructor:
     """
-    Create a Hugging Face :class:`datasets.Dataset` out of single-cell-style
+    Create a Hugging Face :class:`datasets.Dataset` from single-cell-style
     data without retaining large objects in memory.
+
+    This class is designed to construct datasets for **individual splits** (e.g., train, val, test).
+    After creating datasets for each split, combine them using :class:`datasets.DatasetDict`:
+
+    .. code-block:: python
+
+        from datasets import DatasetDict
+        hf_dataset = DatasetDict()
+        for split in ["train", "val", "test"]:
+            constructor = AnnDataSetConstructor(...)
+            constructor.add_anndata(adata, ...)
+            hf_dataset[split] = constructor.get_dataset()
 
     Parameters
     ----------
     negatives_per_sample : int, default 1
         Number of negatives per anchor in *multiplets* or *pairs* format.
-    dataset_format : {'pairs', 'multiplets', 'single'}, default 'pairs'
-        Output layout.
+    dataset_format : {'pairs', 'multiplets', 'single'}, default 'multiplets'
+        Output layout:
+
+        - **'multiplets'**: Training format with positive caption and multiple negative sample
+          indices. Negatives alternate between caption negatives (different caption, even indices)
+          and sentence negatives (different sample, odd indices). Negatives are drawn from
+          in-batch samples based on ``batch_key``.
+        - **'pairs'**: Training format that creates individual records with a binary ``label``
+          column (1.0 for positive pairs, 0.0 for negative pairs). Each anchor generates
+          one positive and one negative pair.
+        - **'single'**: Test/inference format containing only cell sentences and ``adata_link``.
+          No caption or negative sampling. Use this for test datasets where you only need
+          the omics data representation.
+    resolve_negatives : bool, default False
+        If True and only one ``sentence_key`` is provided, resolves negative indices to their
+        actual content. This creates additional columns ``negative_1``, ``negative_2``, etc.
+        where odd-numbered negatives (1, 3, 5, ...) contain captions and even-numbered negatives
+        (2, 4, 6, ...) contain cell sentences. By default, negatives are stored as indices to
+        allow flexibility in choosing which cell sentence representation to use at training time.
+        Only applicable for 'multiplets' format.
 
     Notes
     -----
-    * Numeric ``obsm`` data are **ignored** – only text columns are kept.
-    * You may call :py:meth:`add_anndata` or :py:meth:`add_df` as many times
-      as you wish; all data are concatenated in RAM-light dicts.
-    * For 'multiplets' format, negative samples are now stored as sample indices
-      rather than actual content, allowing the model to choose which modality
-      to use at training time.
+    **Cell Sentences**
+        A "cell sentence" is a string representation of a single cell. The ``sentence_keys``
+        parameter specifies which columns from ``adata.obs`` to include. In the output dataset,
+        these are named ``cell_sentence_1``, ``cell_sentence_2``, etc., in order.
+
+        For text-based methods, these are typically space-separated lists of gene names like
+        "CD4 CD8A IL7R CCR7 FOXP3 ..." representing the expressed genes in that cell.
+        For numeric methods, a common approach is to use the cell ID (e.g., barcode), which a
+        tokenizer will later use to extract the corresponding numeric embedding from the AnnData object.
+
+    **Data Storage**
+        This class does **not** store AnnData objects directly. Instead, it stores an access path
+        or download link (``adata_link``) for each sample's source AnnData file. This allows
+        downstream models to load the actual numeric data on-demand.
+
+    **Caption and Negative Sampling**
+        The ``caption_key`` defines the positive label for each sample (stored as ``positive`` in
+        multiplets format, or used for pair generation in pairs format). Captions are typically
+        natural language descriptions of the sample metadata, such as "This sample was obtained
+        from lung tissue and was annotated as a T cell. It's from a healthy 50 year old...".
+
+        Negative samples are drawn from in-batch samples that have different captions, where
+        "batch" is defined by ``batch_key``. This ensures contrastive learning happens within
+        meaningful groups.
+
+        By default, negatives are stored as sample indices rather than resolved content. This
+        design allows users to provide multiple cell sentence columns (e.g., both for textual and numeric representations) and have downstream methods choose which representation
+        to use at training time. The same dataset can thus serve multiple modeling approaches without
+        rebuilding.
+
+    **Memory Efficiency**
+        Numeric ``obsm`` data are **ignored** – only text columns from ``obs`` are kept.
+        You may call :py:meth:`add_anndata` or :py:meth:`add_df` multiple times; all data
+        are concatenated in RAM-light dictionaries.
     """
 
     # ------------------------------------------------------------------ #
@@ -37,7 +95,8 @@ class AnnDataSetConstructor:
     def __init__(
         self,
         negatives_per_sample: int = 1,
-        dataset_format: str = "pairs",
+        dataset_format: str = "mutliplets",
+        resolve_negatives: bool = False,
     ) -> None:
         if dataset_format not in {"pairs", "multiplets", "single"}:
             raise ValueError(
@@ -48,12 +107,16 @@ class AnnDataSetConstructor:
 
         self.negatives_per_sample = negatives_per_sample
         self.dataset_format = dataset_format
+        self.resolve_negatives = resolve_negatives
 
         # lightweight per-sample caches
         self._index_to_sentences: Dict[Any, List[str]] = {}
         self._index_to_caption: Dict[Any, Optional[str]] = {}
         self._index_to_batch: Dict[Any, Any] = {}
-        self._index_to_share: Dict[Any, Optional[str]] = {}
+        self._index_to_adata_link: Dict[Any, str] = {}
+        self._num_sentence_keys: Optional[int] = (
+            None  # track number of sentence columns
+        )
 
         # optimized data structures for fast negative sampling
         self._batch_caption_map: defaultdict = defaultdict(list)  # (batch, cap) → idxs
@@ -74,13 +137,39 @@ class AnnDataSetConstructor:
         self,
         adata,
         sentence_keys: List[str],
+        adata_link: str,
         caption_key: Optional[str] = None,
         batch_key: str = "batch",
-        share_link: Optional[str] = None,
     ) -> None:
         """
         Extract required columns from an :class:`~anndata.AnnData` object
         and immediately free the heavy matrix.
+
+        Parameters
+        ----------
+        adata : anndata.AnnData
+            The AnnData object to extract metadata from. The actual matrix data
+            is not stored; only the ``obs`` columns are retained.
+        sentence_keys : list of str
+            Column names from ``adata.obs`` to use as cell sentences. These will
+            appear in the output dataset as ``cell_sentence_1``, ``cell_sentence_2``, etc.
+            For text-based methods, these typically contain space-separated gene names
+            (e.g., "CD4 CD8A IL7R CCR7 ..."). For numeric methods, use the cell ID/barcode column.
+        adata_link : str
+            Path or URL to access this AnnData file. Can be a local file path
+            (e.g., "/data/experiment1.h5ad") or a download link
+            (e.g., "https://example.com/data.h5ad"). This allows downstream models
+            to load the numeric data on-demand.
+        caption_key : str, optional
+            Column name from ``adata.obs`` to use as the positive caption for
+            contrastive learning. Captions are natural language descriptions of sample
+            metadata (e.g., "This sample was obtained from lung tissue and was annotated
+            as a T cell..."). Required for 'pairs' and 'multiplets' formats, ignored for
+            'single' format.
+        batch_key : str, default "batch"
+            Column name from ``adata.obs`` that defines batches for negative sampling.
+            Negatives are preferentially drawn from the same batch to ensure meaningful
+            contrastive pairs.
         """
         self._ingest_obs_df(
             obs_df=adata.obs,
@@ -88,7 +177,7 @@ class AnnDataSetConstructor:
             sentence_keys=sentence_keys,
             caption_key=caption_key,
             batch_key=batch_key,
-            share_link=share_link,
+            adata_link=adata_link,
         )
         del adata  # allow GC on the big object
 
@@ -96,9 +185,9 @@ class AnnDataSetConstructor:
         self,
         df: pd.DataFrame,
         sentence_keys: List[str],
+        adata_link: str,
         caption_key: Optional[str] = None,
         batch_key: str = "batch",
-        share_link: Optional[str] = None,
     ) -> None:
         """
         Register a plain DataFrame that fulfils the same column requirements
@@ -108,9 +197,15 @@ class AnnDataSetConstructor:
         ----------
         df : pandas.DataFrame
             Must have ``sentence_keys``, ``batch_key`` and (if required)
-            ``caption_key`` columns.  Its index becomes ``sample_idx``.
-        sentence_keys, caption_key, batch_key, share_link
-            Same semantics as in :py:meth:`add_anndata`.
+            ``caption_key`` columns. Its index becomes ``sample_idx``.
+        sentence_keys : list of str
+            Column names to use as cell sentences. See :py:meth:`add_anndata` for details.
+        adata_link : str
+            Path or URL to access the corresponding AnnData file. See :py:meth:`add_anndata` for details.
+        caption_key : str, optional
+            Column name to use as positive caption. See :py:meth:`add_anndata` for details.
+        batch_key : str, default "batch"
+            Column name that defines batches. See :py:meth:`add_anndata` for details.
         """
         self._ingest_obs_df(
             obs_df=df,
@@ -118,7 +213,7 @@ class AnnDataSetConstructor:
             sentence_keys=sentence_keys,
             caption_key=caption_key,
             batch_key=batch_key,
-            share_link=share_link,
+            adata_link=adata_link,
         )
 
     # ------------------------------------------------------------------ #
@@ -147,7 +242,37 @@ class AnnDataSetConstructor:
     # dataset construction
     # ------------------------------------------------------------------ #
     def get_dataset(self) -> Dataset:
-        """Assemble the Hugging Face dataset according to ``dataset_format``."""
+        """
+        Assemble the Hugging Face dataset according to ``dataset_format``.
+
+        Returns
+        -------
+        datasets.Dataset
+            A Hugging Face Dataset with the following structure depending on format:
+
+            **'multiplets' format:**
+                - ``sample_idx``: Original index from the source data
+                - ``cell_sentence_1``, ``cell_sentence_2``, ...: Cell sentences in order
+                - ``positive``: The positive caption from ``caption_key``
+                - ``negative_1_idx``, ``negative_2_idx``, ...: Sample indices for negatives
+                - ``adata_link``: Path or URL to the source AnnData file
+
+                If ``resolve_negatives=True`` and only one sentence_key was provided:
+                - ``negative_1``, ``negative_3``, ...: Resolved negative captions (odd numbers)
+                - ``negative_2``, ``negative_4``, ...: Resolved negative cell sentences (even numbers)
+
+            **'pairs' format:**
+                - ``sample_idx``: Original index from the source data
+                - ``cell_sentence_1``, ``cell_sentence_2``, ...: Cell sentences in order
+                - ``caption``: Either positive or negative caption
+                - ``label``: 1.0 for positive pairs, 0.0 for negative pairs
+                - ``adata_link``: Path or URL to the source AnnData file
+
+            **'single' format:**
+                - ``sample_idx``: Original index from the source data
+                - ``cell_sentence_1``, ``cell_sentence_2``, ...: Cell sentences in order
+                - ``adata_link``: Path or URL to the source AnnData file
+        """
         if not self._index_to_sentences:
             raise ValueError("No data present – call add_anndata/add_df first.")
 
@@ -163,7 +288,7 @@ class AnnDataSetConstructor:
                 sentences = {
                     f"cell_sentence_{i + 1}": s for i, s in enumerate(sent_vals)
                 }
-                share = self._index_to_share[idx]
+                adata_link = self._index_to_adata_link[idx]
                 pos_cap = self._index_to_caption[idx]
 
                 if self.dataset_format == "pairs":
@@ -178,9 +303,8 @@ class AnnDataSetConstructor:
                             **sentences,
                             "caption": cap,
                             "label": label,
+                            "adata_link": adata_link,
                         }
-                        if share:
-                            rec["share_link"] = share
                         yield rec
 
                 elif self.dataset_format == "multiplets":
@@ -213,15 +337,33 @@ class AnnDataSetConstructor:
                         **sentences,
                         "positive": pos_cap,
                         **neg_indices,
+                        "adata_link": adata_link,
                     }
-                    if share:
-                        rec["share_link"] = share
+
+                    # Optionally resolve negatives to their content
+                    if self.resolve_negatives and self._num_sentence_keys == 1:
+                        for neg_key, neg_idx in neg_indices.items():
+                            # Extract the number from the key (e.g., "negative_1_idx" -> 1)
+                            neg_num = int(neg_key.split("_")[1])
+                            # Odd numbers (1,3,5...) are caption negatives → resolve to caption
+                            # Even numbers (2,4,6...) are sentence negatives → resolve to cell sentence
+                            if neg_num % 2 == 1:
+                                rec[f"negative_{neg_num}"] = self._index_to_caption[
+                                    neg_idx
+                                ]
+                            else:
+                                rec[f"negative_{neg_num}"] = self._index_to_sentences[
+                                    neg_idx
+                                ][0]
+
                     yield rec
 
                 else:  # 'single'
-                    rec = {"sample_idx": idx, **sentences}
-                    if share:
-                        rec["share_link"] = share
+                    rec = {
+                        "sample_idx": idx,
+                        **sentences,
+                        "adata_link": adata_link,
+                    }
                     yield rec
 
         # Use Dataset.from_generator for memory efficiency
@@ -263,11 +405,20 @@ class AnnDataSetConstructor:
         sentence_keys: List[str],
         caption_key: Optional[str],
         batch_key: str,
-        share_link: Optional[str],
+        adata_link: str,
     ) -> None:
         """Common ingestion routine for AnnData.obs or any standalone DataFrame."""
         if self.dataset_format in {"pairs", "multiplets"} and caption_key is None:
             raise ValueError("caption_key must be supplied for this dataset_format.")
+
+        # Track and validate number of sentence keys
+        if self._num_sentence_keys is None:
+            self._num_sentence_keys = len(sentence_keys)
+        elif self._num_sentence_keys != len(sentence_keys):
+            raise ValueError(
+                f"All calls to add_anndata/add_df must use the same number of sentence_keys. "
+                f"Expected {self._num_sentence_keys}, got {len(sentence_keys)}."
+            )
 
         missing_sent = [k for k in sentence_keys if k not in obs_df.columns]
         if missing_sent:
@@ -281,7 +432,7 @@ class AnnDataSetConstructor:
             self._index_to_sentences[idx] = [obs_df.at[idx, k] for k in sentence_keys]
             batch = obs_df.at[idx, batch_key]
             self._index_to_batch[idx] = batch
-            self._index_to_share[idx] = share_link
+            self._index_to_adata_link[idx] = adata_link
 
             cap = obs_df.at[idx, caption_key] if caption_key else None
             self._index_to_caption[idx] = cap

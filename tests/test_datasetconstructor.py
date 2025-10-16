@@ -120,14 +120,14 @@ def test_full_pipeline(dataset_format, negatives, make_obs_df):
         adata,
         sentence_keys=["sentence_short", "sentence_long"],
         caption_key="cell_type" if dataset_format != "single" else None,
-        share_link="link_A",
+        adata_link="link_A",
     )
     builder.add_df(
         df2,
         sentence_keys=["sentence_short", "sentence_long"],
         caption_key="cell_type" if dataset_format != "single" else None,
         batch_key="batch",
-        share_link="link_B",
+        adata_link="link_B",
     )
 
     ds = builder.get_dataset()
