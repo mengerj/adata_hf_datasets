@@ -65,7 +65,7 @@ dataset_creation:
   use_nextcloud: true
   dataset_format: "multiplets" # "multiplets" for training datasets, "single" for test datasets
   # Dataset-specific parameters
-  required_obsm_keys: ["X_pca", "X_scvi_fm", "X_gs10k", "X_geneformer-v1"] #, "X_geneformer"]
+  required_obsm_keys: ["X_pca", "X_scvi_fm", "X_gs10k"] #, "X_geneformer"]
   cs_length: [4096]
   caption_keys: ["caption_key"] #here you could also use a different key, like annotation_key, to include not captions but annotations into the dataset. If you do both, two datasets will be created.
   negatives_per_sample: 2
