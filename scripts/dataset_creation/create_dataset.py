@@ -270,7 +270,7 @@ def push_dataset_to_hub(
 @hydra.main(
     version_base=None,
     config_path="../../conf",
-    config_name="dataset_human_disease",
+    config_name="dataset_config_example",
 )
 def main(cfg: DictConfig):
     """

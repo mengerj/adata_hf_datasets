@@ -86,6 +86,35 @@ That's it! The pipeline is ready to use.
 
 ---
 
+## Test run
+
+Before attempting to add your own dataset, try running the workflow with the example data.
+This will download a .h5ad, preprocess it, run several embedders and create a hf dataset. Details below.
+This will not yet use the huggingface hub or nextcloud.
+
+# Run workflow in foreground (recommended for first runs)
+
+python scripts/workflow/submit_workflow_local.py \
+ --config-name dataset_config_example \
+ --foreground
+
+# Or run in background (detached)
+
+python scripts/workflow/submit_workflow_local.py \
+ --config-name dataset_config_example
+
+````
+
+Check out the main log in outputs/"run_id"/logs/workflow_summary.log to see the progress. Specic logs for each step are in their respective subfolders.
+Once this is run sucessfully, you can check out the logs of the create_dataset process in the outputs folder and in the subfolder dataset_creation. The file create_ds_0.out should point to the location of the final hf dataset (at the end of the logs).
+Try loading it to see whats inside:
+```python
+from datasets import load_from_disk
+dataset_path = "outputs/workflow_local_*/dataset_creation/job_local_*/job_0/demo_dataset"
+ds = load_from_disk(dataset_path)
+ds
+````
+
 ## Configuration
 
 The pipeline uses two main configuration files:
@@ -104,15 +133,15 @@ Dataset configurations define **what data to process** and **how to process it**
 
    ```yaml
    dataset:
-     name: "cellxgene_pseudo_bulk_10k"
-     description: "CellxGene pseudo bulk dataset"
+     name: "human_pancreas"
+     description: "Human pancreas dataset"
      download_url: "https://example.com/data.h5ad"
    ```
 
 2. **Common Keys** (used across all steps):
 
    ```yaml
-   batch_key: "dataset_title" # Batch/dataset identifier
+   batch_key: "batch_id" # Batch/dataset identifier
    annotation_key: "cell_type" # Cell type annotations
    caption_key: "natural_language_annotation" # Natural language descriptions
    ```
@@ -233,12 +262,14 @@ workflow:
 - The SLURM mode requires **passwordless SSH access** to the clusters
 - Set up SSH keys so that `ssh cpu_cluster` and `ssh gpu_cluster` work without password prompts
 - Configure hosts in `~/.ssh/config` if needed (including ProxyJump if required)
+- Always keep the repos synced, for example when changing a configuration file
 
 **Shared Storage:**
 
 - `slurm_base_file_path` **must be accessible by both CPU and GPU clusters**
 - Typically a global scratch filesystem (e.g., `/scratch/global/username/`)
 - Data is written by one cluster and read by another during the workflow
+- Local execution is actually much faster, since I/O speeds on a global filesystem are usually very slow, and the pipeline requires reading data into memory at several steps. If you don't need a gpu, or have a gpu locally, I would recommend to work locally. But if you don't bother waiting a while and want to just submit a bunch of datasets, the cluster is better suited.
 
 **Cluster-Specific Settings:**
 
@@ -270,7 +301,6 @@ workflow:
 2. **Configure your dataset:**
    Take a close look at the [example dataset config](conf/dataset_config_example.yaml) and the [default config](conf/dataset_default.yaml)
 
-Before attempting to add your own dataset, try running the workflow (Step 3) with the --config-name=dataset_config_example setting.
 Edit or create a dataset config in `conf/`, for example `conf/my_dataset.yaml`:
 
 ```yaml
@@ -480,7 +510,6 @@ Generates embeddings using CPU-based methods.
 
 - PCA: Linear dimensionality reduction
 - scVI: Deep learning foundation model
-- HVG: Highly variable gene selection
 - Memory-efficient streaming to disk
 
 **Configuration:**
@@ -488,11 +517,11 @@ Generates embeddings using CPU-based methods.
 ```yaml
 embedding_cpu:
   enabled: true
-  methods: ["pca", "scvi_fm", "hvg"]
+  methods: ["pca", "scvi_fm", "gs10k"]
   embedding_dim_map:
     pca: 50
     scvi_fm: 50
-    hvg: 512
+    gs10k: 10000
 ```
 
 ### 5. GPU Embedding
@@ -503,7 +532,7 @@ Generates embeddings using GPU-based methods.
 
 **Key Features:**
 
-- Geneformer: Transformer-based embeddings
+- Geneformer: Transformer-based embeddings (! Needs Cuda device !)
 - Automatic retry on GPU errors
 - Uses preparation results from step 3
 
@@ -665,12 +694,7 @@ Detailed documentation for each component:
 
 ```bash
 # Try with verbose output
-uv sync --all-extras -v
-
-# Or install core dependencies first
-uv sync
-uv sync --extra embed
-uv sync --extra workflow
+uv sync --all-extras --no-extra geneformer -v
 ```
 
 **Problem:** Git submodule not initialized
@@ -767,9 +791,9 @@ If you use this pipeline in your research, please cite:
 ```bibtex
 @software{adata_hf_datasets,
   title = {AnnData HuggingFace Datasets Pipeline},
-  author = {Your Name},
+  author = {Jonatan Menger},
   year = {2025},
-  url = {https://github.com/yourusername/adata_hf_datasets}
+  url = {https://github.com/mengerj/adata_hf_datasets}
 }
 ```
 
@@ -796,6 +820,7 @@ Contributions are welcome! Please:
 
 This pipeline builds on:
 
+- [AnnData](https://anndata.readthedocs.io/en/stable/) for handling data matrices
 - [Scanpy](https://scanpy.readthedocs.io/) for single-cell analysis
 - [scVI](https://scvi-tools.org/) for probabilistic models
 - [Geneformer](https://huggingface.co/ctheodoris/Geneformer) for transformer embeddings
