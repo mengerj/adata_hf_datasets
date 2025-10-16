@@ -178,17 +178,73 @@ def qc_evaluation_plots(
     for metric in metrics_of_interest:
         if metric not in adata_sub.obs.columns:
             continue
+
+        # Get the data and clean it thoroughly
+        data = adata_sub.obs[metric]
+
+        # Remove NaN and infinite values
+        data = data.replace([np.inf, -np.inf], np.nan).dropna()
+
+        if len(data) == 0:
+            logger.warning(f"No valid data for metric {metric}, skipping histogram.")
+            continue
+
+        # Check for variation
+        data_range = data.max() - data.min()
+        if data_range == 0 or not np.isfinite(data_range):
+            logger.warning(
+                f"Metric {metric} has no variation or invalid range, skipping histogram."
+            )
+            continue
+
+        # For very small datasets or very limited unique values, skip histogram
+        n_unique = len(data.unique())
+        if n_unique <= 1:
+            logger.warning(
+                f"Metric {metric} has only {n_unique} unique value(s), skipping histogram."
+            )
+            continue
+
         plt.figure()
-        plt.hist(adata_sub.obs[metric], bins=50, edgecolor="k")
-        plt.title(f"Distribution of {metric}")
-        plt.xlabel(metric)
-        plt.ylabel("Frequency")
-        if save_plots and save_dir is not None:
-            os.makedirs(save_dir, exist_ok=True)
-            plt.savefig(os.path.join(save_dir, f"hist_{metric}.png"), dpi=150)
-        else:
-            plt.show()
-        plt.close()
+        try:
+            # Try multiple binning strategies with full error handling
+            if n_unique <= 10:
+                # Very discrete data - use exact unique values
+                bins = n_unique
+                logger.debug(
+                    f"Using {bins} bins for very discrete metric {metric} (n_unique={n_unique})"
+                )
+            elif data_range < 1:
+                # Very small range - use minimal bins
+                bins = min(10, n_unique)
+                logger.debug(
+                    f"Using {bins} bins for metric {metric} with small range ({data_range})"
+                )
+            else:
+                # Normal data - use automatic binning
+                bins = "auto"
+                logger.debug(f"Using 'auto' bins for metric {metric}")
+
+            plt.hist(data, bins=bins, edgecolor="k", alpha=0.7)
+
+            plt.title(f"Distribution of {metric}")
+            plt.xlabel(metric)
+            plt.ylabel("Frequency")
+
+            if save_plots and save_dir is not None:
+                os.makedirs(save_dir, exist_ok=True)
+                plt.savefig(os.path.join(save_dir, f"hist_{metric}.png"), dpi=150)
+            else:
+                plt.show()
+
+        except (ValueError, RuntimeError) as e:
+            # If histogram creation fails for any reason, just skip it and log
+            logger.warning(
+                f"Could not create histogram for metric {metric} (range={data_range:.4f}, "
+                f"n_unique={n_unique}, n_samples={len(data)}). Error: {e}. Skipping."
+            )
+        finally:
+            plt.close()
 
     # 6D) Example scatter: total_counts vs. pct_counts_mt
     if (
