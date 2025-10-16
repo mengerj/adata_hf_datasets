@@ -52,7 +52,7 @@ This pipeline transforms raw single-cell RNA-seq data into ready-to-use HuggingF
 1. **Clone the repository with submodules:**
 
 ```bash
-git clone <repository-url>
+git clone https://github.com/mengerj/adata_hf_datasets.git
 cd adata_hf_datasets
 
 # Initialize and update submodules (required for Geneformer)
@@ -63,8 +63,10 @@ git submodule update --init --recursive
 
 ```bash
 # Install all dependencies including optional extras
-uv sync --all-extras
+uv sync --all-extras --no-extra geneformer
 ```
+
+Geneformer can only be installed on a linux machine and only be used with a cuda device available.
 
 This creates a virtual environment and installs all required packages including:
 
@@ -188,6 +190,8 @@ workflow:
 ```
 
 #### SLURM Cluster Settings
+
+Before attempting to run on slurm, you have make sure that the repository is installed on the cluster. Follow the same steps as locally to install. UV can be installed without sudo rights.
 
 For running on SLURM clusters:
 
