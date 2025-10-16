@@ -222,6 +222,7 @@ def push_dataset_to_hub(
     dataset_format: str,
     share_links: Dict[str, Dict[str, str]],
     cs_length: int | None = None,
+    private: bool = True,
 ):
     """
     Push DatasetDict *hf_dataset* to the Hub, writing a rich README.
@@ -259,7 +260,7 @@ def push_dataset_to_hub(
         repo_id=final_repo_id,
         readme_template_name="cellwhisperer_train",
         metadata=metadata,
-        private=True,
+        private=private,
     )
     logger.info("Dataset pushed to HF Hub at %s", final_repo_id)
 
@@ -339,6 +340,9 @@ def main(cfg: DictConfig):
     required_obsm_keys: List[str] = dataset_cfg.required_obsm_keys
     base_repo_id: str = dataset_cfg.base_repo_id
     push_to_hub_flag: bool = dataset_cfg.push_to_hub
+    private_dataset: bool = dataset_cfg.get(
+        "private", True
+    )  # Default to True (private)
     resolve_negatives: bool = dataset_cfg.get("resolve_negatives", False)
     use_nextcloud: bool = dataset_cfg.get(
         "use_nextcloud", True
@@ -443,6 +447,7 @@ def main(cfg: DictConfig):
             dataset_format=dataset_format,
             share_links=share_links_per_split,
             cs_length=dataset_cfg.get("cs_length"),
+            private=private_dataset,
         )
 
     logger.info("Dataset creation script finished.")

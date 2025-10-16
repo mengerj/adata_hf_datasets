@@ -26,12 +26,15 @@ This pipeline transforms raw single-cell RNA-seq data into ready-to-use HuggingF
 ## Table of Contents
 
 - [Installation](#installation)
+- [Test Run](#test-run)
+- [HuggingFace Hub Integration](#huggingface-hub-integration)
 - [Configuration](#configuration)
   - [Dataset Configuration](#dataset-configuration)
   - [Workflow Orchestrator Configuration](#workflow-orchestrator-configuration)
 - [Quick Start](#quick-start)
   - [Local Execution](#local-execution-macos-linux)
   - [SLURM Cluster Execution](#slurm-cluster-execution)
+- [Nextcloud Integration](#nextcloud-integration)
 - [Pipeline Steps](#pipeline-steps)
 - [Advanced Usage](#advanced-usage)
 - [Documentation](#documentation)
@@ -86,34 +89,155 @@ That's it! The pipeline is ready to use.
 
 ---
 
-## Test run
+## Test Run
 
 Before attempting to add your own dataset, try running the workflow with the example data.
-This will download a .h5ad, preprocess it, run several embedders and create a hf dataset. Details below.
-This will not yet use the huggingface hub or nextcloud.
+This will download a .h5ad, preprocess it, run several embedders and create a HuggingFace dataset.
+
+**Note:** This test run will NOT use HuggingFace Hub or Nextcloud (both are disabled in the example config for simplicity).
+
+### Run the Test Workflow
+
+```bash
+# Activate the virtual environment
+source .venv/bin/activate
 
 # Run workflow in foreground (recommended for first runs)
-
 python scripts/workflow/submit_workflow_local.py \
- --config-name dataset_config_example \
- --foreground
+    --config-name dataset_config_example \
+    --foreground
 
 # Or run in background (detached)
-
 python scripts/workflow/submit_workflow_local.py \
- --config-name dataset_config_example
+    --config-name dataset_config_example
+```
 
-````
+### Monitor Progress
 
-Check out the main log in outputs/"run_id"/logs/workflow_summary.log to see the progress. Specic logs for each step are in their respective subfolders.
-Once this is run sucessfully, you can check out the logs of the create_dataset process in the outputs folder and in the subfolder dataset_creation. The file create_ds_0.out should point to the location of the final hf dataset (at the end of the logs).
-Try loading it to see whats inside:
+Check the main log to see the progress:
+
+```bash
+# View workflow summary (replace date/run_id with your actual run)
+tail -f outputs/2025-*/workflow_local_*/logs/workflow_summary.log
+```
+
+Specific logs for each step are in their respective subfolders:
+
+- `outputs/{date}/workflow_{run_id}/preprocessing/`
+- `outputs/{date}/workflow_{run_id}/embedding/`
+- `outputs/{date}/workflow_{run_id}/dataset_creation/`
+
+### Load the Created Dataset
+
+Once the workflow completes successfully, find the dataset location in the logs:
+
+```bash
+# Check the dataset creation output (it will show the final location)
+cat outputs/*/workflow_local_*/dataset_creation/job_local_*/create_ds_0.out
+```
+
+Load and inspect the dataset:
+
 ```python
 from datasets import load_from_disk
-dataset_path = "outputs/workflow_local_*/dataset_creation/job_local_*/job_0/demo_dataset"
+
+# Replace with your actual path from the logs
+dataset_path = "outputs/2025-*/workflow_local_*_*/dataset_creation/job_local_*/job_0/demo_dataset"
+
+# Load the dataset
 ds = load_from_disk(dataset_path)
-ds
-````
+
+# Inspect it
+print(ds)
+# DatasetDict({
+#     train: Dataset({...})
+#     validation: Dataset({...})
+# })
+
+# Check a sample
+print(ds['train'][0])
+```
+
+**Important:** Use `load_from_disk()` to load locally saved datasets. The `load_dataset()` function is for loading from the HuggingFace Hub.
+
+---
+
+## HuggingFace Hub Integration
+
+The pipeline can automatically publish datasets to the HuggingFace Hub for easy sharing and distribution.
+
+### Setup
+
+1. **Create a HuggingFace account:**
+   - Visit [https://huggingface.co/join](https://huggingface.co/join)
+   - Create an account (free)
+
+2. **Get your access token:**
+   - Go to [https://huggingface.co/settings/tokens](https://huggingface.co/settings/tokens)
+   - Create a new token with **write** permissions
+   - Copy the token
+
+3. **Configure authentication:**
+
+Create a `.env` file in the project root:
+
+```bash
+# In the project root directory
+cat > .env << 'EOF'
+# HuggingFace Hub authentication
+HF_TOKEN=hf_xxxxxxxxxxxxxxxxxxxxx  # Your token here
+EOF
+```
+
+Or log in via CLI:
+
+```bash
+huggingface-cli login
+# Paste your token when prompted
+```
+
+4. **Configure dataset publication:**
+
+In your dataset config (or `conf/dataset_default.yaml`):
+
+```yaml
+dataset_creation:
+  enabled: true
+  push_to_hub: true # Enable HuggingFace Hub upload
+  base_repo_id: "your-hf-username" # Your HuggingFace username
+```
+
+### Usage
+
+When the workflow completes, your dataset will be published to:
+
+```
+https://huggingface.co/datasets/{your-username}/{dataset-name}_{format}_{caption-key}
+```
+
+Example: `https://huggingface.co/datasets/jo-mengr/cellxgene_pseudo_bulk_10k_multiplets_natural_language_annotation`
+
+The dataset will include:
+
+- ✅ All splits (train/validation or test)
+- ✅ Automatically generated README with dataset card
+- ✅ Schema and feature descriptions
+- ✅ Download statistics and usage examples
+
+### Private vs Public Datasets
+
+By default, datasets are uploaded as **private**. You can control this in your dataset configuration:
+
+```yaml
+dataset_creation:
+  push_to_hub: true
+  base_repo_id: "your-hf-username"
+  private: true # true = private (default), false = public
+```
+
+To make a dataset public, set `private: false` in your config, or update the repository settings on HuggingFace after upload.
+
+---
 
 ## Configuration
 
@@ -423,6 +547,94 @@ python scripts/workflow/submit_workflow.py \
 
 - Logs: `{output_directory}/{date}/workflow_{job_id}/`
 - Data: `{slurm_base_file_path}/` (organized into `raw/`, `processed/`, `processed_with_emb/`)
+
+---
+
+## Nextcloud Integration
+
+Nextcloud integration allows you to store large AnnData files remotely, making your HuggingFace datasets truly autonomous and shareable without local file dependencies.
+
+### Why Nextcloud?
+
+HuggingFace datasets store only **metadata** (cell sentences, captions, negative indices). The actual AnnData files with expression matrices and embeddings are stored separately. Nextcloud provides:
+
+- ☁️ **Remote storage** for large AnnData files
+- 🔗 **Share links** embedded in the dataset for downstream access
+- 🌐 **Independence** from local file systems
+- 🤝 **Easy sharing** - anyone with the HF dataset can access the data
+
+### Setup
+
+1. **Get Nextcloud access:**
+   - Obtain a Nextcloud account (institutional, self-hosted, or cloud provider)
+   - You need: URL, username, and password
+
+2. **Configure credentials:**
+
+Create or edit the `.env` file in the project root:
+
+```bash
+# In the project root directory
+cat >> .env << 'EOF'
+
+# Nextcloud authentication
+NEXTCLOUD_URL=https://cloud.example.com  # Your Nextcloud instance URL (what you type in browser)
+NEXTCLOUD_USER=your-username              # Your Nextcloud username
+NEXTCLOUD_PASSWORD=your-password          # Your Nextcloud password
+EOF
+```
+
+**Security note:** The `.env` file is in `.gitignore` and will not be committed to git.
+
+3. **Enable Nextcloud in dataset config:**
+
+```yaml
+dataset_creation:
+  enabled: true
+  use_nextcloud: true # Enable Nextcloud upload
+
+  nextcloud_config:
+    url: "NEXTCLOUD_URL" # Will be read from .env
+    username: "NEXTCLOUD_USER" # Will be read from .env
+    password: "NEXTCLOUD_PASSWORD" # Will be read from .env
+    remote_path: "" # Automatically set based on dataset
+```
+
+The environment variables will be automatically resolved at runtime.
+
+### How It Works
+
+1. **During dataset creation:**
+   - Processed AnnData files are uploaded to Nextcloud
+   - Share links are generated for each file
+   - Links are embedded in the HuggingFace dataset
+
+2. **When using the dataset:**
+   - The `adata_link` column contains Nextcloud share URLs
+   - Downstream models can download files on-demand
+   - No local file dependencies needed
+
+### Nextcloud Directory Structure
+
+Files are organized in Nextcloud as:
+
+```
+{remote_path}/
+└── {dataset_name}/
+    ├── train/
+    │   ├── chunk_0.zarr.zip
+    │   └── chunk_1.zarr.zip
+    └── validation/
+        └── chunk_0.zarr.zip
+```
+
+### Other Storage Backends
+
+**Currently supported:** Nextcloud only
+
+**Want other backends?** If you need support for other cloud storage providers (AWS S3, Google Drive, Figshare, Zenodo, etc.), please [open an issue](https://github.com/mengerj/adata_hf_datasets/issues) describing your use case. We're interested in adding compatibility for additional storage backends!
+
+**For developers:** The storage interface is in `src/adata_hf_datasets/file_utils.py`. Contributions for new backends are welcome!
 
 ---
 
@@ -772,6 +984,24 @@ ssh cpu_cluster "ls /home/username/adata_hf_datasets/.venv/bin/python"
 - Verify `base_file_path` is accessible and has correct permissions
 - For SLURM: Ensure `base_file_path` is accessible from both CPU and GPU clusters
 - Check that previous steps completed successfully
+
+### Dataset Loading Issues
+
+**Problem:** `ValueError: Couldn't infer the same data file format for all splits`
+
+**Solution:** Use `load_from_disk()` instead of `load_dataset()` for locally saved datasets:
+
+```python
+# ✅ Correct - for locally saved datasets
+from datasets import load_from_disk
+ds = load_from_disk("/path/to/dataset")
+
+# ❌ Wrong - this is for HuggingFace Hub
+from datasets import load_dataset
+ds = load_dataset("/path/to/dataset")  # Will fail!
+```
+
+`load_dataset()` is only for loading datasets from the HuggingFace Hub or inferring formats from raw files. For datasets saved with `save_to_disk()`, always use `load_from_disk()`.
 
 ### Getting Help
 

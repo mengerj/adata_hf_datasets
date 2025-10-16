@@ -64,6 +64,7 @@ dataset_creation:
   enabled: true
   push_to_hub: false
   use_nextcloud: false
+  private: true # Whether to make the HuggingFace Hub dataset private (true) or public (false)
   dataset_format: "multiplets" # "multiplets" for training datasets, "single" for test datasets
   # Dataset-specific parameters
   required_obsm_keys: ["X_pca", "X_scvi_fm", "X_gs10k"] #, "X_geneformer"]

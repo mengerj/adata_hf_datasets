@@ -215,6 +215,7 @@ dataset_creation:
   output_dir: "data/hf_datasets"
   push_to_hub: true
   base_repo_id: "jo-mengr"
+  private: true # Whether to make the HuggingFace Hub dataset private (true) or public (false)
 
   # Nextcloud upload (dataset-specific)
   use_nextcloud: false
