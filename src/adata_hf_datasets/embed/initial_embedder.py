@@ -1993,15 +1993,8 @@ class SCVIEmbedderFM(SCVIEmbedder):
 
 class GeneSelectEmbedder(BaseEmbedder):
     """
-    Gene selection embedder that uses the same gene set as the scVI foundation model
-    but returns the raw expression values instead of scVI embeddings.
-
-    This embedder uses the gene list from resources/gene_selection_ENSG_8k.txt, which
-    contains exactly the same genes that the scVI foundation model selects. This approach
-    is much faster than loading the full scVI model since it only requires the gene list.
-
-    The gene list contains 8000 genes that were selected by the scVI foundation model
-    for consistent gene selection across datasets.
+    Gene selection embedder that uses a list of genes to get their expression values as an initial
+    embedding for a given cell.
     """
 
     def __init__(self, embedding_dim: int = None, **init_kwargs):
