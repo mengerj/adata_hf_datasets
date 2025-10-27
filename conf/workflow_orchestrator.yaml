@@ -7,7 +7,7 @@
 # =============================================================================
 workflow:
   # Execution backend: "slurm" (default, submit via SSH + SLURM) or "local" (run on this machine)
-  execution_mode: local
+  execution_mode: slurm
 
   # Transfer mode configuration
   # Set to true to use local scratch storage with transfers between clusters (faster processing, slower transfers)
