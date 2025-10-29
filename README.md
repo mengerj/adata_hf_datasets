@@ -46,46 +46,126 @@ This pipeline transforms raw single-cell RNA-seq data into ready-to-use HuggingF
 
 ### Prerequisites
 
-- Git (with submodule support)
-- [uv](https://github.com/astral-sh/uv) - Fast Python package installer
-- Python 3.10+ (managed by uv)
+- Python 3.10-3.13 (see [Python version requirements](#python-version-requirements))
+- Git (submodules only needed if installing Geneformer support or running the full pipeline)
 
-### Setup
+### Installation Methods
 
-1. **Clone the repository with submodules:**
+Choose the installation method based on your use case:
+
+- **Pipeline usage**: Running workflow scripts and orchestrators → Use `uv` (Option 1)
+- **Library usage**: Importing as a dependency in other projects → Use `pip` (Option 2)
+
+#### Option 1: Using uv (For Pipeline/Workflow Usage)
+
+[uv](https://github.com/astral-sh/uv) is a fast Python package installer that handles submodule dependencies automatically. **Use this method if you want to run the pipeline scripts and workflows.**
+
+1. **Clone the repository:**
 
 ```bash
 git clone https://github.com/mengerj/adata_hf_datasets.git
 cd adata_hf_datasets
-
-# Initialize and update submodules (required for Geneformer)
-git submodule update --init --recursive
 ```
 
-2. **Install dependencies using uv:**
+2. **Install dependencies:**
 
 ```bash
-# Install all dependencies including optional extras
+# Install without Geneformer (no submodules needed)
 uv sync --all-extras --no-extra geneformer
+
+# OR install with Geneformer (requires submodules)
+git submodule update --init --recursive
+uv sync --all-extras
 ```
-
-Geneformer can only be installed on a linux machine and only be used with a cuda device available.
-
-This creates a virtual environment and installs all required packages including:
-
-- Core dependencies (anndata, scanpy, datasets)
-- Embedding tools (scVI, Geneformer)
-- Workflow orchestration tools
-- All optional dependencies
 
 3. **Activate the virtual environment:**
 
 ```bash
-# The virtual environment is created in .venv/
 source .venv/bin/activate
 ```
 
-That's it! The pipeline is ready to use.
+#### Option 2: Using pip (For Library Usage in Other Projects)
+
+**Use this method if you want to import and use this package as a dependency in another project.** This is the recommended approach for library usage - no submodules are required for basic usage (no geneformer)
+
+**From GitHub (recommended for library usage):**
+
+```bash
+pip install git+https://github.com/mengerj/adata_hf_datasets.git
+```
+
+**Or add to your project's requirements.txt:**
+
+```txt
+git+https://github.com/mengerj/adata_hf_datasets.git
+```
+
+**From local clone (for development):**
+
+```bash
+git clone https://github.com/mengerj/adata_hf_datasets.git
+cd adata_hf_datasets
+pip install .
+# Or for editable install: pip install -e .
+```
+
+**Optional: Install Geneformer support** (only if you need Geneformer embeddings):
+
+```bash
+# First initialize submodules
+git submodule update --init --recursive
+
+# Then install Geneformer from the local submodule
+pip install external/Geneformer
+```
+
+**Example: Using as a library in your project**
+
+```python
+from adata_hf_datasets.embed import GeneSelectEmbedder10k
+from adata_hf_datasets.pp import preprocess_adata
+import anndata as ad
+
+# Use the embedders and preprocessing functions
+embedder = GeneSelectEmbedder10k(n_components=50)
+embeddings = embedder.embed(adata=your_adata)
+
+# Or use preprocessing
+processed_adata = preprocess_adata(your_raw_adata)
+```
+
+**Note:** Geneformer can only be installed on Linux machines with CUDA support and requires submodules to be initialized.
+
+### Python Version Requirements
+
+The package requires Python **3.10, 3.11, 3.12, or 3.13**. The current requirement is `>=3.10,<3.14`. Python 3.9 and earlier, or Python 3.14+ are not supported.
+
+### Submodule Control
+
+Submodules are **optional** and only needed if you want to use Geneformer embeddings:
+
+- **Without submodules:** You can install and use all features except Geneformer embeddings
+- **With submodules:** Initialize with `git submodule update --init --recursive` before installing Geneformer
+
+To avoid submodule initialization during clone, use:
+
+```bash
+git clone --recurse-submodules=no https://github.com/mengerj/adata_hf_datasets.git
+```
+
+### What Gets Installed
+
+The base installation includes:
+
+- Core dependencies (anndata, scanpy, datasets, huggingface-hub)
+- Embedding tools (scVI, PCA, HVG)
+- Workflow orchestration tools (Hydra)
+- All optional dependencies except Geneformer
+
+Geneformer support is only installed if:
+
+1. Submodules are initialized
+2. You install from the local path (see above)
 
 ---
 
@@ -909,13 +989,51 @@ Detailed documentation for each component:
 uv sync --all-extras --no-extra geneformer -v
 ```
 
-**Problem:** Git submodule not initialized
+**Problem:** Python version error: "requires a different Python: X.X.X not in '<3.14,>=3.10'"
 
 **Solution:**
+The package requires Python 3.10, 3.11, 3.12, or 3.13. If you see this error, you're likely using Python 3.14+ or an older version (3.9 or earlier). Check your Python version:
 
 ```bash
-git submodule update --init --recursive
+python --version
 ```
+
+If you need to use a different Python version, consider using `pyenv` or a virtual environment with the correct version.
+
+**Problem:** Pip installation is very slow or fails
+
+**Solution:**
+Pip installation can be slow due to dependency resolution. Consider:
+
+1. Using `uv` instead (much faster): `uv pip install .`
+2. Using pre-built wheels: `pip install --only-binary :all: .` (may not work for local packages)
+3. Installing in a clean virtual environment
+
+**Problem:** Git submodule issues/maintenance
+
+**Solutions:**
+
+```bash
+# Initialize submodules (only needed for Geneformer)
+git submodule update --init --recursive
+
+# Skip submodules entirely when cloning
+git clone --recurse-submodules=no https://github.com/mengerj/adata_hf_datasets.git
+
+# Remove submodule initialization if already cloned
+git submodule deinit --all -f
+```
+
+**Note:** Submodules are optional and only needed for Geneformer support. You can install and use the package without them.
+
+**Problem:** `pip install .[geneformer]` doesn't install Geneformer
+
+**Solution:**
+The `geneformer` extra is a marker only. To install Geneformer:
+
+1. Initialize submodules: `git submodule update --init --recursive`
+2. Install from local path: `pip install external/Geneformer`
+3. Or use `uv sync --all-extras` which handles this automatically
 
 ### Configuration Issues
 

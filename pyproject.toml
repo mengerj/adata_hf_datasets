@@ -11,11 +11,13 @@ readme = "README.md"
 authors = [
   { name = "Jonatan Menger", email = "jonatan.menger@gmail.com" },
 ]
-requires-python = ">=3.11,<3.13"
+requires-python = ">=3.10,<3.14"
 classifiers = [
   "Programming Language :: Python :: 3 :: Only",
+  "Programming Language :: Python :: 3.10",
   "Programming Language :: Python :: 3.11",
   "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
 ]
 dependencies = [
   "anndata",
@@ -58,10 +60,16 @@ optional-dependencies.doc = [
   "sphinx-autodoc-typehints",
   "sphinx-book-theme",
 ]
-optional-dependencies.geneformer = [
-  "geneformer",
-]
+# Note: The geneformer extra is a marker only.
+# To actually install geneformer:
+#   1. Initialize submodules: git submodule update --init --recursive
+#   2. Install from local path: pip install external/Geneformer
+# This extra is intentionally empty to allow pip install without submodules.
+optional-dependencies.geneformer = [  ]
 
+# uv-specific configuration: maps geneformer package to local submodule path
+# This is ignored by pip. For pip users, install geneformer manually:
+# pip install external/Geneformer (after initializing submodules)
 optional-dependencies.test = [
   "coverage",
   "pytest",
