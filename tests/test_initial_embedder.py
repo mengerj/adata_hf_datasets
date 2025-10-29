@@ -4,7 +4,7 @@ import pytest
 from anndata import read_h5ad, AnnData, read_zarr
 
 from adata_hf_datasets.embed import InitialEmbedder
-from adata_hf_datasets.embed import InitialEmbedder as ie_mod
+import adata_hf_datasets.embed.initial_embedder as ie_mod
 
 
 @pytest.fixture
