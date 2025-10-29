@@ -9,10 +9,11 @@ from .utils import (
     prepend_instrument_to_description,
     delete_layers,
 )
-from .orchestrator import preprocess_h5ad
+from .orchestrator import preprocess_h5ad, preprocess_adata
 from .bimodal import split_if_bimodal
 
 __all__ = [
+    "preprocess_adata",
     "pp_quality_control",
     "pp_adata_general",
     "pp_adata_geneformer",
