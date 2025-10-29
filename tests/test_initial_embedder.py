@@ -3,8 +3,8 @@ import pandas as pd
 import pytest
 from anndata import read_h5ad, AnnData, read_zarr
 
-import adata_hf_datasets.initial_embedder as ie_mod
 from adata_hf_datasets.embed import InitialEmbedder
+from adata_hf_datasets.embed import InitialEmbedder as ie_mod
 
 
 @pytest.fixture
