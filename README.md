@@ -122,8 +122,8 @@ pip install external/Geneformer
 **Example: Using as a library in your project**
 
 ```python
-from adata_hf_datasets.embed import InitialEmbedder
-from adata_hf_datasets.pp import pp_quality_control
+from adata_hf_datasets import InitialEmbedder, AnnDataSetConstructor
+from adata_hf_datasets.pp import preprocess_adata
 import anndata as ad
 
 # Use the embedders and preprocessing functions
@@ -131,7 +131,14 @@ embedder = InitialEmbedder(method="gs10k")
 embeddings = embedder.embed(adata=your_adata)
 
 # Or use preprocessing
-processed_adata = pp_quality_control(your_raw_adata)
+processed_adata = preprocess_adata(your_raw_adata)
+
+# Or create a hf_dataset from an adata object
+constr = AnnDataSetConstructor(dataset_format="multiplets")
+# See the docs of the method itself for details
+constr.add_anndata(adata=your_adata, caption_key = "your_caption_key_in_adata.obs", sentence_keys=["sample_idx"], adata_link="local_path or remote_share_link to h5ad or zarr file of this adata object")
+#you can add multiple anndata objects before creating the dataset
+ds = contrs.get_dataset()
 ```
 
 **Note:** Geneformer can only be installed on Linux machines with CUDA support and requires submodules to be initialized.
