@@ -24,9 +24,7 @@ import pandas as pd
 import pytest
 from datasets import Dataset
 
-from adata_hf_datasets.ds_constructor import (
-    AnnDataSetConstructor,
-)  # ← adjust to your package
+from adata_hf_datasets.dataset import AnnDataSetConstructor
 
 logger = logging.getLogger(__name__)  # predefined logger per guidelines
 
