@@ -2,28 +2,51 @@ name: Check Build
 
 on:
   push:
-    branches: [main]
+    branches: [main, master]
   pull_request:
-    branches: [main]
+    branches: [main, master]
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
-  package:
+  build-and-install:
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.10", "3.11", "3.12", "3.13"]
+
+    name: Build and test install - Python ${{ matrix.python-version }}
+
     steps:
       - uses: actions/checkout@v4
-      - name: Set up Python 3.12
+
+      - name: Set up Python ${{ matrix.python-version }}
         uses: actions/setup-python@v5
         with:
-          python-version: "3.12"
+          python-version: ${{ matrix.python-version }}
           cache: "pip"
           cache-dependency-path: "**/pyproject.toml"
+
       - name: Install build dependencies
         run: python -m pip install --upgrade pip wheel twine build
+
       - name: Build package
         run: python -m build
+
       - name: Check package
         run: twine check --strict dist/*.whl
+
+      - name: Test pip installation (sdist)
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install dist/*.tar.gz
+          python -c "import adata_hf_datasets; print(f'Successfully installed {adata_hf_datasets.__name__}')"
+
+      - name: Test pip installation (wheel)
+        if: success()
+        run: |
+          python -m pip install --force-reinstall dist/*.whl
+          python -c "import adata_hf_datasets; print(f'Successfully installed {adata_hf_datasets.__name__}')"

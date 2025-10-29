@@ -22,11 +22,8 @@ classifiers = [
 dependencies = [
   "anndata",
   "appdirs>=1.4.4",
-  "biopython>=1.85",
   "boto3>=1.37.15",
   "botocore>=1.37.15",
-  "bs4",
-  "dask>=2025.3",
   "datasets",
   "huggingface-hub>=0.28.1",
   "hydra-core>=1.3.2",
@@ -34,7 +31,7 @@ dependencies = [
   "ipywidgets>=8.1.5",
   "jupyter>=1.1.1",
   "mygene>=3.2.2",
-  "numcodecs==0.14.1",
+  #  "numcodecs==0.14.1",
   "numpy",
   "pandas",
   "pybiomart>=0.2",
@@ -44,9 +41,9 @@ dependencies = [
   "requests",
   "scanpy>=1.10.4",
   "scvi-tools>=1.2.2.post2",
-  "torch>=2.6",
-  "transformers==4.43.4",    # due to issues with importing AdamW used in Geneformer
-  "zarr==2.16.1",            #had some compatibility issues with anndata and numcodecs
+  "torch>=2.6",              # might need transformers 4.43.4 due to issues with importing AdamW used in Geneformer
+  "transformers>=4.43.4",
+  "zarr<3",                  #had some compatibility issues with anndata and numcodecs and used 2.16.1
 ]
 
 optional-dependencies.dev = [
@@ -54,18 +51,14 @@ optional-dependencies.dev = [
   "ruff",
   "twine",
 ]
-optional-dependencies.doc = [
-  "myst-nb",
-  "sphinx",
-  "sphinx-autodoc-typehints",
-  "sphinx-book-theme",
-]
 # Note: The geneformer extra is a marker only.
 # To actually install geneformer:
 #   1. Initialize submodules: git submodule update --init --recursive
 #   2. Install from local path: pip install external/Geneformer
 # This extra is intentionally empty to allow pip install without submodules.
-optional-dependencies.geneformer = [  ]
+optional-dependencies.geneformer = [
+  "geneformer",
+]
 
 # uv-specific configuration: maps geneformer package to local submodule path
 # This is ignored by pip. For pip users, install geneformer manually:

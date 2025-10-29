@@ -2,9 +2,9 @@ name: Test
 
 on:
   push:
-    branches: [main]
+    branches: [main, master]
   pull_request:
-    branches: [main]
+    branches: [main, master]
   schedule:
     - cron: "0 5 1,15 * *"
 
@@ -26,13 +26,17 @@ jobs:
           - os: ubuntu-latest
             python: "3.10"
           - os: ubuntu-latest
+            python: "3.11"
+          - os: ubuntu-latest
             python: "3.12"
+          - os: ubuntu-latest
+            python: "3.13"
           - os: ubuntu-latest
             python: "3.12"
             pip-flags: "--pre"
             name: PRE-RELEASE DEPENDENCIES
 
-    name: ${{ matrix.name }} Python ${{ matrix.python }}
+    name: ${{ matrix.name != '' && matrix.name || format('Python {0}', matrix.python) }}
 
     env:
       OS: ${{ matrix.os }}

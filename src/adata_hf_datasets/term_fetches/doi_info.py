@@ -1,3 +1,4 @@
+'''
 import requests
 import re
 from bs4 import BeautifulSoup
@@ -181,3 +182,4 @@ class DOIFetcher:
         if match:
             return match.group(1).strip()
         return f"Error: {section_name} section not found."
+'''

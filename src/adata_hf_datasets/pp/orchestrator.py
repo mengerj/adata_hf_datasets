@@ -46,7 +46,7 @@ def preprocess_h5ad(
     layers_to_delete: list[str] | None = None,
 ) -> None:
     """
-    Preprocess a large AnnData file in chunks and write a concatenated output.
+    Preprocess a large AnnData file in chunks and writes each chunk to disk.
 
     This function:
       1. Iterates over smaller AnnData chunks.
