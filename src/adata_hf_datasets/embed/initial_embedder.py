@@ -27,8 +27,82 @@ from appdirs import user_cache_dir
 import errno
 import time
 import random
+from importlib import resources
 
 logger = logging.getLogger(__name__)
+
+
+def _get_resource_path(resource_file: str, resources_dir: str = None) -> Path:
+    """
+    Get path to a resource file, using package data if resources_dir is default.
+
+    This function handles both:
+    1. Package-installed resources (when resources_dir is None or "resources")
+    2. Custom resource directories (when resources_dir is provided as a custom path)
+
+    Parameters
+    ----------
+    resource_file : str
+        Name of the resource file (e.g., "gene_selection_10k.txt")
+    resources_dir : str, optional
+        Custom resources directory. If None or "resources", uses package data.
+        If a custom path, uses that directory.
+
+    Returns
+    -------
+    Path
+        Path object pointing to the resource file
+    """
+    # If custom resources_dir is provided and it's not the default, use it
+    if resources_dir is not None and resources_dir != "resources":
+        return Path(resources_dir) / resource_file
+
+    # Otherwise, try to use package data
+    try:
+        # Try to access as package data using importlib.resources
+        # For Python < 3.9, use files() which returns a Traversable
+        # For Python >= 3.9, files() works directly
+        package = resources.files("adata_hf_datasets.resources")
+        resource_path = package / resource_file
+
+        # Check if the resource exists in the package
+        # files() returns a Traversable, we need to check if it exists
+        if resource_path.is_file():
+            # For compatibility with older code that expects a string/Path,
+            # we'll need to extract the actual path
+            # files() gives us a Traversable, which works with open() directly
+            # but for path operations, we might need the actual file system path
+            try:
+                # Try to convert Traversable to Path using os.fspath() (PEP 519)
+                # This works for most filesystem-based Traversable implementations
+                path_str = os.fspath(resource_path)
+                return Path(path_str)
+            except (TypeError, AttributeError):
+                # If that doesn't work, try string conversion
+                try:
+                    path_str = str(resource_path)
+                    # Check if it looks like a filesystem path
+                    if path_str.startswith("/") or (
+                        len(path_str) > 2 and path_str[1] == ":"
+                    ):
+                        return Path(path_str)
+                except (TypeError, AttributeError):
+                    pass
+                # Last fallback: try to resolve as Path from string
+                return Path(str(resource_path))
+    except (ModuleNotFoundError, ImportError, AttributeError):
+        # Package not installed or resources not found, fall back to local "resources" dir
+        pass
+
+    # Fallback: try local "resources" directory (for development/backward compatibility)
+    local_resource = Path("resources") / resource_file
+    if local_resource.exists():
+        return local_resource
+
+    # If all else fails, construct the path as before for error messages
+    if resources_dir is None:
+        resources_dir = "resources"
+    return Path(resources_dir) / resource_file
 
 
 def _redirect_tmp_cache_dir(
@@ -419,9 +493,9 @@ class PCAEmbedder(BaseEmbedder):
         model_file = kwargs.get("model_file", "cellxgene_geo_pca_10000_to_50.pkl")
         gene_list_file = kwargs.get("gene_list_file", "gene_selection_10k.txt")
 
-        # Construct full paths
-        self.model_path = str(Path(resources_dir) / model_file)
-        self.gene_list_path = str(Path(resources_dir) / gene_list_file)
+        # Construct full paths using helper function to support package data
+        self.model_path = str(_get_resource_path(model_file, resources_dir))
+        self.gene_list_path = str(_get_resource_path(gene_list_file, resources_dir))
 
         # Initialize model components
         self.pca_model = None
@@ -2026,8 +2100,8 @@ class GeneSelectEmbedder(BaseEmbedder):
             "gene_list_file", "gene_selection_common_genes.txt"
         )
 
-        # Construct full path
-        self.gene_list_path = str(Path(resources_dir) / gene_list_file)
+        # Construct full path using helper function to support package data
+        self.gene_list_path = str(_get_resource_path(gene_list_file, resources_dir))
 
         # Initialize gene list
         self.gene_order = None

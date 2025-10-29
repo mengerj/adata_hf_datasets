@@ -68,5 +68,11 @@ optional-dependencies.test = [
   "pytest",
 ]
 
+[tool.setuptools]
+packages = [ "adata_hf_datasets", "adata_hf_datasets.resources" ]
+
+[tool.setuptools.package-data]
+adata_hf_datasets.resources = [ "*.txt", "*.pkl" ]
+
 [tool.uv.sources]
 geneformer = { path = "external/Geneformer", extra = "geneformer" }
