@@ -68,9 +68,8 @@ optional-dependencies.test = [
   "pytest",
 ]
 
-[tool.setuptools]
-package-dir = { "" = "src" }
-packages = [ "adata_hf_datasets", "adata_hf_datasets.resources" ]
+[tool.setuptools.packages.find]
+where = [ "src" ]
 
 [tool.setuptools.package-data]
 "adata_hf_datasets.resources" = [ "*.txt", "*.pkl" ]
