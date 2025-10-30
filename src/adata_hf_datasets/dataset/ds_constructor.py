@@ -95,7 +95,7 @@ class AnnDataSetConstructor:
     def __init__(
         self,
         negatives_per_sample: int = 1,
-        dataset_format: str = "mutliplets",
+        dataset_format: str = "multiplets",
         resolve_negatives: bool = False,
     ) -> None:
         if dataset_format not in {"pairs", "multiplets", "single"}:

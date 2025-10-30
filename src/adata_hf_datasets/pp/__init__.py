@@ -11,6 +11,7 @@ from .utils import (
 )
 from .orchestrator import preprocess_h5ad, preprocess_adata
 from .bimodal import split_if_bimodal
+from .pybiomart_utils import ensure_ensembl_index
 
 __all__ = [
     "preprocess_adata",
@@ -23,4 +24,5 @@ __all__ = [
     "delete_layers",
     "preprocess_h5ad",
     "split_if_bimodal",
+    "ensure_ensembl_index",
 ]

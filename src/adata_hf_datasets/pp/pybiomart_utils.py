@@ -113,7 +113,9 @@ def ensure_ensembl_index(
 ) -> None:
     """
     Ensure that an AnnData.var index consists of Ensembl IDs,
-    dropping rows with empty IDs and deduplicating.
+    dropping rows with empty IDs and deduplicating. If there are no ensembl ids either in the column
+    or in the index, the function will call the add_fn to add them. By default, the add_fn is add_ensembl_ids, which assumes
+    that gene symbols are in adata.var_names and will add the ensembl ids to the adata.var[ensembl_col] column.
 
     Parameters
     ----------
