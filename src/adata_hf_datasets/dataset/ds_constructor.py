@@ -30,9 +30,13 @@ class AnnDataSetConstructor:
     ----------
     negatives_per_sample : int, default 1
         Number of negatives per anchor in *multiplets* or *pairs* format.
-    dataset_format : {'pairs', 'multiplets', 'single'}, default 'multiplets'
+    dataset_format : {'pairs', 'multiplets', 'single'}, default 'single'
         Output layout:
 
+        - **'single'**: Inference format containing only cell sentences and ``adata_link``.
+          No caption or negative sampling. Use this for inference with pretrained models or
+          test datasets where you only need the omics data representation. This is the default
+          format as it's most commonly used for inference.
         - **'multiplets'**: Training format with positive caption and multiple negative sample
           indices. Negatives alternate between caption negatives (different caption, even indices)
           and sentence negatives (different sample, odd indices). Negatives are drawn from
@@ -40,9 +44,6 @@ class AnnDataSetConstructor:
         - **'pairs'**: Training format that creates individual records with a binary ``label``
           column (1.0 for positive pairs, 0.0 for negative pairs). Each anchor generates
           one positive and one negative pair.
-        - **'single'**: Test/inference format containing only cell sentences and ``adata_link``.
-          No caption or negative sampling. Use this for test datasets where you only need
-          the omics data representation.
     resolve_negatives : bool, default False
         If True and only one ``sentence_key`` is provided, resolves negative indices to their
         actual content. This creates additional columns ``negative_1``, ``negative_2``, etc.
@@ -95,7 +96,7 @@ class AnnDataSetConstructor:
     def __init__(
         self,
         negatives_per_sample: int = 1,
-        dataset_format: str = "multiplets",
+        dataset_format: str = "single",
         resolve_negatives: bool = False,
     ) -> None:
         if dataset_format not in {"pairs", "multiplets", "single"}:
