@@ -139,7 +139,7 @@ class AnnDataSetConstructor:
         sentence_keys: List[str],
         adata_link: str,
         caption_key: Optional[str] = None,
-        batch_key: str = "batch",
+        batch_key: Optional[str] = None,
     ) -> None:
         """
         Extract required columns from an :class:`~anndata.AnnData` object
@@ -166,11 +166,16 @@ class AnnDataSetConstructor:
             metadata (e.g., "This sample was obtained from lung tissue and was annotated
             as a T cell..."). Required for 'pairs' and 'multiplets' formats, ignored for
             'single' format.
-        batch_key : str, default "batch"
+        batch_key : str, optional
             Column name from ``adata.obs`` that defines batches for negative sampling.
             Negatives are preferentially drawn from the same batch to ensure meaningful
-            contrastive pairs.
+            contrastive pairs. Required for 'pairs' and 'multiplets' formats, optional
+            (ignored) for 'single' format. Defaults to "batch" for non-single formats.
         """
+        # Set default batch_key for non-single formats
+        if batch_key is None and self.dataset_format != "single":
+            batch_key = "batch"
+
         self._ingest_obs_df(
             obs_df=adata.obs,
             source_name="AnnData",
@@ -187,7 +192,7 @@ class AnnDataSetConstructor:
         sentence_keys: List[str],
         adata_link: str,
         caption_key: Optional[str] = None,
-        batch_key: str = "batch",
+        batch_key: Optional[str] = None,
     ) -> None:
         """
         Register a plain DataFrame that fulfils the same column requirements
@@ -196,7 +201,7 @@ class AnnDataSetConstructor:
         Parameters
         ----------
         df : pandas.DataFrame
-            Must have ``sentence_keys``, ``batch_key`` and (if required)
+            Must have ``sentence_keys``, ``batch_key`` (if required) and (if required)
             ``caption_key`` columns. Its index becomes ``sample_idx``.
         sentence_keys : list of str
             Column names to use as cell sentences. See :py:meth:`add_anndata` for details.
@@ -204,9 +209,13 @@ class AnnDataSetConstructor:
             Path or URL to access the corresponding AnnData file. See :py:meth:`add_anndata` for details.
         caption_key : str, optional
             Column name to use as positive caption. See :py:meth:`add_anndata` for details.
-        batch_key : str, default "batch"
+        batch_key : str, optional
             Column name that defines batches. See :py:meth:`add_anndata` for details.
         """
+        # Set default batch_key for non-single formats
+        if batch_key is None and self.dataset_format != "single":
+            batch_key = "batch"
+
         self._ingest_obs_df(
             obs_df=df,
             source_name="DataFrame",
@@ -404,12 +413,17 @@ class AnnDataSetConstructor:
         source_name: str,
         sentence_keys: List[str],
         caption_key: Optional[str],
-        batch_key: str,
+        batch_key: Optional[str],
         adata_link: str,
     ) -> None:
         """Common ingestion routine for AnnData.obs or any standalone DataFrame."""
         if self.dataset_format in {"pairs", "multiplets"} and caption_key is None:
             raise ValueError("caption_key must be supplied for this dataset_format.")
+
+        if self.dataset_format in {"pairs", "multiplets"} and batch_key is None:
+            raise ValueError(
+                "batch_key must be supplied for 'pairs' and 'multiplets' formats."
+            )
 
         # Track and validate number of sentence keys
         if self._num_sentence_keys is None:
@@ -425,18 +439,22 @@ class AnnDataSetConstructor:
             raise ValueError(f"{source_name}: sentence_keys not found: {missing_sent}")
         if caption_key and caption_key not in obs_df.columns:
             raise ValueError(f"{source_name}: caption_key '{caption_key}' missing.")
-        if batch_key not in obs_df.columns:
+        if batch_key and batch_key not in obs_df.columns:
             raise ValueError(f"{source_name}: batch_key '{batch_key}' missing.")
 
         for idx in obs_df.index:
             self._index_to_sentences[idx] = [obs_df.at[idx, k] for k in sentence_keys]
-            batch = obs_df.at[idx, batch_key]
-            self._index_to_batch[idx] = batch
             self._index_to_adata_link[idx] = adata_link
+
+            # Only process batch and caption for non-single formats
+            batch = None
+            if batch_key is not None:
+                batch = obs_df.at[idx, batch_key]
+                self._index_to_batch[idx] = batch
 
             cap = obs_df.at[idx, caption_key] if caption_key else None
             self._index_to_caption[idx] = cap
-            if cap is not None:
+            if cap is not None and batch is not None:
                 self._batch_caption_map[(batch, cap)].append(idx)
                 self._caption_map[cap].append(idx)
 
