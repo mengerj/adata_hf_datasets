@@ -745,6 +745,8 @@ class GeneformerEmbedder(BaseEmbedder):
         model_name: str = "Geneformer-V2-104M",
         emb_extractor_init: dict = None,
         tokenizer_kwargs: dict | None = None,
+        geneformer_root: str | Path | None = None,
+        validate_paths: bool = True,
         **kwargs,
     ):
         """
@@ -758,6 +760,16 @@ class GeneformerEmbedder(BaseEmbedder):
         emb_extractor_init : dict, optional
             Dictionary with additional parameters for the EmbExtractor from Geneformer.
             See geneformer documentation for more information.
+        tokenizer_kwargs : dict, optional
+            Options forwarded to TranscriptomeTokenizer.
+        geneformer_root : str | Path, optional
+            Root directory where Geneformer repository is located. If None, tries to
+            auto-detect based on project structure. When Geneformer is installed via pip,
+            you should clone it from HuggingFace and pass the directory here:
+            `git clone https://huggingface.co/ctheodoris/Geneformer` then pass the path.
+        validate_paths : bool, optional
+            Whether to validate that required paths exist during initialization.
+            Default is True. Set to False if paths will be validated later (e.g., in subclasses).
         kwargs : dict
             Additional keyword arguments for the embedder, not used here but included
             for interface consistency.
@@ -766,11 +778,13 @@ class GeneformerEmbedder(BaseEmbedder):
         self.model = None
         self.model_name = model_name
         self.model_input_size = 4096  # Always 4096 for new models
-        self.project_dir = Path(__file__).resolve().parents[3]
+
+        # Resolve geneformer root directory
+        self.geneformer_root = self._resolve_geneformer_root(geneformer_root)
 
         # Construct directory paths
-        dictionary_dir = self.project_dir / "external" / "Geneformer" / "geneformer"
-        self.model_dir = self.project_dir / "external" / "Geneformer" / model_name
+        dictionary_dir = self.geneformer_root / "geneformer"
+        self.model_dir = self.geneformer_root / model_name
 
         # Set up dictionary file paths (updated to gc104M)
         self.ensembl_mapping_dict = str(
@@ -781,6 +795,10 @@ class GeneformerEmbedder(BaseEmbedder):
             dictionary_dir / "gene_median_dictionary_gc104M.pkl"
         )
         self.gene_name_id_dict = str(dictionary_dir / "gene_name_id_dict_gc104M.pkl")
+
+        # Validate that required directories and files exist (unless disabled)
+        if validate_paths:
+            self._validate_geneformer_paths()
 
         # Default parameters for EmbExtractor
         self.emb_extractor_init = {
@@ -811,10 +829,111 @@ class GeneformerEmbedder(BaseEmbedder):
         self.dataset_name = "geneformer"
 
         logger.info(
-            "Initialized GeneformerEmbedder with model_name=%s, model_input_size=%d",
+            "Initialized GeneformerEmbedder with model_name=%s, model_input_size=%d, geneformer_root=%s",
             self.model_name,
             self.model_input_size,
+            self.geneformer_root,
         )
+
+    def _resolve_geneformer_root(self, geneformer_root: str | Path | None) -> Path:
+        """
+        Resolve the Geneformer root directory.
+
+        Parameters
+        ----------
+        geneformer_root : str | Path | None
+            User-provided geneformer root directory, or None for auto-detection.
+
+        Returns
+        -------
+        Path
+            Resolved Path to the Geneformer root directory.
+
+        Raises
+        ------
+        ValueError
+            If the directory cannot be resolved or doesn't exist.
+        """
+        if geneformer_root is not None:
+            geneformer_root = Path(geneformer_root).resolve()
+            if not geneformer_root.exists():
+                raise ValueError(
+                    f"Provided geneformer_root does not exist: {geneformer_root}. "
+                    "Please clone Geneformer from https://huggingface.co/ctheodoris/Geneformer "
+                    "and provide the correct path."
+                )
+            return geneformer_root
+
+        # Try to auto-detect based on project structure (backward compatibility)
+        project_dir = Path(__file__).resolve().parents[3]
+        default_geneformer_root = project_dir / "external" / "Geneformer"
+
+        if default_geneformer_root.exists():
+            logger.info(
+                "Auto-detected Geneformer root at %s (project structure)",
+                default_geneformer_root,
+            )
+            return default_geneformer_root
+
+        # If auto-detection fails, provide helpful error message
+        raise ValueError(
+            f"Could not find Geneformer repository. Tried: {default_geneformer_root}\n"
+            "Please clone Geneformer from HuggingFace and install it:\n"
+            "  1. git clone https://huggingface.co/ctheodoris/Geneformer\n"
+            "  2. pip install <path_to_cloned_Geneformer>\n"
+            "  3. Pass the root directory to geneformer_root parameter:\n"
+            "     GeneformerEmbedder(geneformer_root='<path_to_cloned_Geneformer>')"
+        )
+
+    def _validate_geneformer_paths(self) -> None:
+        """
+        Validate that required Geneformer directories and files exist.
+
+        Raises
+        ------
+        ValueError
+            If required paths are missing, with helpful error messages.
+        """
+        errors = []
+
+        # Check dictionary directory
+        dictionary_dir = self.geneformer_root / "geneformer"
+        if not dictionary_dir.exists():
+            errors.append(
+                f"Geneformer dictionary directory not found: {dictionary_dir}"
+            )
+        else:
+            # Check required dictionary files
+            required_files = {
+                "ensembl_mapping_dict": self.ensembl_mapping_dict,
+                "token_dictionary": self.token_dictionary_file,
+                "gene_median": self.gene_median_file,
+                "gene_name_id_dict": self.gene_name_id_dict,
+            }
+
+            for name, file_path in required_files.items():
+                if not Path(file_path).exists():
+                    errors.append(f"Required file '{name}' not found: {file_path}")
+
+        # Check model directory
+        if not self.model_dir.exists():
+            errors.append(
+                f"Model directory not found: {self.model_dir}\n"
+                f"  Make sure the model '{self.model_name}' is downloaded and available."
+            )
+
+        if errors:
+            error_msg = "Geneformer paths validation failed:\n" + "\n".join(
+                f"  - {e}" for e in errors
+            )
+            error_msg += (
+                "\n\nTo fix this:\n"
+                "  1. Clone Geneformer: git clone https://huggingface.co/ctheodoris/Geneformer\n"
+                "  2. Install it: pip install <path_to_cloned_Geneformer>\n"
+                "  3. Download required model files\n"
+                "  4. Pass the root directory: GeneformerEmbedder(geneformer_root='<path_to_cloned_Geneformer>')"
+            )
+            raise ValueError(error_msg)
 
     def _patch_transformers_hybrid_cache(self):
         """
@@ -1845,55 +1964,69 @@ class SCVIEmbedder(BaseEmbedder):
 
 class GeneformerV1Embedder(GeneformerEmbedder):
     """
-    Geneformer V1 embedder using legacy resources under `resources/old_geneformer`.
+    Geneformer V1 embedder using legacy resources.
 
     Differences to the default Geneformer embedder:
     - Input size is 2048 genes
     - Embedding dimensionality is 512
-    - Uses legacy dictionary files and model directory:
-      - model_dir: project_dir/resources/old_geneformer/geneformer-12L-30M
-      - token_dictionary_file: token_dictionary.pkl
-      - gene_median_file: gene_median_dictionary.pkl
-      - ensembl/gene mapping file: gene_name_id_dict.pkl
+    - Uses legacy dictionary files and model directory
+
+    Parameters
+    ----------
+    geneformer_root : str | Path, optional
+        Root directory where Geneformer repository is located. Passed to parent class.
+    geneformer_v1_root : str | Path, optional
+        Root directory where Geneformer_v1 repository is located. If None, tries to
+        auto-detect based on project structure. When installed separately, you should
+        provide the path to the cloned Geneformer_v1 directory.
+    **kwargs
+        Additional keyword arguments passed to parent class.
     """
 
-    def __init__(self, **kwargs):
+    def __init__(self, geneformer_v1_root: str | Path | None = None, **kwargs):
         tokenizer_kwargs = kwargs.get("tokenizer_kwargs", {})
         # Ensure special_token=False for legacy tokenizer behavior unless explicitly overridden
         tokenizer_kwargs = {**{"special_token": False}, **tokenizer_kwargs}
-        # tokenizer_kwargs = None
 
         super().__init__(
             model_name="geneformer-12L-30M",
             emb_extractor_init=kwargs.get("emb_extractor_init"),
             tokenizer_kwargs=tokenizer_kwargs,
+            geneformer_root=kwargs.get("geneformer_root"),
+            validate_paths=False,  # V1 will validate with its own paths
         )
 
         self.embedding_dim = 512
         self.model_input_size = 2048
         tokenizer_kwargs["model_input_size"] = self.model_input_size
 
+        # Resolve Geneformer_v1 root directory
+        self.geneformer_v1_root = self._resolve_geneformer_v1_root(geneformer_v1_root)
+
         # Setup Git LFS for Geneformer_v1
         self._setup_git_lfs()
 
-        legacy_dir = self.project_dir / "external" / "Geneformer_v1" / "geneformer"
+        legacy_dir = self.geneformer_v1_root / "geneformer"
 
         # Override dictionary file paths to legacy resources
-        # The ensembl mapping dict is mapping ensembl ids to ensemmbl ids. The gene_name_id_dict file present in the legacy dir cannot be used for this purpose.
-        self.ensembl_mapping_dict = str(
-            self.project_dir
-            / "external"
-            / "Geneformer"
+        # The ensembl mapping dict is mapping ensembl ids to ensembl ids. The gene_name_id_dict file present in the legacy dir cannot be used for this purpose.
+        # For V1, we still need the gc30M dictionary from the main Geneformer repo
+        ensembl_dict_path = (
+            self.geneformer_root
             / "geneformer"
             / "gene_dictionaries_30m"
             / "ensembl_mapping_dict_gc30M.pkl"
         )
+        self.ensembl_mapping_dict = str(ensembl_dict_path)
         self.token_dictionary_file = str(legacy_dir / "token_dictionary.pkl")
         self.gene_median_file = str(legacy_dir / "gene_median_dictionary.pkl")
         self.gene_name_id_dict = str(legacy_dir / "gene_name_id_dict.pkl")
 
         # Override model directory to legacy model
-        self.model_dir = legacy_dir.parent / "geneformer-12L-30M"
+        self.model_dir = self.geneformer_v1_root / "geneformer-12L-30M"
+
+        # Re-validate paths with updated V1-specific paths
+        self._validate_geneformer_v1_paths()
 
         # Use a distinct dataset name to avoid collisions with V2 tokenized outputs
         self.dataset_name = "geneformer_v1"
@@ -1907,15 +2040,132 @@ class GeneformerV1Embedder(GeneformerEmbedder):
             legacy_dir,
         )
 
+    def _resolve_geneformer_v1_root(
+        self, geneformer_v1_root: str | Path | None
+    ) -> Path:
+        """
+        Resolve the Geneformer_v1 root directory.
+
+        Parameters
+        ----------
+        geneformer_v1_root : str | Path | None
+            User-provided geneformer_v1 root directory, or None for auto-detection.
+
+        Returns
+        -------
+        Path
+            Resolved Path to the Geneformer_v1 root directory.
+
+        Raises
+        ------
+        ValueError
+            If the directory cannot be resolved or doesn't exist.
+        """
+        if geneformer_v1_root is not None:
+            geneformer_v1_root = Path(geneformer_v1_root).resolve()
+            if not geneformer_v1_root.exists():
+                raise ValueError(
+                    f"Provided geneformer_v1_root does not exist: {geneformer_v1_root}. "
+                    "Please provide the correct path to the Geneformer_v1 directory."
+                )
+            return geneformer_v1_root
+
+        # Try to auto-detect based on project structure (backward compatibility)
+        # Infer from geneformer_root if available, otherwise use file-based detection
+        if hasattr(self, "geneformer_root") and self.geneformer_root.exists():
+            # If geneformer_root is in external/Geneformer, check for external/Geneformer_v1
+            if (
+                self.geneformer_root.name == "Geneformer"
+                and self.geneformer_root.parent.name == "external"
+            ):
+                default_geneformer_v1_root = (
+                    self.geneformer_root.parent / "Geneformer_v1"
+                )
+            else:
+                # Try sibling directory
+                default_geneformer_v1_root = (
+                    self.geneformer_root.parent / "Geneformer_v1"
+                )
+        else:
+            # Fallback to file-based detection
+            project_dir = Path(__file__).resolve().parents[3]
+            default_geneformer_v1_root = project_dir / "external" / "Geneformer_v1"
+
+        if default_geneformer_v1_root.exists():
+            logger.info(
+                "Auto-detected Geneformer_v1 root at %s (project structure)",
+                default_geneformer_v1_root,
+            )
+            return default_geneformer_v1_root
+
+        # If auto-detection fails, provide helpful error message
+        raise ValueError(
+            f"Could not find Geneformer_v1 repository. Tried: {default_geneformer_v1_root}\n"
+            "Please provide the path to the Geneformer_v1 directory:\n"
+            "  GeneformerV1Embedder(geneformer_v1_root='<path_to_Geneformer_v1>')"
+        )
+
+    def _validate_geneformer_v1_paths(self) -> None:
+        """
+        Validate that required Geneformer_v1 directories and files exist.
+
+        Raises
+        ------
+        ValueError
+            If required paths are missing, with helpful error messages.
+        """
+        errors = []
+
+        # Check legacy dictionary directory
+        legacy_dir = self.geneformer_v1_root / "geneformer"
+        if not legacy_dir.exists():
+            errors.append(f"Geneformer_v1 dictionary directory not found: {legacy_dir}")
+        else:
+            # Check required V1 dictionary files
+            required_files = {
+                "token_dictionary": self.token_dictionary_file,
+                "gene_median": self.gene_median_file,
+                "gene_name_id_dict": self.gene_name_id_dict,
+            }
+
+            for name, file_path in required_files.items():
+                if not Path(file_path).exists():
+                    errors.append(f"Required file '{name}' not found: {file_path}")
+
+        # Check ensembl mapping dict from main Geneformer repo
+        if not Path(self.ensembl_mapping_dict).exists():
+            errors.append(
+                f"Required ensembl_mapping_dict not found: {self.ensembl_mapping_dict}\n"
+                f"  This file should be in the main Geneformer repository."
+            )
+
+        # Check model directory
+        if not self.model_dir.exists():
+            errors.append(
+                f"Model directory not found: {self.model_dir}\n"
+                f"  Make sure the model 'geneformer-12L-30M' is downloaded and available."
+            )
+
+        if errors:
+            error_msg = "Geneformer_v1 paths validation failed:\n" + "\n".join(
+                f"  - {e}" for e in errors
+            )
+            error_msg += (
+                "\n\nTo fix this:\n"
+                "  1. Ensure Geneformer_v1 directory is available\n"
+                "  2. Download required model files\n"
+                "  3. Pass the root directory: GeneformerV1Embedder(geneformer_v1_root='<path_to_Geneformer_v1>')"
+            )
+            raise ValueError(error_msg)
+
     def _setup_git_lfs(self):
         """Setup Git LFS for Geneformer_v1 submodule."""
         import subprocess
         import os
         from pathlib import Path
 
-        # Ensure project_dir is a Path object
-        project_dir = Path(self.project_dir)
-        geneformer_v1_dir = project_dir / "external" / "Geneformer_v1"
+        # Use geneformer_v1_root directly
+        geneformer_v1_dir = Path(self.geneformer_v1_root)
         gitattributes_path = geneformer_v1_dir / ".gitattributes"
 
         # Check if .gitattributes exists and has the correct content
@@ -2321,6 +2571,11 @@ class InitialEmbedder:
         - resources_dir: Directory containing resource files (default: "resources")
         - For PCA: model_file, gene_list_file
         - For GeneSelect: gene_list_file
+        - For Geneformer: geneformer_root - Root directory where Geneformer repository
+          is located. Required when Geneformer is installed via pip. Clone from
+          https://huggingface.co/ctheodoris/Geneformer and pass the directory path.
+        - For GeneformerV1: geneformer_v1_root - Root directory for Geneformer_v1
+          repository (if using legacy V1 embedder)
     """
 
     def __init__(
