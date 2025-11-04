@@ -34,7 +34,8 @@ dependencies = [
   #  "numcodecs==0.14.1",
   "numpy",
   "pandas",
-  "pyarrow>=14.0.1,<18",
+  "pyarrow>=14.0.1,<18; python_version<'3.13'",
+  "pyarrow>=18; python_version>='3.13'",
   "pybiomart>=0.2",
   "pynvml>=12",
   "pysradb>=2.2.2",
@@ -42,9 +43,9 @@ dependencies = [
   "requests",
   "scanpy>=1.10.4",
   "scvi-tools>=1.2.2.post2",
-  "torch>=2.6",              # might need transformers 4.43.4 due to issues with importing AdamW used in Geneformer
+  "torch>=2.6",                                 # might need transformers 4.43.4 due to issues with importing AdamW used in Geneformer
   "transformers>=4.43.4",
-  "zarr<3",                  #had some compatibility issues with anndata and numcodecs and used 2.16.1
+  "zarr<3",                                     #had some compatibility issues with anndata and numcodecs and used 2.16.1
 ]
 
 optional-dependencies.dev = [
