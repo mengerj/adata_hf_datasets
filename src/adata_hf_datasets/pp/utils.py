@@ -486,8 +486,8 @@ def ensure_log_norm(
     adata: AnnData, in_place: bool = True, var_threshold: float = 0.2
 ) -> None:
     """
-    Checks if `adata.X` is log-transformed and normalized.
-    If not, applies sc.pp.log1p() and sc.pp.normalize_total() in place.
+    Checks if `adata.X` is normalized and log-transformed.
+    If not, applies sc.pp.normalize_total() (to 10k cells) and sc.pp.log1p() in place.
 
     Parameters
     ----------
@@ -506,8 +506,9 @@ def ensure_log_norm(
     Notes
     -----
     * The checks used here are naive heuristics. Adjust them for your data as needed.
+    * Preprocessing order: normalize first (to 10k), then log-transform.
     """
-    logger.info("Checking if data in adata.X appears log-transformed and normalized.")
+    logger.info("Checking if data in adata.X appears normalized and log-transformed.")
     # check if adata is backed and load to memory
     if adata.isbacked:
         adata = adata.to_memory()
@@ -519,6 +520,16 @@ def ensure_log_norm(
     already_log = is_log_transformed(X_arr)
     already_norm = is_normalized(X_arr, var_threshold=var_threshold)
 
+    # Step 1: Normalize first (to 10k cells)
+    if not already_norm:
+        logger.info(
+            "Data does not appear to be normalized. Applying sc.pp.normalize_total(target_sum=1e4) in place."
+        )
+        sc.pp.normalize_total(adata, target_sum=1e4)  # modifies adata.X in place
+    else:
+        logger.info("Data already appears to be normalized.")
+
+    # Step 2: Log-transform second
     if not already_log:
         logger.info(
             "Data does not appear to be log-transformed. Applying sc.pp.log1p() in place."
@@ -526,14 +537,6 @@ def ensure_log_norm(
         sc.pp.log1p(adata)  # modifies adata.X in place
     else:
         logger.info("Data already appears to be log-transformed.")
-
-    if not already_norm:
-        logger.info(
-            "Data does not appear to be normalized. Applying sc.pp.normalize_total() in place."
-        )
-        sc.pp.normalize_total(adata)  # modifies adata.X in place
-    else:
-        logger.info("Data already appears to be normalized.")
 
     if not np.issubdtype(adata.X.dtype, np.floating):
         logger.info("Casting adata.X to float64 to ensure HVG works.")
