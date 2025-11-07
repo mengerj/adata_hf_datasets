@@ -11,7 +11,7 @@ dataset:
   name: "cellxgene_pseudo_bulk_full"
   description: "CellxGene pseudo bulk dataset with 350k samples. Annotated with natural language descriptions obtained in CellWhisperer Study."
   download_url: "https://medical-epigenomics.org/papers/schaefer2024/data/datasets/cellxgene_census/full_data.h5ad" # Example URL
-  full_name: "cellxgene_pseudo_bulk_full"
+  full_name: "cellxgene_pseudo_bulk_full_normlog"
 
 # =============================================================================
 # COMMON KEYS (dataset-specific)
@@ -33,7 +33,7 @@ download:
 # Preprocessing overrides (both dataset-specific and execution parameters)
 preprocessing:
   # Dataset-specific parameters
-  enabled: false
+  enabled: true
   chunk_size: 100000 #small to test many chunks
   split_dataset: true # Important for training datasets. Set to false for test datasets. (Similar parameters in dataset_creation)
   count_layer_key: "counts" # Key in adata.layers with raw counts. If not present, adata.raw.X is checked.
@@ -48,28 +48,27 @@ preprocessing:
 # Embedding preparation overrides
 embedding_preparation:
   enabled: false # Set to false to skip embedding preparation
-  methods: ["geneformer-v1"] #run the prepare step on cpu to save gpu time
+  methods: ["geneformer-v1", "geneformer"] #run the prepare step on cpu to save gpu time
 
 # Embedding overrides (both dataset-specific and execution parameters)
 embedding_cpu:
   enabled: true
   overwrite: true
-  methods: ["pca", "gs10k"] #, "scvi_fm", "gs", "gs10k"]
+  methods: ["gs10k"] #, "scvi_fm", "gs", "gs10k"]
 
 embedding_gpu:
   enabled: false
-  methods: ["geneformer-v1"]
+  methods: ["geneformer-v1", "geneformer"]
 
 # Dataset creation overrides
 dataset_creation:
   enabled: true
   use_nextcloud: true
   force_reupload: true
+  private: false
   # Dataset-specific parameters
-  required_obsm_keys:
-    ["X_pca", "X_scvi_fm", "X_geneformer", "X_gs10k", "X_geneformer-v1"]
+  required_obsm_keys: ["X_gs10k"] #["X_pca", "X_scvi_fm", "X_geneformer", "X_gs10k", "X_geneformer-v1"]
   cs_length: 4096
   caption_keys: "caption_key"
   negatives_per_sample: 2
-  split_dataset: true # Important for training datasets. Set to false for test datasets.
   dataset_format: "multiplets" # Important for training datasets. Set to "single" for test datasets.

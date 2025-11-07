@@ -7,7 +7,7 @@
 # =============================================================================
 workflow:
   # Execution backend: "slurm" (default, submit via SSH + SLURM) or "local" (run on this machine)
-  execution_mode: local
+  execution_mode: slurm
 
   # Transfer mode configuration
   # Set to true to use local scratch storage with transfers between clusters (faster processing, slower transfers)
@@ -40,8 +40,8 @@ workflow:
   # Output directory configuration
   # This is the base directory where all workflow outputs and logs will be stored
   # The actual workflow directory will be: {output_directory}/{date}/workflow_{job_id}/
-  #output_directory: "/home/menger/git/adata_hf_datasets/outputs" #"/Users/mengerj/repos/adata_hf_datasets/outputs" #"/home/menger/git/adata_hf_datasets/outputs"
-  output_directory: "../outputs"
+  output_directory: "/home/menger/git/adata_hf_datasets/outputs" #"/Users/mengerj/repos/adata_hf_datasets/outputs" #"/home/menger/git/adata_hf_datasets/outputs"
+  #output_directory: "../outputs"
   # Local backend settings (effective only when execution_mode == "local")
   # Maximum number of parallel workers for local embedding array tasks
   local_max_workers: 2
@@ -55,8 +55,8 @@ workflow:
 
   # Project directory on the cluster hosts (used for SSH/SLURM submissions)
   # All sbatch commands will `cd` into this directory before running
-  #project_directory: "/home/menger/git/adata_hf_datasets"
-  project_directory: ".."
+  project_directory: "/home/menger/git/adata_hf_datasets"
+  #project_directory: ".."
 
   # Virtual environment path (relative to project_directory) used by SLURM scripts
   venv_path: ".venv"
