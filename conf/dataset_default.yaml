@@ -195,8 +195,8 @@ dataset_creation:
   sentence_keys:
     - "sample_id_og" # Will be added to obs within the script
     - "cell_sentence"
-    - "semantic_true"
-    - "semantic_similar"
+  #    - "semantic_true"
+  #    - "semantic_similar"
 
   # Required embeddings (dataset-specific)
   required_obsm_keys: ["X_pca", "X_scvi_fm"]
