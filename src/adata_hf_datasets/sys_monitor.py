@@ -7,7 +7,6 @@ import time
 import matplotlib.pyplot as plt
 import numpy as np
 import psutil
-import pynvml
 
 
 class SystemMonitor:
@@ -212,6 +211,8 @@ class SystemMonitor:
 
     def _monitor_nvidia_gpu(self, timestamp):
         try:
+            import pynvml
+
             for idx, handle in enumerate(self.gpu_handles):
                 util = pynvml.nvmlDeviceGetUtilizationRates(handle)
                 mem_info = pynvml.nvmlDeviceGetMemoryInfo(handle)

@@ -21,7 +21,16 @@ import subprocess
 import re
 from datetime import datetime
 
-import hydra
+# Check for hydra-core at module import
+try:
+    import hydra
+except ImportError:
+    raise ImportError(
+        "hydra-core is required to use the workflow module. "
+        "Please install it with: pip install 'adata-hf-datasets[workflow]' "
+        "or: pip install hydra-core"
+    )
+
 from omegaconf import DictConfig, OmegaConf
 
 from .config_utils import (
