@@ -11,12 +11,10 @@ from adata_hf_datasets.pp.utils import (
     consolidate_low_frequency_categories,
 )
 from adata_hf_datasets.pp.pybiomart_utils import add_ensembl_ids, ensure_ensembl_index
-from scvi.hub import HubModel
 import shutil
 import tempfile
 import uuid
 import psutil
-from scvi.model import SCVI
 from pathlib import Path
 import os
 import anndata as ad
@@ -28,6 +26,7 @@ import errno
 import time
 import random
 from importlib import resources
+from importlib.util import find_spec
 
 logger = logging.getLogger(__name__)
 
@@ -774,6 +773,17 @@ class GeneformerEmbedder(BaseEmbedder):
             Additional keyword arguments for the embedder, not used here but included
             for interface consistency.
         """
+        # Check for geneformer at initialization
+        if find_spec("geneformer") is None:
+            raise ImportError(
+                "geneformer is required to use the Geneformer embedder. "
+                "To install:\n"
+                "  1. Clone the repository: git clone https://huggingface.co/ctheodoris/Geneformer\n"
+                "  2. Install it: pip install <path_to_cloned_Geneformer>\n"
+                "  3. Pass the root directory to geneformer_root parameter:\n"
+                "     GeneformerEmbedder(geneformer_root='<path_to_cloned_Geneformer>')"
+            )
+
         super().__init__(embedding_dim=768)
         self.model = None
         self.model_name = model_name
@@ -1211,14 +1221,7 @@ class GeneformerEmbedder(BaseEmbedder):
         # Patch transformers to make HybridCache available at top level
         self._patch_transformers_hybrid_cache()
 
-        try:
-            from geneformer import TranscriptomeTokenizer
-        except ImportError:
-            raise ImportError(
-                "To use the Geneformer embedder, ensure `git lfs` is installed and "
-                "run 'git submodule update --init --recursive'. Then install geneformer: "
-                "`pip install external/Geneformer`."
-            )
+        from geneformer import TranscriptomeTokenizer
 
         if adata is not None:
             # If adata object is provided, we still need to save it temporarily to use the efficient methods
@@ -1371,13 +1374,7 @@ class GeneformerEmbedder(BaseEmbedder):
         # Patch transformers to make HybridCache available at top level
         self._patch_transformers_hybrid_cache()
 
-        try:
-            from geneformer import EmbExtractor
-        except ImportError:
-            raise ImportError(
-                "To use the Geneformer embedder, ensure it is installed via "
-                "`git submodule update --init --recursive` and `pip install external/Geneformer`."
-            )
+        from geneformer import EmbExtractor
 
         dataset_path = self.out_dataset_dir / f"{self.dataset_name}.dataset"
         if not dataset_path.exists():
@@ -1527,6 +1524,13 @@ class SCVIEmbedder(BaseEmbedder):
         **kwargs
             Additional arguments passed to SCVI setup.
         """
+        # Check for scvi-tools at initialization
+        if find_spec("scvi") is None:
+            raise ImportError(
+                "scvi-tools is required to use the SCVI embedder. "
+                "Please install it with: pip install scvi-tools"
+            )
+
         super().__init__(embedding_dim=embedding_dim)
         self.model = None
         self.init_kwargs = kwargs
@@ -1560,6 +1564,8 @@ class SCVIEmbedder(BaseEmbedder):
         **kwargs : dict
             Additional configuration for loading from S3 or HF.
         """
+        from scvi.hub import HubModel
+
         adata = _check_load_adata(adata, adata_path)
         logger.info("Preparing SCVI model, loading from S3 or HF if needed.")
 
@@ -1644,6 +1650,8 @@ class SCVIEmbedder(BaseEmbedder):
         query_adata_path : str | Path
             Single-cell dataset to be used as 'query'.
         """
+        from scvi.model import SCVI
+
         logger.info("Preparing query AnnData and loading into SCVI model.")
         # Check if counts layer exists
         if "counts" not in query_adata.layers:
@@ -1810,9 +1818,7 @@ class SCVIEmbedder(BaseEmbedder):
             pass
 
     @staticmethod
-    def _localize_hubmodel(
-        model: HubModel, max_retries: int = 5, base_delay: float = 1.0
-    ) -> HubModel:
+    def _localize_hubmodel(model, max_retries: int = 5, base_delay: float = 1.0):
         """
         Copy the weight file (model.pt) into a unique temp dir and return a *new*
         HubModel instance that points there.  This eliminates cross-process races.
@@ -1828,6 +1834,8 @@ class SCVIEmbedder(BaseEmbedder):
         base_delay : float
             Base delay in seconds for exponential backoff
         """
+        from scvi.hub import HubModel
+
         orig_dir = Path(model.local_dir)
         temp_base_dir = _redirect_tmp_cache_dir(tempfile.gettempdir())
         tmp_dir = Path(temp_base_dir) / f"scvi_{uuid.uuid4().hex}"

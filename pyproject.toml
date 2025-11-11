@@ -42,8 +42,7 @@ dependencies = [
   "python-dotenv>=1.0.1",
   "requests",
   "scanpy>=1.10.4",
-  "scvi-tools>=1.2.2.post2",
-  "torch>=2.6",                                 # might need transformers 4.43.4 due to issues with importing AdamW used in Geneformer
+  "torch>=2.6",                                 # Required for transformers; scvi-tools and geneformer are optional
   "transformers>=4.43.4",
   "zarr<3",                                     #had some compatibility issues with anndata and numcodecs and used 2.16.1
 ]
@@ -53,18 +52,6 @@ optional-dependencies.dev = [
   "ruff",
   "twine",
 ]
-# Note: The geneformer extra is a marker only.
-# To actually install geneformer:
-#   1. Initialize submodules: git submodule update --init --recursive
-#   2. Install from local path: pip install external/Geneformer
-# This extra is intentionally empty to allow pip install without submodules.
-optional-dependencies.geneformer = [
-  "geneformer",
-]
-
-# uv-specific configuration: maps geneformer package to local submodule path
-# This is ignored by pip. For pip users, install geneformer manually:
-# pip install external/Geneformer (after initializing submodules)
 optional-dependencies.test = [
   "coverage",
   "pytest",
@@ -75,6 +62,3 @@ where = [ "src" ]
 
 [tool.setuptools.package-data]
 "adata_hf_datasets.resources" = [ "*.txt", "*.pkl" ]
-
-[tool.uv.sources]
-geneformer = { path = "external/Geneformer", extra = "geneformer" }
