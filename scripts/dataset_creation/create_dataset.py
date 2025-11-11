@@ -21,6 +21,7 @@ For each split folder we
 from __future__ import annotations
 
 import logging
+import os
 import sys
 from pathlib import Path
 from typing import Dict, List
@@ -34,7 +35,10 @@ from hydra.core.hydra_config import HydraConfig
 from adata_hf_datasets.dataset import AnnDataSetConstructor
 from adata_hf_datasets.utils import annotate_and_push_dataset, setup_logging
 from adata_hf_datasets.dataset import create_cell_sentences
-from adata_hf_datasets.file_utils import upload_folder_to_nextcloud
+from adata_hf_datasets.file_utils import (
+    upload_folder_to_nextcloud,
+    upload_folder_to_zenodo,
+)
 from adata_hf_datasets.workflow import apply_all_transformations
 from hydra.utils import to_absolute_path
 
@@ -448,6 +452,45 @@ def main(cfg: DictConfig):
     use_nextcloud: bool = dataset_cfg.get(
         "use_nextcloud", True
     )  # Default to True for backward compatibility
+    use_zenodo: bool = dataset_cfg.get("use_zenodo", False)
+
+    # Validate that only one upload method is selected
+    if use_nextcloud and use_zenodo:
+        raise ValueError(
+            "Both 'use_nextcloud' and 'use_zenodo' are enabled. "
+            "Please choose only one upload method."
+        )
+
+    # Get Zenodo token if Zenodo is enabled
+    zenodo_token = None
+    zenodo_cfg = None
+    if use_zenodo:
+        zenodo_cfg = (
+            dict(dataset_cfg.zenodo_config)
+            if hasattr(dataset_cfg, "zenodo_config")
+            else {}
+        )
+        use_sandbox = zenodo_cfg.get("sandbox", False)
+
+        if use_sandbox:
+            zenodo_token = os.getenv("ZENODO_SANDBOX_TOKEN")
+            token_env_name = "ZENODO_SANDBOX_TOKEN"
+            token_url = "https://sandbox.zenodo.org/account/settings/applications/"
+        else:
+            zenodo_token = os.getenv("ZENODO_TOKEN")
+            token_env_name = "ZENODO_TOKEN"
+            token_url = "https://zenodo.org/account/settings/applications/"
+
+        if not zenodo_token:
+            logger.error(
+                f"Zenodo integration is enabled (sandbox={use_sandbox}), but {token_env_name} is not found in environment variables.\n"
+                f"Please add a valid {token_env_name} to your .env file.\n"
+                f"You can create a token at: {token_url}"
+            )
+            raise ValueError(
+                f"{token_env_name} not found. Please add it to your .env file. "
+                "See logs for instructions."
+            )
 
     nextcloud_cfg = dict(dataset_cfg.nextcloud_config) if use_nextcloud else None
 
@@ -489,6 +532,34 @@ def main(cfg: DictConfig):
                 force_reupload=dataset_cfg.get("force_reupload", True),
             )
             logger.info("Uploaded files to Nextcloud for split '%s'", split)
+        elif use_zenodo and zenodo_cfg and zenodo_token:
+            try:
+                share_links = upload_folder_to_zenodo(
+                    data_folder=str(split_dir),
+                    zenodo_token=zenodo_token,
+                    zenodo_config=zenodo_cfg,
+                    force_reupload=dataset_cfg.get("force_reupload", True),
+                )
+                logger.info("Uploaded files to Zenodo for split '%s'", split)
+            except RuntimeError as e:
+                error_msg = str(e)
+                if "401" in error_msg or "Authentication" in error_msg:
+                    use_sandbox = (
+                        zenodo_cfg.get("sandbox", False) if zenodo_cfg else False
+                    )
+                    token_env_name = (
+                        "ZENODO_SANDBOX_TOKEN" if use_sandbox else "ZENODO_TOKEN"
+                    )
+                    token_url = (
+                        "https://sandbox.zenodo.org/account/settings/applications/"
+                        if use_sandbox
+                        else "https://zenodo.org/account/settings/applications/"
+                    )
+                    logger.error(
+                        f"Zenodo authentication failed. Please check your {token_env_name} in .env file.\n"
+                        f"You can create a token at: {token_url}"
+                    )
+                raise
         else:
             # Create a mapping of filename to local path instead of share links
             share_links = {}

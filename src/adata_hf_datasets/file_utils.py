@@ -727,6 +727,272 @@ def upload_folder_to_nextcloud(
     return share_map
 
 
+def upload_folder_to_zenodo(
+    data_folder: str | Path,
+    zenodo_token: str,
+    zenodo_config: dict[str, Any],
+    max_workers: int = 4,
+    *,
+    force_reupload: bool = False,
+) -> dict[str, str]:
+    """
+    Upload *.zarr directories and *.h5ad files to Zenodo and return download links.
+
+    This function will:
+    • Convert *.zarr directories and *.h5ad files to ZIP format
+    • Create a new Zenodo deposit (or reuse existing from share_map.json)
+    • Upload each ZIP file to the deposit
+    • Return a mapping of local files to Zenodo download URLs
+
+    Parameters
+    ----------
+    data_folder : str | Path
+        Local directory containing *.zarr directories and/or *.h5ad files to upload.
+    zenodo_token : str
+        Zenodo access token (from ZENODO_TOKEN environment variable).
+    zenodo_config : dict[str, Any]
+        Configuration dictionary. Required keys:
+        - "sandbox": bool, whether to use Zenodo sandbox (default: False)
+    max_workers : int, optional
+        Maximum number of worker threads for parallel uploads (default: 4).
+    force_reupload : bool, optional
+        If True, re-upload files even if they exist in share_map.json (default: False).
+
+    Returns
+    -------
+    dict[str, str]
+        Mapping of local file paths (relative to data_folder) to Zenodo download URLs.
+
+    Notes
+    -----
+    - Files are converted to ZIP format before upload for better compression
+    - Deposit metadata is minimal; you can edit it later on Zenodo
+    - Progress is saved incrementally to share_map.json
+    - Failed uploads will raise RuntimeError with details
+
+    Examples
+    --------
+    >>> import os
+    >>> token = os.getenv("ZENODO_TOKEN")
+    >>> config = {"sandbox": False}
+    >>> share_map = upload_folder_to_zenodo("/path/to/data", token, config)
+    """
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+
+    data_folder = Path(data_folder).resolve()
+    mapping_path = data_folder / "share_map.json"
+    share_map = json.loads(mapping_path.read_text()) if mapping_path.exists() else {}
+
+    # Determine Zenodo API base URL
+    sandbox = zenodo_config.get("sandbox", False)
+    api_base = "https://sandbox.zenodo.org/api" if sandbox else "https://zenodo.org/api"
+
+    # ---------- 1) turn stores into zip files --------------------------
+    def ensure_zip(p: Path) -> Path:
+        if p.suffix == ".zip":
+            return p
+        if p.is_dir() and p.suffix == ".zarr":
+            z = p.with_suffix(".zarr.zip")
+            if not z.exists() or p.stat().st_mtime > z.stat().st_mtime:
+                logger.info(f"Creating zip for {p.name}...")
+                shutil.make_archive(z.with_suffix(""), "zip", p)
+            return z
+        if p.is_file() and p.suffix == ".h5ad":
+            z = p.with_suffix(".h5ad.zip")
+            if not z.exists() or p.stat().st_mtime > z.stat().st_mtime:
+                logger.info(f"Creating zip for {p.name}...")
+                shutil.make_archive(
+                    z.with_suffix(""), "zip", root_dir=p.parent, base_dir=p.name
+                )
+            return z
+        return p  # ignore everything else
+
+    zip_paths = [
+        ensure_zip(p) for p in data_folder.iterdir() if p.name != "share_map.json"
+    ]
+
+    # ---------- 2) Get or create deposit --------------------
+    deposit_id = share_map.get("_zenodo_deposit_id")
+    deposit_links = share_map.get("_zenodo_deposit_links", {})
+
+    if deposit_id and not force_reupload:
+        logger.info(f"Using existing Zenodo deposit: {deposit_id}")
+        # Verify deposit still exists
+        try:
+            r = requests.get(
+                f"{api_base}/deposit/depositions/{deposit_id}",
+                params={"access_token": zenodo_token},
+                timeout=30,
+            )
+            if r.status_code == 200:
+                deposit_links = r.json().get("links", {})
+            else:
+                logger.warning(
+                    f"Deposit {deposit_id} not found or inaccessible, creating new one"
+                )
+                deposit_id = None
+        except Exception as e:
+            logger.warning(
+                f"Error checking deposit {deposit_id}: {e}, creating new one"
+            )
+            deposit_id = None
+
+    if not deposit_id:
+        logger.info("Creating new Zenodo deposit...")
+        # Create a new deposit
+        deposit_data = {
+            "metadata": {
+                "title": f"Dataset: {data_folder.name}",
+                "upload_type": "dataset",
+                "description": f"Dataset files from {data_folder.name}",
+                "creators": [{"name": "Dataset Creator"}],
+            }
+        }
+        r = requests.post(
+            f"{api_base}/deposit/depositions",
+            params={"access_token": zenodo_token},
+            json=deposit_data,
+            timeout=30,
+        )
+        if r.status_code not in (200, 201):
+            error_msg = f"Failed to create Zenodo deposit: {r.status_code} {r.text}"
+            if r.status_code == 401:
+                error_msg += (
+                    "\n\nAuthentication failed. Please check your ZENODO_TOKEN in .env file. "
+                    "You can create a token at https://zenodo.org/account/settings/applications/"
+                )
+            raise RuntimeError(error_msg)
+        deposit = r.json()
+        deposit_id = deposit["id"]
+        deposit_links = deposit.get("links", {})
+        share_map["_zenodo_deposit_id"] = deposit_id
+        share_map["_zenodo_deposit_links"] = deposit_links
+        logger.info(f"Created Zenodo deposit: {deposit_id}")
+
+    # Get upload URL from deposit links
+    upload_url = deposit_links.get("bucket")
+    if not upload_url:
+        raise RuntimeError(
+            f"Deposit {deposit_id} does not have an upload bucket URL. "
+            "The deposit may have been published already."
+        )
+
+    # ---------- 3) Upload files --------------------
+    uploads = []
+    for z in zip_paths:
+        rel_key = z.relative_to(data_folder).as_posix()
+        if (
+            force_reupload
+            or rel_key not in share_map
+            or not share_map[rel_key].startswith("http")
+        ):
+            uploads.append((z, rel_key))
+
+    if not uploads:
+        logger.info("All files already uploaded to Zenodo")
+        return {k: v for k, v in share_map.items() if not k.startswith("_")}
+
+    failed_uploads = []
+
+    def upload_one_file(zip_path: Path, rel_key: str) -> tuple[str, str] | None:
+        """Upload a single file and return (rel_key, download_url) or None on failure."""
+        try:
+            file_name = zip_path.name
+            file_size = zip_path.stat().st_size
+
+            logger.info(f"Uploading {file_name} ({file_size / 1024 / 1024:.1f} MB)...")
+
+            # Upload file to Zenodo bucket
+            with open(zip_path, "rb") as f:
+                upload_response = requests.put(
+                    f"{upload_url}/{file_name}",
+                    data=f,
+                    params={"access_token": zenodo_token},
+                    timeout=(30, 1800),  # 30s connect, 30min read
+                )
+
+            if upload_response.status_code not in (200, 201):
+                error_msg = f"Upload failed for {file_name}: {upload_response.status_code} {upload_response.text}"
+                if upload_response.status_code == 401:
+                    error_msg += "\nAuthentication failed. Please check your ZENODO_TOKEN in .env file."
+                logger.error(error_msg)
+                return None
+
+            # Get file download URL from deposit
+            deposit_response = requests.get(
+                f"{api_base}/deposit/depositions/{deposit_id}",
+                params={"access_token": zenodo_token},
+                timeout=30,
+            )
+            if deposit_response.status_code != 200:
+                logger.error(
+                    f"Failed to get deposit info: {deposit_response.status_code}"
+                )
+                return None
+
+            files = deposit_response.json().get("files", [])
+            file_info = next((f for f in files if f["filename"] == file_name), None)
+            if not file_info:
+                logger.error(f"File {file_name} not found in deposit after upload")
+                return None
+
+            download_url = file_info.get("links", {}).get("download")
+            if not download_url:
+                logger.error(f"No download URL for {file_name}")
+                return None
+
+            logger.info(f"✅ Uploaded {file_name}")
+            return (rel_key, download_url)
+
+        except Exception as e:
+            logger.error(f"Error uploading {zip_path.name}: {e}")
+            return None
+
+    # Upload files in parallel
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        futures = {
+            executor.submit(upload_one_file, z, rel_key): (z, rel_key)
+            for z, rel_key in uploads
+        }
+        for future in as_completed(futures):
+            result = future.result()
+            if result:
+                rel_key, download_url = result
+                share_map[rel_key] = download_url
+                # Save progress incrementally
+                mapping_path.write_text(json.dumps(share_map, indent=2))
+            else:
+                zip_path, rel_key = futures[future]
+                failed_uploads.append(rel_key)
+
+    # Final save of share_map
+    mapping_path.write_text(json.dumps(share_map, indent=2))
+
+    # Report results
+    if failed_uploads:
+        logger.error(
+            "❌ %d files failed to upload: %s", len(failed_uploads), failed_uploads
+        )
+        logger.info(
+            "✅ %d files uploaded successfully and saved to share_map.json",
+            len(
+                [
+                    k
+                    for k in share_map.keys()
+                    if k.endswith(".zip") and not k.startswith("_")
+                ]
+            ),
+        )
+        logger.info("🔄 Re-run the script to retry failed uploads")
+        raise RuntimeError(
+            f"Upload failed for {len(failed_uploads)} files: {failed_uploads}"
+        )
+
+    logger.info("✅ All uploads completed successfully!")
+    # Return only file mappings, not metadata
+    return {k: v for k, v in share_map.items() if not k.startswith("_")}
+
+
 # ------------------------------------------------------------------ #
 # helper: zip target if necessary and return Path to zip
 # ------------------------------------------------------------------ #

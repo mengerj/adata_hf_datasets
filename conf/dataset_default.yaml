@@ -224,3 +224,13 @@ dataset_creation:
     username: "NEXTCLOUD_USER"
     password: "NEXTCLOUD_PASSWORD"
     remote_path: ""
+
+  # Zenodo upload (dataset-specific)
+  use_zenodo: false
+  zenodo_config:
+    sandbox: false # Set to true to use Zenodo sandbox (https://sandbox.zenodo.org) instead of production
+    # Environment variables required:
+    # - ZENODO_TOKEN: Production Zenodo access token (when sandbox: false)
+    # - ZENODO_SANDBOX_TOKEN: Sandbox Zenodo access token (when sandbox: true)
+    # Create tokens at: https://zenodo.org/account/settings/applications/ (production)
+    #                  https://sandbox.zenodo.org/account/settings/applications/ (sandbox)
