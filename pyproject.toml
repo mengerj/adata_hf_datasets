@@ -44,7 +44,7 @@ dependencies = [
   "scanpy>=1.10.4",
   "torch>=2.6",                                 # Required for transformers; scvi-tools and geneformer are optional
   "transformers>=4.43.4",
-  "zarr<3",                                     #had some compatibility issues with anndata and numcodecs and used 2.16.1
+  "zarr",                                       #had some compatibility issues with anndata and numcodecs and used 2.16.1
 ]
 
 optional-dependencies.dev = [
