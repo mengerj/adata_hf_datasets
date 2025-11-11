@@ -30,6 +30,7 @@ dependencies = [
   #  "numcodecs==0.14.1",
   "numpy",
   "pandas",
+  "psutil>=7.1",
   "pyarrow>=14.0.1,<18; python_version<'3.13'",
   "pyarrow>=18; python_version>='3.13'",
   "pybiomart>=0.2",

@@ -14,7 +14,6 @@ from adata_hf_datasets.pp.pybiomart_utils import add_ensembl_ids, ensure_ensembl
 import shutil
 import tempfile
 import uuid
-import psutil
 from pathlib import Path
 import os
 import anndata as ad
@@ -1481,21 +1480,6 @@ class GeneformerEmbedder(BaseEmbedder):
         deduped_df = deduped_df.reindex(og_ids).fillna(0)
 
         return deduped_df
-
-    def _kill_process(self):
-        """
-        Kill any child processes spawned by Geneformer.
-
-        Sometimes the Geneformer library spawns additional processes that may not
-        terminate gracefully. This method forcibly kills them.
-        """
-        parent_pid = os.getpid()
-        for proc in psutil.process_iter(["pid", "ppid", "name"]):
-            if proc.info["ppid"] == parent_pid:
-                logger.warning(
-                    "Killing process %s (PID %s)", proc.info["name"], proc.info["pid"]
-                )
-                proc.kill()
 
 
 class SCVIEmbedder(BaseEmbedder):
