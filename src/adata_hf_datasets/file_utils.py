@@ -972,12 +972,15 @@ def upload_folder_to_zenodo(
     # ---------- 3) Upload files --------------------
     uploads = []
     for z in zip_paths:
-        # Use filename as key to avoid conflicts when using shared mapping
-        # Include parent folder name if using shared mapping to distinguish splits
+        # When using shared mapping, prefix filename with split name to avoid conflicts
+        # e.g., "train_chunk_0.zarr.zip" instead of just "chunk_0.zarr.zip"
         if shared_mapping_path:
-            # Include the split name (parent folder) in the key
-            rel_key = f"{data_folder.name}/{z.name}"
+            # Create prefixed filename for Zenodo upload
+            zenodo_filename = f"{data_folder.name}_{z.name}"
+            # Use prefixed filename as key in mapping
+            rel_key = zenodo_filename
         else:
+            zenodo_filename = z.name  # Use original filename
             rel_key = z.relative_to(data_folder).as_posix()
 
         if (
@@ -985,33 +988,50 @@ def upload_folder_to_zenodo(
             or rel_key not in share_map
             or not share_map[rel_key].startswith("http")
         ):
-            uploads.append((z, rel_key))
+            uploads.append((z, rel_key, zenodo_filename))
 
     if not uploads:
         logger.info("All files already uploaded to Zenodo")
-        return {k: v for k, v in share_map.items() if not k.startswith("_")}
+        # Return filtered results if using shared mapping
+        if shared_mapping_path:
+            folder_name = data_folder.name
+            filtered_map = {
+                k: v
+                for k, v in share_map.items()
+                if not k.startswith("_") and k.startswith(f"{folder_name}_")
+            }
+            result = {}
+            for k, v in filtered_map.items():
+                if k.startswith(f"{folder_name}_"):
+                    result[k[len(folder_name) + 1 :]] = v
+                else:
+                    result[k] = v
+            return result
+        else:
+            return {k: v for k, v in share_map.items() if not k.startswith("_")}
 
     failed_uploads = []
 
     # Upload files sequentially to avoid API rate limits and connection issues
-    for zip_path, rel_key in uploads:
-        file_name = zip_path.name
+    for zip_path, rel_key, zenodo_filename in uploads:
         file_size = zip_path.stat().st_size
 
         try:
-            logger.info(f"Uploading {file_name} ({file_size / 1024 / 1024:.1f} MB)...")
+            logger.info(
+                f"Uploading {zip_path.name} as {zenodo_filename} ({file_size / 1024 / 1024:.1f} MB)..."
+            )
 
-            # Upload file to Zenodo bucket
+            # Upload file to Zenodo bucket with the prefixed filename
             with open(zip_path, "rb") as f:
                 upload_response = requests.put(
-                    f"{upload_url}/{file_name}",
+                    f"{upload_url}/{zenodo_filename}",
                     data=f,
                     params={"access_token": zenodo_token},
                     timeout=(30, 1800),  # 30s connect, 30min read
                 )
 
             if upload_response.status_code not in (200, 201):
-                error_msg = f"Upload failed for {file_name}: {upload_response.status_code} {upload_response.text}"
+                error_msg = f"Upload failed for {zenodo_filename}: {upload_response.status_code} {upload_response.text}"
                 if upload_response.status_code == 401:
                     error_msg += "\nAuthentication failed. Please check your ZENODO_TOKEN in .env file."
                 logger.error(error_msg)
@@ -1019,7 +1039,7 @@ def upload_folder_to_zenodo(
                 continue
 
             logger.info(
-                f"File {file_name} uploaded successfully, retrieving download URL..."
+                f"File {zenodo_filename} uploaded successfully, retrieving download URL..."
             )
 
             # Wait a moment for Zenodo to process the file before fetching deposit info
@@ -1051,25 +1071,25 @@ def upload_folder_to_zenodo(
 
                     files = deposit_response.json().get("files", [])
                     file_info = next(
-                        (f for f in files if f["filename"] == file_name), None
+                        (f for f in files if f["filename"] == zenodo_filename), None
                     )
                     if not file_info:
                         if attempt < max_retries - 1:
                             logger.warning(
-                                f"File {file_name} not yet available in deposit (attempt {attempt + 1}/{max_retries}), retrying..."
+                                f"File {zenodo_filename} not yet available in deposit (attempt {attempt + 1}/{max_retries}), retrying..."
                             )
                             time.sleep(2**attempt)  # Exponential backoff
                             continue
                         else:
                             logger.error(
-                                f"File {file_name} not found in deposit after {max_retries} attempts"
+                                f"File {zenodo_filename} not found in deposit after {max_retries} attempts"
                             )
                             failed_uploads.append(rel_key)
                             break
 
                     download_url = file_info.get("links", {}).get("download")
                     if not download_url:
-                        logger.error(f"No download URL for {file_name}")
+                        logger.error(f"No download URL for {zenodo_filename}")
                         failed_uploads.append(rel_key)
                         break
 
@@ -1078,7 +1098,7 @@ def upload_folder_to_zenodo(
                     # Save progress incrementally
                     mapping_path.write_text(json.dumps(share_map, indent=2))
                     logger.info(
-                        f"✅ Uploaded {file_name} - Download URL: {download_url}"
+                        f"✅ Uploaded {zenodo_filename} - Download URL: {download_url}"
                     )
                     break
 
@@ -1097,7 +1117,7 @@ def upload_folder_to_zenodo(
                         break
 
         except Exception as e:
-            logger.error(f"Error uploading {file_name}: {e}", exc_info=True)
+            logger.error(f"Error uploading {zenodo_filename}: {e}", exc_info=True)
             failed_uploads.append(rel_key)
 
     # Final save of share_map
@@ -1128,18 +1148,19 @@ def upload_folder_to_zenodo(
     # If using shared mapping, filter to only return entries for current data_folder
     if shared_mapping_path:
         # Filter to only return entries for the current split/folder
+        # Keys are now in format "split_name_filename.zip" (e.g., "train_chunk_0.zarr.zip")
         folder_name = data_folder.name
         filtered_map = {
             k: v
             for k, v in share_map.items()
-            if not k.startswith("_") and k.startswith(f"{folder_name}/")
+            if not k.startswith("_") and k.startswith(f"{folder_name}_")
         }
-        # Also return entries without folder prefix (for backward compatibility)
-        # and remove folder prefix from keys for easier lookup
+        # Remove split prefix from keys for easier lookup in build_split_dataset
+        # e.g., "train_chunk_0.zarr.zip" -> "chunk_0.zarr.zip"
         result = {}
         for k, v in filtered_map.items():
-            # Remove "folder_name/" prefix from key for return value
-            if k.startswith(f"{folder_name}/"):
+            if k.startswith(f"{folder_name}_"):
+                # Remove "split_name_" prefix from key for return value
                 result[k[len(folder_name) + 1 :]] = v
             else:
                 result[k] = v
