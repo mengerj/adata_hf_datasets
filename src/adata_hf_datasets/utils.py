@@ -152,88 +152,6 @@ def setup_logging(log_dir: str = "logs"):
     return logger
 
 
-def prepare_dataset_for_hub(
-    dataset,
-    output_dir: str | Path,
-    repo_id: str,
-    readme_template_name: str | None = None,
-    embedding_generation: str | None = None,
-    dataset_type_explanation: str | None = None,
-    metadata: dict | None = None,
-) -> Path:
-    """
-    Prepare a dataset for Hugging Face Hub upload by creating all necessary files locally.
-
-    This function prepares the dataset directory with all metadata, README, and required files,
-    but does not upload to the Hub. This allows users to push manually later if automatic upload fails.
-
-    Parameters
-    ----------
-    dataset : datasets.DatasetDict
-        The dataset to prepare. Used to extract example data for the README.
-    output_dir : str or Path
-        Directory where the prepared dataset should be saved
-    repo_id : str
-        Hugging Face repository ID (e.g., 'username/dataset-name')
-    readme_template_name : str, optional
-        The name of the README template to use. Has to be stored in the package resources.
-    embedding_generation : str, optional
-        A description of how the embeddings stored in .obsm of the adata files were generated.
-    dataset_type_explanation : str, optional
-        A description of the dataset type. E.g. "pairs" or "multiplets".
-    metadata : dict, optional
-        Additional metadata. Can contain:
-        - cs_length: Length of cell sentences (optional)
-        - example_share_link: Example link to an adata file (optional)
-
-    Returns
-    -------
-    Path
-        Path to the prepared dataset directory
-    """
-    output_path = Path(output_dir)
-    output_path.mkdir(parents=True, exist_ok=True)
-
-    logger.info(f"Preparing dataset for Hub in {output_path}...")
-
-    # Save dataset to disk
-    dataset.save_to_disk(str(output_path))
-    logger.info("Dataset saved to disk")
-
-    # Extract example data from the first row of the dataset
-    example_data = {}
-    first_split = list(dataset.keys())[0]
-    if len(dataset[first_split]) > 0:
-        first_row = dataset[first_split][0]
-        for key, value in first_row.items():
-            str_value = str(value)
-            if len(str_value) > 150:
-                str_value = str_value[:150] + "..."
-            example_data[key] = str_value
-
-    # Add example data to metadata
-    if metadata is None:
-        metadata = {}
-    metadata["example_data"] = example_data
-
-    # Create README.md
-    readme_path = output_path / "README.md"
-    readme_content = _generate_readme(
-        readme_template_name=readme_template_name,
-        repo_id=repo_id,
-        embedding_generation=embedding_generation,
-        dataset_type_explanation=dataset_type_explanation,
-        metadata=metadata,
-    )
-
-    with open(readme_path, "w", encoding="utf-8") as f:
-        f.write(readme_content)
-
-    logger.info("Created README.md")
-    logger.info(f"✅ Dataset prepared for Hub at {output_path}")
-    return output_path
-
-
 def annotate_and_push_dataset(
     dataset,
     repo_id: str | None = None,
@@ -242,7 +160,6 @@ def annotate_and_push_dataset(
     embedding_generation: str | None = None,
     dataset_type_explanation: str | None = None,
     metadata: dict | None = None,
-    prepared_dataset_dir: str | Path | None = None,
 ) -> None:
     """Annotates and pushes the dataset to Hugging Face.
 
@@ -267,53 +184,50 @@ def annotate_and_push_dataset(
         Additional metadata. Can contain:
         - cs_length: Length of cell sentences (optional)
         - example_share_link: Example link to an adata file (optional)
-    prepared_dataset_dir : str or Path, optional
-        Path to a previously prepared dataset directory. If provided, this directory will be
-        uploaded instead of preparing a new one.
     """
-    # Use prepared directory if provided, otherwise prepare in temp directory
-    if prepared_dataset_dir is not None:
-        temp_path = Path(prepared_dataset_dir)
-        logger.info(f"Using prepared dataset directory: {temp_path}")
-    else:
-        # Prepare dataset in temporary directory
-        temp_dir = tempfile.mkdtemp()
-        temp_path = Path(temp_dir) / "dataset"
-        prepare_dataset_for_hub(
-            dataset=dataset,
-            output_dir=temp_path,
+    # Extract example data from the first row of the dataset
+    example_data = {}
+    first_split = list(dataset.keys())[0]
+    if len(dataset[first_split]) > 0:
+        first_row = dataset[first_split][0]
+        for key, value in first_row.items():
+            str_value = str(value)
+            if len(str_value) > 150:
+                str_value = str_value[:150] + "..."
+            example_data[key] = str_value
+
+    # Add example data to metadata
+    if metadata is None:
+        metadata = {}
+    metadata["example_data"] = example_data
+
+    # Create a temporary directory
+    with tempfile.TemporaryDirectory() as temp_dir:
+        readme_path = Path(temp_dir) / "README.md"
+
+        # Write the dynamically generated README file
+        with open(readme_path, "w", encoding="utf-8") as f:
+            f.write(
+                _generate_readme(
+                    readme_template_name=readme_template_name,
+                    repo_id=repo_id,
+                    embedding_generation=embedding_generation,
+                    dataset_type_explanation=dataset_type_explanation,
+                    metadata=metadata,
+                )
+            )
+
+        # Push dataset with README
+        dataset.push_to_hub(repo_id, private=private)
+
+        # Upload README file
+        api = HfApi()
+        api.upload_file(
+            path_or_fileobj=str(readme_path),
+            path_in_repo="README.md",
             repo_id=repo_id,
-            readme_template_name=readme_template_name,
-            embedding_generation=embedding_generation,
-            dataset_type_explanation=dataset_type_explanation,
-            metadata=metadata,
+            repo_type="dataset",
         )
-
-    # Upload to Hub
-    api = HfApi()
-
-    # Create repository
-    logger.info(f"Creating repository: {repo_id}")
-    try:
-        api.create_repo(
-            repo_id=repo_id, repo_type="dataset", private=private, exist_ok=True
-        )
-        logger.info(f"Repository {repo_id} ready")
-    except Exception as e:
-        logger.warning(f"Repository creation: {e}")
-
-    # Upload all files
-    commit_msg = f"Upload dataset {repo_id}"
-    logger.info("Uploading dataset and files...")
-    api.upload_folder(
-        folder_path=str(temp_path),
-        repo_id=repo_id,
-        repo_type="dataset",
-        commit_message=commit_msg,
-    )
-    logger.info(
-        f"✅ Successfully uploaded dataset to https://huggingface.co/datasets/{repo_id}"
-    )
 
 
 def _generate_readme(

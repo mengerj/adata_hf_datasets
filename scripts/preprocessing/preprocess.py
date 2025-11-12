@@ -13,7 +13,8 @@ import os
 
 import adata_hf_datasets.pp as pp
 from adata_hf_datasets.pp.plotting import qc_evaluation_plots
-from adata_hf_datasets.sys_monitor import SystemMonitor
+
+# from adata_hf_datasets.sys_monitor import SystemMonitor
 from adata_hf_datasets.utils import subset_sra_and_plot
 from adata_hf_datasets.workflow import apply_all_transformations, validate_config
 from adata_hf_datasets.file_utils import safe_write_h5ad
@@ -117,9 +118,9 @@ def main(cfg: DictConfig):
 
     run_dir = HydraConfig.get().run.dir
     logger.info("Run dir: %s", run_dir)
-    monitor = SystemMonitor(logger=logger)
-    monitor.daemon = True  # to terminate the thread when the main thread exits
-    monitor.start()
+    # monitor = SystemMonitor(logger=logger)
+    # monitor.daemon = True  # to terminate the thread when the main thread exits
+    # monitor.start()
 
     ad_bk = None  # Initialize to None for proper cleanup
     current_ad_bk = None  # Initialize current AnnData for loop cleanup
@@ -328,9 +329,9 @@ def main(cfg: DictConfig):
         logger.error(f"Error message: {str(e)}")
 
         # Force system exit with error code
-        monitor.stop()
-        monitor.print_summary()
-        monitor.save(run_dir)
+        # monitor.stop()
+        # monitor.print_summary()
+        # monitor.save(run_dir)
         sys.exit(1)
     finally:
         # Safely close any remaining file handles and clean up local copies
@@ -360,13 +361,13 @@ def main(cfg: DictConfig):
                         )
 
             # Always stop monitor and save results
-            try:
-                monitor.stop()
-                monitor.print_summary()
-                monitor.save(run_dir)
-                monitor.plot_metrics(run_dir)
-            except Exception as monitor_error:
-                logger.warning(f"Error during monitor cleanup: {monitor_error}")
+            # try:
+            # monitor.stop()
+            # monitor.print_summary()
+            # monitor.save(run_dir)
+            # monitor.plot_metrics(run_dir)
+            # except Exception as monitor_error:
+            #    logger.warning(f"Error during monitor cleanup: {monitor_error}")
 
         except Exception as final_error:
             logger.error(f"Critical error during final cleanup: {final_error}")

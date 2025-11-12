@@ -36,9 +36,9 @@ import numpy as np
 from adata_hf_datasets.utils import setup_logging
 from adata_hf_datasets.file_utils import safe_read_h5ad
 from adata_hf_datasets.embed import InitialEmbedder
-from adata_hf_datasets.sys_monitor import SystemMonitor
+
+# from adata_hf_datasets.sys_monitor import SystemMonitor
 from adata_hf_datasets.workflow import apply_all_transformations, validate_config
-from hydra.core.hydra_config import HydraConfig
 
 logger = setup_logging()
 
@@ -419,15 +419,15 @@ def main(cfg: DictConfig):
             )
 
     load_dotenv(override=True)
-    hydra_run_dir = HydraConfig.get().run.dir
+    # hydra_run_dir = HydraConfig.get().run.dir
 
     # Get format specifications with defaults
     input_format = getattr(embedding_cfg, "input_format", "auto")
     output_format = getattr(embedding_cfg, "output_format", "zarr")
     output_dir_base = getattr(embedding_cfg, "output_dir", None)
 
-    monitor = SystemMonitor(logger=logger)
-    monitor.start()
+    # monitor = SystemMonitor(logger=logger)
+    # monitor.start()
 
     try:
         for input_file in embedding_cfg.input_files:
@@ -455,14 +455,14 @@ def main(cfg: DictConfig):
                         )
                     emb_dim = embedding_cfg.embedding_dim_map[method]
 
-                    monitor.log_event(f"Prepare {method}")
+                    # monitor.log_event(f"Prepare {method}")
                     embedder = InitialEmbedder(method=method, embedding_dim=emb_dim)
                     embedder.prepare(
                         adata_path=str(infile),
                         batch_key=embedding_cfg.batch_key,
                     )
                     logger.info("Prepared embedding resources for '%s'", method)
-                    monitor.log_event(f"Finished prepare {method}")
+                    # monitor.log_event(f"Finished prepare {method}")
 
                 logger.info(
                     "All preparations complete for %s; results cached internally.",
@@ -521,14 +521,14 @@ def main(cfg: DictConfig):
                         )
                     emb_dim = embedding_cfg.embedding_dim_map[method]
 
-                    monitor.log_event(f"Prepare {method}")
+                    # monitor.log_event(f"Prepare {method}")
                     embedder = InitialEmbedder(method=method, embedding_dim=emb_dim)
                     embedder.prepare(
                         adata_path=str(input_for_processing),
                         batch_key=embedding_cfg.batch_key,
                     )
 
-                    monitor.log_event(f"Embed {method}")
+                    # monitor.log_event(f"Embed {method}")
                     obsm_key = f"X_{method}"
 
                     # Add robust retry logic for GPU-dependent methods
@@ -601,7 +601,7 @@ def main(cfg: DictConfig):
                             )
                             raise
 
-                    monitor.log_event(f"Finished {method}")
+                    # monitor.log_event(f"Finished {method}")
 
                     append_embedding(
                         adata_path=str(input_for_processing),
@@ -613,11 +613,11 @@ def main(cfg: DictConfig):
     except Exception as e:
         logger.exception("Embedding pipeline failed, with error: %s", e)
         raise e
-    finally:
-        monitor.stop()
-        monitor.print_summary()
-        monitor.save(hydra_run_dir)
-        monitor.plot_metrics(hydra_run_dir)
+    # finally:
+    # monitor.stop()
+    # monitor.print_summary()
+    # monitor.save(hydra_run_dir)
+    # monitor.plot_metrics(hydra_run_dir)
 
 
 if __name__ == "__main__":
