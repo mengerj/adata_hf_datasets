@@ -27,13 +27,13 @@ other_bio_labels: ["tissue", "disease"]
 # =============================================================================
 # Download configuration
 download:
-  enabled: true
+  enabled: false
   subset_size: 200000
 
 # Preprocessing overrides (both dataset-specific and execution parameters)
 preprocessing:
   # Dataset-specific parameters
-  enabled: true
+  enabled: false
   chunk_size: 100000 #small to test many chunks
   split_dataset: true # Important for training datasets. Set to false for test datasets. (Similar parameters in dataset_creation)
   count_layer_key: "counts" # Key in adata.layers with raw counts. If not present, adata.raw.X is checked.
@@ -52,7 +52,7 @@ embedding_preparation:
 
 # Embedding overrides (both dataset-specific and execution parameters)
 embedding_cpu:
-  enabled: true
+  enabled: false
   overwrite: true
   methods: ["gs10k"] #, "scvi_fm", "gs", "gs10k"]
 
@@ -67,7 +67,7 @@ dataset_creation:
   force_reupload: true
   private: false
   # Dataset-specific parameters
-  required_obsm_keys: ["X_gs10k"] #["X_pca", "X_scvi_fm", "X_geneformer", "X_gs10k", "X_geneformer-v1"]
+  required_obsm_keys: ["X_gs10k", "X_geneformer"] #["X_pca", "X_scvi_fm", "X_geneformer", "X_gs10k", "X_geneformer-v1"]
   cs_length: 4096
   caption_keys: "caption_key"
   negatives_per_sample: 2
