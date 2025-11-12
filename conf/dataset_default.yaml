@@ -187,7 +187,10 @@ embedding_gpu:
 # DATASET CREATION CONFIGURATION (dataset-specific overrides)
 # =============================================================================
 dataset_creation:
-  # Dataset structure
+  # Dataset structue
+  dataset_name: ${dataset.name}
+  raw_data_link: ${dataset.download_url}
+  data_description: ${dataset.description}
   split_dataset: ${split_dataset} # Reference dataset-level split configuration
   dataset_format: "multiplets" # "multiplets" for training, "single" for test datasets
 
