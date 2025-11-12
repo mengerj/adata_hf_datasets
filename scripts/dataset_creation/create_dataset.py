@@ -215,81 +215,6 @@ def check_and_version_repo_id(base_repo_id: str) -> str:
         return base_repo_id
 
 
-def prepare_dataset_for_hub(
-    hf_dataset: DatasetDict,
-    output_dir: str | Path,
-    repo_id: str,
-    embedding_keys: List[str],
-    dataset_format: str,
-    share_links: Dict[str, Dict[str, str]],
-    cs_length: int | None = None,
-) -> Path:
-    """
-    Prepare a dataset for Hugging Face Hub upload by creating all necessary files locally.
-
-    This function prepares the dataset directory with all metadata, README, and required files,
-    but does not upload to the Hub. This allows users to push manually later if automatic upload fails.
-
-    Parameters
-    ----------
-    hf_dataset : DatasetDict
-        The dataset to prepare
-    output_dir : str or Path
-        Directory where the prepared dataset should be saved
-    repo_id : str
-        Hugging Face repository ID (e.g., 'username/dataset-name')
-    embedding_keys : List[str]
-        List of embedding keys in the dataset
-    dataset_format : str
-        Dataset format type (e.g., "pairs", "multiplets")
-    share_links : Dict[str, Dict[str, str]]
-        Mapping of split names to file share links
-    cs_length : int, optional
-        Length of cell sentences
-
-    Returns
-    -------
-    Path
-        Path to the prepared dataset directory
-    """
-    from adata_hf_datasets.utils import (
-        prepare_dataset_for_hub as _prepare_dataset_for_hub,
-    )
-
-    embedding_generation = (
-        f"Each AnnData contained the following embedding keys: {embedding_keys}."
-    )
-    dataset_type_explanation = (
-        f"Dataset type: {dataset_format} (suitable for relevant "
-        "contrastive-learning or inference tasks)."
-    )
-
-    # Get one example share link (not all of them)
-    example_share_link = None
-    if share_links:
-        for split_links in share_links.values():
-            if split_links:
-                example_share_link = list(split_links.values())[0]
-                break
-
-    # Build metadata
-    metadata = {}
-    if cs_length is not None:
-        metadata["cs_length"] = cs_length
-    if example_share_link:
-        metadata["example_share_link"] = example_share_link
-
-    return _prepare_dataset_for_hub(
-        dataset=hf_dataset,
-        output_dir=output_dir,
-        repo_id=repo_id,
-        readme_template_name="cellwhisperer_train",
-        embedding_generation=embedding_generation,
-        dataset_type_explanation=dataset_type_explanation,
-        metadata=metadata,
-    )
-
-
 def push_dataset_to_hub(
     hf_dataset: DatasetDict,
     repo_id: str,
@@ -298,37 +223,12 @@ def push_dataset_to_hub(
     share_links: Dict[str, Dict[str, str]],
     cs_length: int | None = None,
     private: bool = True,
-    prepared_dataset_dir: str | Path | None = None,
 ):
     """
     Push DatasetDict *hf_dataset* to the Hub, writing a rich README.
-
-    This function first prepares the dataset locally, then uploads it. If the upload fails,
-    the prepared directory can be manually uploaded later.
-
-    Parameters
-    ----------
-    hf_dataset : DatasetDict
-        The dataset to push
-    repo_id : str
-        Repository ID for Hugging Face (should already be versioned if needed)
-    embedding_keys : List[str]
-        List of embedding keys in the dataset
-    dataset_format : str
-        Dataset format type
-    share_links : Dict[str, Dict[str, str]]
-        Mapping of split names to file share links
-    cs_length : int, optional
-        Length of cell sentences
-    private : bool, optional
-        Whether to make the repository private (default: True)
-    prepared_dataset_dir : str or Path, optional
-        Path to a previously prepared dataset directory. If provided, this directory will be
-        uploaded instead of preparing a new one.
     """
-
-    # Use the provided repo_id (should already be versioned if needed)
-    final_repo_id = repo_id
+    # Check for existing repo and add version if needed
+    final_repo_id = check_and_version_repo_id(repo_id)
 
     embedding_generation = (
         f"Each AnnData contained the following embedding keys: {embedding_keys}."
@@ -361,7 +261,6 @@ def push_dataset_to_hub(
         readme_template_name="cellwhisperer_train",
         metadata=metadata,
         private=private,
-        prepared_dataset_dir=prepared_dataset_dir,
     )
     logger.info("Dataset pushed to HF Hub at %s", final_repo_id)
 
@@ -372,7 +271,7 @@ def push_dataset_to_hub(
 @hydra.main(
     version_base=None,
     config_path="../../conf",
-    config_name="dataset_config_example",
+    config_name="dataset_cellxgene_pseudo_bulk_10k",
 )
 def main(cfg: DictConfig):
     """
@@ -535,61 +434,21 @@ def main(cfg: DictConfig):
     )
     logger.info("Final repo_id would be: %s", repo_id)
 
-    # Prepare dataset for Hub (saves locally with README)
-    # This creates a complete directory that can be manually uploaded if automatic upload fails
-    # We prepare it first so it's available even if upload fails
-    prepared_dataset_dir = Path(hydra_run_dir) / f"{data_name}_prepared_for_hub"
-    logger.info("Preparing dataset for Hub upload...")
-
-    # Check for existing repo and add version if needed (before preparing)
-    final_repo_id = check_and_version_repo_id(repo_id)
-
-    prepare_dataset_for_hub(
-        hf_dataset=hf_dataset,
-        output_dir=prepared_dataset_dir,
-        repo_id=final_repo_id,
-        embedding_keys=required_obsm_keys,
-        dataset_format=dataset_format,
-        share_links=share_links_per_split,
-        cs_length=dataset_cfg.get("cs_length"),
-    )
-    logger.info("Dataset prepared for Hub at: %s", prepared_dataset_dir)
-    logger.info(
-        "If automatic upload fails, you can manually upload this directory using:\n"
-        f"  from huggingface_hub import HfApi\n"
-        f"  api = HfApi()\n"
-        f"  api.create_repo(repo_id='{final_repo_id}', repo_type='dataset', private={private_dataset}, exist_ok=True)\n"
-        f"  api.upload_folder(folder_path='{prepared_dataset_dir}', repo_id='{final_repo_id}', repo_type='dataset')"
-    )
-
-    # Also save dataset locally to the hydra run directory (for backward compatibility)
+    # save dataset locally to the hydra run directory
     dataset_save_path = Path(hydra_run_dir) / data_name
     hf_dataset.save_to_disk(str(dataset_save_path))
     logger.info("Dataset saved locally to: %s", dataset_save_path)
 
     if push_to_hub_flag:
-        try:
-            push_dataset_to_hub(
-                hf_dataset=hf_dataset,
-                repo_id=final_repo_id,  # Use the versioned repo_id
-                embedding_keys=required_obsm_keys,
-                dataset_format=dataset_format,
-                share_links=share_links_per_split,
-                cs_length=dataset_cfg.get("cs_length"),
-                private=private_dataset,
-                prepared_dataset_dir=prepared_dataset_dir,
-            )
-        except Exception as e:
-            logger.error(
-                f"Failed to upload dataset to Hub: {e}\n"
-                f"The prepared dataset is available at: {prepared_dataset_dir}\n"
-                "You can manually upload it using:\n"
-                f"  from huggingface_hub import HfApi\n"
-                f"  api = HfApi()\n"
-                f"  api.create_repo(repo_id='{final_repo_id}', repo_type='dataset', private={private_dataset}, exist_ok=True)\n"
-                f"  api.upload_folder(folder_path='{prepared_dataset_dir}', repo_id='{final_repo_id}', repo_type='dataset')"
-            )
-            raise
+        push_dataset_to_hub(
+            hf_dataset=hf_dataset,
+            repo_id=repo_id,
+            embedding_keys=required_obsm_keys,
+            dataset_format=dataset_format,
+            share_links=share_links_per_split,
+            cs_length=dataset_cfg.get("cs_length"),
+            private=private_dataset,
+        )
 
     logger.info("Dataset creation script finished.")
 
