@@ -734,6 +734,12 @@ def upload_folder_to_zenodo(
     max_workers: int = 4,
     *,
     force_reupload: bool = False,
+    dataset_name: str | None = None,
+    dataset_description: str | None = None,
+    raw_data_link: str | None = None,
+    obsm_keys: list[str] | None = None,
+    hf_repo_id: str | None = None,
+    shared_mapping_path: str | Path | None = None,
 ) -> dict[str, str]:
     """
     Upload *.zarr directories and *.h5ad files to Zenodo and return download links.
@@ -754,9 +760,23 @@ def upload_folder_to_zenodo(
         Configuration dictionary. Required keys:
         - "sandbox": bool, whether to use Zenodo sandbox (default: False)
     max_workers : int, optional
-        Maximum number of worker threads for parallel uploads (default: 4).
+        Not used (kept for API compatibility). Uploads are performed sequentially.
     force_reupload : bool, optional
         If True, re-upload files even if they exist in share_map.json (default: False).
+    dataset_name : str, optional
+        Name of the dataset (used as deposit title).
+    dataset_description : str, optional
+        Description of the dataset.
+    raw_data_link : str, optional
+        URL to the raw/original data source.
+    obsm_keys : list[str], optional
+        List of .obsm layer keys present in the AnnData objects.
+    hf_repo_id : str, optional
+        HuggingFace repository ID (e.g., "jo-mengr/dataset-name") for linking.
+    shared_mapping_path : str | Path, optional
+        Path to a shared share_map.json file. If provided, this will be used instead
+        of creating one in data_folder. Useful for sharing a single deposit across
+        multiple folders (e.g., train/val splits).
 
     Returns
     -------
@@ -777,10 +797,15 @@ def upload_folder_to_zenodo(
     >>> config = {"sandbox": False}
     >>> share_map = upload_folder_to_zenodo("/path/to/data", token, config)
     """
-    from concurrent.futures import ThreadPoolExecutor, as_completed
-
     data_folder = Path(data_folder).resolve()
-    mapping_path = data_folder / "share_map.json"
+
+    # Use shared mapping path if provided, otherwise use local one
+    if shared_mapping_path:
+        mapping_path = Path(shared_mapping_path).resolve()
+        mapping_path.parent.mkdir(parents=True, exist_ok=True)
+    else:
+        mapping_path = data_folder / "share_map.json"
+
     share_map = json.loads(mapping_path.read_text()) if mapping_path.exists() else {}
 
     # Determine Zenodo API base URL
@@ -814,6 +839,7 @@ def upload_folder_to_zenodo(
     # ---------- 2) Get or create deposit --------------------
     deposit_id = share_map.get("_zenodo_deposit_id")
     deposit_links = share_map.get("_zenodo_deposit_links", {})
+    is_new_deposit = False
 
     if deposit_id and not force_reupload:
         logger.info(f"Using existing Zenodo deposit: {deposit_id}")
@@ -831,23 +857,89 @@ def upload_folder_to_zenodo(
                     f"Deposit {deposit_id} not found or inaccessible, creating new one"
                 )
                 deposit_id = None
+                is_new_deposit = True
         except Exception as e:
             logger.warning(
                 f"Error checking deposit {deposit_id}: {e}, creating new one"
             )
             deposit_id = None
+            is_new_deposit = True
+    else:
+        is_new_deposit = True
 
-    if not deposit_id:
+    if is_new_deposit:
         logger.info("Creating new Zenodo deposit...")
-        # Create a new deposit
+
+        # Build comprehensive description
+        title = dataset_name if dataset_name else f"Dataset: {data_folder.name}"
+
+        description_parts = []
+
+        if dataset_description:
+            description_parts.append(dataset_description)
+
+        description_parts.append(
+            "\n\n## Processed AnnData Objects\n\n"
+            "This deposit contains processed AnnData objects (single-cell genomics data) "
+            "that were processed using the `adata_hf_datasets` Python package. "
+            "The files are in HDF5 (.h5ad) or Zarr format and contain preprocessed "
+            "gene expression data along with computed embeddings."
+        )
+
+        if obsm_keys:
+            obsm_list = ", ".join([f"`{key}`" for key in obsm_keys])
+            description_parts.append(
+                f"\n\n### Available Embeddings (.obsm layers)\n\n"
+                f"The AnnData objects contain the following embedding layers: {obsm_list}."
+            )
+
+        if hf_repo_id:
+            hf_url = f"https://huggingface.co/datasets/{hf_repo_id}"
+            description_parts.append(
+                f"\n\n## Related Resources\n\n"
+                f"- **HuggingFace Dataset**: [{hf_repo_id}]({hf_url})"
+            )
+
+        if raw_data_link:
+            description_parts.append(
+                f"- **Raw Data Source**: [Download]({raw_data_link})"
+            )
+
+        description_parts.append(
+            "\n\n## Package Information\n\n"
+            "These files were processed using the `adata_hf_datasets` package. "
+            "For more information about the processing pipeline, please refer to "
+            "the associated HuggingFace dataset repository."
+        )
+
+        full_description = "".join(description_parts)
+
+        # Create a new deposit with enhanced metadata
         deposit_data = {
             "metadata": {
-                "title": f"Dataset: {data_folder.name}",
+                "title": title,
                 "upload_type": "dataset",
-                "description": f"Dataset files from {data_folder.name}",
-                "creators": [{"name": "Dataset Creator"}],
+                "description": full_description,
+                "creators": [{"name": "jo-mengr", "affiliation": "HuggingFace"}],
+                "keywords": [
+                    "single-cell",
+                    "genomics",
+                    "anndata",
+                    "processed-data",
+                    "embeddings",
+                ],
             }
         }
+
+        # Add related identifiers if we have HF repo
+        if hf_repo_id:
+            deposit_data["metadata"]["related_identifiers"] = [
+                {
+                    "identifier": f"https://huggingface.co/datasets/{hf_repo_id}",
+                    "relation": "isSupplementTo",
+                    "scheme": "url",
+                }
+            ]
         r = requests.post(
             f"{api_base}/deposit/depositions",
             params={"access_token": zenodo_token},
@@ -880,7 +972,14 @@ def upload_folder_to_zenodo(
     # ---------- 3) Upload files --------------------
     uploads = []
     for z in zip_paths:
-        rel_key = z.relative_to(data_folder).as_posix()
+        # Use filename as key to avoid conflicts when using shared mapping
+        # Include parent folder name if using shared mapping to distinguish splits
+        if shared_mapping_path:
+            # Include the split name (parent folder) in the key
+            rel_key = f"{data_folder.name}/{z.name}"
+        else:
+            rel_key = z.relative_to(data_folder).as_posix()
+
         if (
             force_reupload
             or rel_key not in share_map
@@ -894,12 +993,12 @@ def upload_folder_to_zenodo(
 
     failed_uploads = []
 
-    def upload_one_file(zip_path: Path, rel_key: str) -> tuple[str, str] | None:
-        """Upload a single file and return (rel_key, download_url) or None on failure."""
-        try:
-            file_name = zip_path.name
-            file_size = zip_path.stat().st_size
+    # Upload files sequentially to avoid API rate limits and connection issues
+    for zip_path, rel_key in uploads:
+        file_name = zip_path.name
+        file_size = zip_path.stat().st_size
 
+        try:
             logger.info(f"Uploading {file_name} ({file_size / 1024 / 1024:.1f} MB)...")
 
             # Upload file to Zenodo bucket
@@ -916,54 +1015,90 @@ def upload_folder_to_zenodo(
                 if upload_response.status_code == 401:
                     error_msg += "\nAuthentication failed. Please check your ZENODO_TOKEN in .env file."
                 logger.error(error_msg)
-                return None
+                failed_uploads.append(rel_key)
+                continue
 
-            # Get file download URL from deposit
-            deposit_response = requests.get(
-                f"{api_base}/deposit/depositions/{deposit_id}",
-                params={"access_token": zenodo_token},
-                timeout=30,
+            logger.info(
+                f"File {file_name} uploaded successfully, retrieving download URL..."
             )
-            if deposit_response.status_code != 200:
-                logger.error(
-                    f"Failed to get deposit info: {deposit_response.status_code}"
-                )
-                return None
 
-            files = deposit_response.json().get("files", [])
-            file_info = next((f for f in files if f["filename"] == file_name), None)
-            if not file_info:
-                logger.error(f"File {file_name} not found in deposit after upload")
-                return None
+            # Wait a moment for Zenodo to process the file before fetching deposit info
+            time.sleep(1)
 
-            download_url = file_info.get("links", {}).get("download")
-            if not download_url:
-                logger.error(f"No download URL for {file_name}")
-                return None
+            # Get file download URL from deposit (with retry logic)
+            max_retries = 3
+            download_url = None
+            for attempt in range(max_retries):
+                try:
+                    deposit_response = requests.get(
+                        f"{api_base}/deposit/depositions/{deposit_id}",
+                        params={"access_token": zenodo_token},
+                        timeout=30,
+                    )
+                    if deposit_response.status_code != 200:
+                        logger.warning(
+                            f"Failed to get deposit info (attempt {attempt + 1}/{max_retries}): {deposit_response.status_code}"
+                        )
+                        if attempt < max_retries - 1:
+                            time.sleep(2**attempt)  # Exponential backoff
+                            continue
+                        else:
+                            logger.error(
+                                f"Failed to get deposit info after {max_retries} attempts"
+                            )
+                            failed_uploads.append(rel_key)
+                            break
 
-            logger.info(f"✅ Uploaded {file_name}")
-            return (rel_key, download_url)
+                    files = deposit_response.json().get("files", [])
+                    file_info = next(
+                        (f for f in files if f["filename"] == file_name), None
+                    )
+                    if not file_info:
+                        if attempt < max_retries - 1:
+                            logger.warning(
+                                f"File {file_name} not yet available in deposit (attempt {attempt + 1}/{max_retries}), retrying..."
+                            )
+                            time.sleep(2**attempt)  # Exponential backoff
+                            continue
+                        else:
+                            logger.error(
+                                f"File {file_name} not found in deposit after {max_retries} attempts"
+                            )
+                            failed_uploads.append(rel_key)
+                            break
+
+                    download_url = file_info.get("links", {}).get("download")
+                    if not download_url:
+                        logger.error(f"No download URL for {file_name}")
+                        failed_uploads.append(rel_key)
+                        break
+
+                    # Success - save the download URL
+                    share_map[rel_key] = download_url
+                    # Save progress incrementally
+                    mapping_path.write_text(json.dumps(share_map, indent=2))
+                    logger.info(
+                        f"✅ Uploaded {file_name} - Download URL: {download_url}"
+                    )
+                    break
+
+                except requests.exceptions.RequestException as e:
+                    if attempt < max_retries - 1:
+                        logger.warning(
+                            f"Error retrieving deposit info (attempt {attempt + 1}/{max_retries}): {e}, retrying..."
+                        )
+                        time.sleep(2**attempt)  # Exponential backoff
+                        continue
+                    else:
+                        logger.error(
+                            f"Error retrieving deposit info after {max_retries} attempts: {e}"
+                        )
+                        failed_uploads.append(rel_key)
+                        break
 
         except Exception as e:
-            logger.error(f"Error uploading {zip_path.name}: {e}")
-            return None
-
-    # Upload files in parallel
-    with ThreadPoolExecutor(max_workers=max_workers) as executor:
-        futures = {
-            executor.submit(upload_one_file, z, rel_key): (z, rel_key)
-            for z, rel_key in uploads
-        }
-        for future in as_completed(futures):
-            result = future.result()
-            if result:
-                rel_key, download_url = result
-                share_map[rel_key] = download_url
-                # Save progress incrementally
-                mapping_path.write_text(json.dumps(share_map, indent=2))
-            else:
-                zip_path, rel_key = futures[future]
-                failed_uploads.append(rel_key)
+            logger.error(f"Error uploading {file_name}: {e}", exc_info=True)
+            failed_uploads.append(rel_key)
 
     # Final save of share_map
     mapping_path.write_text(json.dumps(share_map, indent=2))
@@ -990,7 +1125,27 @@ def upload_folder_to_zenodo(
 
     logger.info("✅ All uploads completed successfully!")
     # Return only file mappings, not metadata
-    return {k: v for k, v in share_map.items() if not k.startswith("_")}
+    # If using shared mapping, filter to only return entries for current data_folder
+    if shared_mapping_path:
+        # Filter to only return entries for the current split/folder
+        folder_name = data_folder.name
+        filtered_map = {
+            k: v
+            for k, v in share_map.items()
+            if not k.startswith("_") and k.startswith(f"{folder_name}/")
+        }
+        # Also return entries without folder prefix (for backward compatibility)
+        # and remove folder prefix from keys for easier lookup
+        result = {}
+        for k, v in filtered_map.items():
+            # Remove "folder_name/" prefix from key for return value
+            if k.startswith(f"{folder_name}/"):
+                result[k[len(folder_name) + 1 :]] = v
+            else:
+                result[k] = v
+        return result
+    else:
+        return {k: v for k, v in share_map.items() if not k.startswith("_")}
 
 
 # ------------------------------------------------------------------ #
