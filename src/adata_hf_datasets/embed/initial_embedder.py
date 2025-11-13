@@ -2238,6 +2238,249 @@ class GeneformerV1Embedder(GeneformerEmbedder):
             logger.info("Git LFS already configured for Geneformer_v1")
 
 
+class CWGeneformerEmbedder(BaseEmbedder):
+    """
+    CellWhisperer Geneformer embedder using their Processor + Model to compute embeddings.
+
+    This embedder relies on the CellWhisperer implementation which:
+      - tokenizes in-memory AnnData via a TranscriptomeProcessor
+      - forwards tokens through a frozen GeneformerModel (BERT backbone)
+      - returns 512-dimensional embeddings
+
+    Parameters
+    ----------
+    cw_model_path : str | Path
+        Path to the pretrained CellWhisperer Geneformer checkpoint directory or file
+        to be passed to `GeneformerModel.from_pretrained(...)`.
+    processor_kwargs : dict, optional
+        Keyword arguments forwarded to the GeneformerTranscriptomeProcessor constructor
+        (e.g., nproc, emb_label). Defaults are chosen by the CW implementation.
+    model_config : dict, optional
+        Configuration overrides for GeneformerModel (e.g., emb_mode, emb_layer,
+        forward_batch_size, nproc, summary_stat). Passed as `config=` to from_pretrained.
+    device : str, optional
+        Torch device to place the model on. If None, uses 'cuda' if available else 'cpu'.
+    """
+
+    requires_mem_adata = True
+
+    def __init__(
+        self,
+        cw_model_path: str | Path,
+        processor_kwargs: dict | None = None,
+        model_config: dict | None = None,
+        device: str | None = None,
+        embedding_dim: int = 512,
+        **init_kwargs,
+    ):
+        # Ensure we don't pass embedding_dim twice to BaseEmbedder
+        super().__init__(embedding_dim=embedding_dim)
+        self.cw_model_path = Path(cw_model_path)
+        # Provide safe defaults for CW processor (required args)
+        default_processor_kwargs = {
+            "nproc": 4,
+            "emb_label": ["sample_name"],
+        }
+        self.processor_kwargs = {**default_processor_kwargs, **(processor_kwargs or {})}
+        # Provide reasonable model config defaults; user can override
+        default_model_config = {
+            "emb_mode": "cell",
+            "emb_layer": -1,
+            "forward_batch_size": 16,
+            "nproc": self.processor_kwargs.get("nproc", 4),
+            "summary_stat": None,
+        }
+        self.model_config = {**default_model_config, **(model_config or {})}
+        self.device = device
+        self._processor = None
+        self._model = None
+
+    def _import_cw(self):
+        """Import CellWhisperer Geneformer classes dynamically."""
+        from importlib.util import find_spec
+        import importlib
+
+        if find_spec("cellwhisperer") is None:
+            raise ImportError(
+                "CellWhisperer package not found. Please add it as a submodule and install it.\n"
+                "Repo: https://github.com/mengerj/CellWhisperer.git"
+            )
+
+        # Try to locate classes regardless of exact module path by attribute lookup.
+        # Primary expectation: classes are importable from `cellwhisperer`.
+        cw_pkg = importlib.import_module("cellwhisperer")
+        GeneformerModel = getattr(cw_pkg, "GeneformerModel", None)
+        GeneformerTranscriptomeProcessor = getattr(
+            cw_pkg, "GeneformerTranscriptomeProcessor", None
+        )
+
+        # If not exposed at package root, try common submodules
+        if GeneformerModel is None or GeneformerTranscriptomeProcessor is None:
+            # Attempt to discover submodules that might hold these classes
+            for submod in ("cellwhisperer.jointemb.geneformer_model",):
+                try:
+                    m = importlib.import_module(submod)
+                    if GeneformerModel is None:
+                        GeneformerModel = getattr(m, "GeneformerModel", None)
+                    if GeneformerTranscriptomeProcessor is None:
+                        GeneformerTranscriptomeProcessor = getattr(
+                            m, "GeneformerTranscriptomeProcessor", None
+                        )
+                except Exception:
+                    continue
+
+        if GeneformerModel is None or GeneformerTranscriptomeProcessor is None:
+            raise ImportError(
+                "Could not import GeneformerModel or GeneformerTranscriptomeProcessor from CellWhisperer.\n"
+                "Please ensure the package is installed and exposes these classes."
+            )
+        return GeneformerModel, GeneformerTranscriptomeProcessor
+
+    def prepare(
+        self,
+        adata: anndata.AnnData | None = None,
+        adata_path: str | None = None,
+        **kwargs,
+    ):
+        """
+        Initialize the CellWhisperer processor and load the pretrained model.
+        """
+        # Validate model path
+        if not self.cw_model_path.exists():
+            raise FileNotFoundError(f"cw_model_path not found: {self.cw_model_path}")
+
+        # Import dependencies lazily
+        GeneformerModel, GeneformerTranscriptomeProcessor = self._import_cw()
+
+        # Instantiate processor
+        self._processor = GeneformerTranscriptomeProcessor(**self.processor_kwargs)
+
+        # Load model
+        self._model = GeneformerModel.from_pretrained(
+            "ctheodoris/Geneformer", config=self.model_config
+        )
+
+        # Device placement
+        import torch
+
+        if self.device is None:
+            self.device = "cuda" if torch.cuda.is_available() else "cpu"
+        self._model.to(self.device)
+        self._model.eval()
+
+        # Sync embedding_dim with loaded model hidden_size when available
+        try:
+            hidden_size = getattr(
+                getattr(self._model, "geneformer_model", self._model).config,
+                "hidden_size",
+                None,
+            )
+            if isinstance(hidden_size, int) and hidden_size > 0:
+                self.embedding_dim = hidden_size
+        except Exception:
+            pass
+
+        logger.info(
+            "Prepared CWGeneformerEmbedder with model at %s on device=%s",
+            self.cw_model_path,
+            self.device,
+        )
+
+    def embed(
+        self,
+        adata: anndata.AnnData | None = None,
+        adata_path: str | None = None,
+        obsm_key: str = "X_cw-geneformer",
+        batch_size: int | None = None,
+        return_tensors: str = "pt",
+        **tokenize_kwargs,
+    ) -> np.ndarray:
+        """
+        Compute embeddings using CellWhisperer's tokenizer + model.
+
+        Parameters
+        ----------
+        adata : anndata.AnnData, optional
+            Dataset to embed. Required for this embedder (in-memory).
+        adata_path : str, optional
+            Unused (kept for interface).
+        obsm_key : str
+            Key to store embeddings in `adata.obsm`.
+        batch_size : int, optional
+            Forward batch size; if provided, overrides config.forward_batch_size.
+        return_tensors : str
+            Must be 'pt' to use PyTorch tensors.
+        **tokenize_kwargs : dict
+            Extra args forwarded to the processor call (e.g., chunk_size, target_sum, padding).
+        """
+        import torch
+
+        adata = _check_load_adata(adata, adata_path)
+        if self._processor is None or self._model is None:
+            raise ValueError("Embedder is not prepared. Call `prepare(...)` first.")
+
+        # Remove manager-level args not relevant to tokenization if present
+        tokenize_kwargs.pop("batch_key", None)
+
+        # Tokenize
+        proc_out = self._processor(
+            adata, return_tensors=return_tensors, **tokenize_kwargs
+        )
+        expression_tokens = proc_out["expression_tokens"]
+        expression_token_lengths = proc_out["expression_token_lengths"]
+
+        if return_tensors != "pt":
+            raise ValueError("CWGeneformerEmbedder requires return_tensors='pt'.")
+
+        # Move to device
+        expression_tokens = expression_tokens.to(self.device)
+        expression_token_lengths = expression_token_lengths.to(self.device)
+
+        # Sanity check: ensure tokenizer's max token id fits model vocab
+        try:
+            model_cfg = getattr(
+                getattr(self._model, "geneformer_model", self._model), "config", None
+            )
+            vocab_size = getattr(model_cfg, "vocab_size", None)
+            if vocab_size is not None:
+                max_token = int(expression_tokens.max().item())
+                if max_token >= int(vocab_size):
+                    raise ValueError(
+                        f"Tokenizer/model vocabulary mismatch: max token id {max_token} >= model vocab_size {vocab_size}. "
+                        "Use a CW Geneformer checkpoint trained with the same token dictionary as the processor, "
+                        "or switch to the matching Geneformer embedder for that model."
+                    )
+        except Exception as e:
+            if isinstance(e, ValueError):
+                raise
+            logger.debug(f"Vocab sanity check skipped: {e}")
+
+        # Optionally override forward batch size in config
+        if batch_size is not None and hasattr(self._model, "config"):
+            try:
+                self._model.config.forward_batch_size = int(batch_size)
+            except Exception:
+                pass
+
+        # Forward pass (model returns (None, embs))
+        with torch.no_grad():
+            _, embs = self._model(
+                expression_tokens=expression_tokens,
+                expression_token_lengths=expression_token_lengths,
+                return_dict=False,
+            )
+
+        # Convert to numpy and store
+        embedding_matrix = embs.detach().cpu().numpy()
+        adata.obsm[obsm_key] = embedding_matrix
+        logger.info(
+            "Stored CW Geneformer embeddings of shape %s in adata.obsm[%r].",
+            embedding_matrix.shape,
+            obsm_key,
+        )
+        return embedding_matrix
+
+
 class SCVIEmbedderFM(SCVIEmbedder):
     """
     SCVI embedder preconfigured as a foundation model (FM) loading weights from an scvi model trained on the cellxgene corpus.
@@ -2581,6 +2824,7 @@ class InitialEmbedder:
             "scvi_fm": SCVIEmbedderFM,
             "geneformer": GeneformerEmbedder,
             "geneformer-v1": GeneformerV1Embedder,
+            "cw-geneformer": CWGeneformerEmbedder,
             "pca": PCAEmbedder,
             "hvg": HighlyVariableGenesEmbedder,
             "gs": GeneSelectEmbedder,
@@ -2676,7 +2920,7 @@ class InitialEmbedder:
         adata: anndata.AnnData | None = None,
         adata_path: str | None = None,
         obsm_key: str | None = None,
-        batch_key: str = "batch",
+        batch_key: str | None = None,
         **embed_kwargs,
     ) -> np.ndarray:
         """
@@ -2691,8 +2935,8 @@ class InitialEmbedder:
         obsm_key : str, optional
             Key under which embeddings are stored in .obsm.
             Defaults to "X_{method}".
-        batch_key : str, default="batch"
-            Observation column for batch labels (used by some embedders).
+        batch_key : str, optional
+            Observation column for batch labels (only forwarded to embedders that accept it).
         **embed_kwargs
             Additional keyword arguments for the embedders embed().
 
@@ -2724,13 +2968,27 @@ class InitialEmbedder:
         if adata_path is not None:
             logger.info("Using file path: %s", adata_path)
 
-        embedding_matrix = self.embedder.embed(
-            adata=adata,
-            adata_path=adata_path,
-            obsm_key=obsm_key,
-            batch_key=batch_key,
-            **embed_kwargs,
-        )
+        # Build call kwargs and only include batch_key if the embedder accepts it
+        import inspect
+
+        # Avoid duplicating a user-provided batch_key in embed_kwargs
+        if "batch_key" in embed_kwargs:
+            # Prefer the explicit function argument if set; otherwise keep the kwarg value
+            if batch_key is None:
+                batch_key = embed_kwargs.pop("batch_key")
+            else:
+                embed_kwargs.pop("batch_key")
+
+        call_kwargs = dict(adata=adata, adata_path=adata_path, obsm_key=obsm_key)
+        try:
+            sig = inspect.signature(self.embedder.embed)
+            if batch_key is not None and "batch_key" in sig.parameters:
+                call_kwargs["batch_key"] = batch_key
+        except Exception:
+            # If signature inspection fails, do not pass batch_key
+            pass
+
+        embedding_matrix = self.embedder.embed(**call_kwargs, **embed_kwargs)
         # cast to float32
         embedding_matrix = embedding_matrix.astype(np.float32)
 
