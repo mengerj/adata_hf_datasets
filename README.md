@@ -37,6 +37,7 @@ This pipeline transforms raw single-cell RNA-seq data into ready-to-use HuggingF
 - [Nextcloud Integration](#nextcloud-integration)
 - [Pipeline Steps](#pipeline-steps)
 - [Advanced Usage](#advanced-usage)
+- [Adding a New Embedding Method](#adding-a-new-embedding-method)
 - [Documentation](#documentation)
 - [Troubleshooting](#troubleshooting)
 
@@ -945,6 +946,240 @@ python scripts/workflow/submit_workflow_local.py \
     ++preprocessing.enabled=false \
     ++embedding_preparation.enabled=false
 ```
+
+---
+
+## Adding a New Embedding Method
+
+This section explains how to add a custom embedding method to the pipeline by creating a new embedder class.
+
+### Overview
+
+All embedders inherit from the `BaseEmbedder` class and implement three core methods:
+
+- `__init__`: Initialize the embedder with configuration parameters
+- `prepare`: Prepare the embedder (e.g., load models, tokenize data)
+- `embed`: Generate embeddings from the data
+
+### Step-by-Step Guide
+
+#### 1. Create Your Embedder Class
+
+Create a new class that inherits from `BaseEmbedder` in `src/adata_hf_datasets/embed/initial_embedder.py`:
+
+```python
+from adata_hf_datasets.embed.initial_embedder import BaseEmbedder, _check_load_adata
+from importlib.util import find_spec
+import numpy as np
+import anndata as ad
+import logging
+
+logger = logging.getLogger(__name__)
+
+
+class MyCustomEmbedder(BaseEmbedder):
+    """
+    Custom embedder that generates embeddings using MyCustomMethod.
+    """
+
+    def __init__(self, embedding_dim: int = 64, **kwargs):
+        """
+        Initialize the custom embedder.
+
+        Parameters
+        ----------
+        embedding_dim : int
+            Dimensionality of the output embedding.
+        **kwargs
+            Additional keyword arguments for the embedder.
+        """
+        # Check for required packages
+        if find_spec("my_custom_package") is None:
+            raise ImportError(
+                "my_custom_package is required to use MyCustomEmbedder. "
+                "Please install it with: pip install my-custom-package"
+            )
+
+        super().__init__(embedding_dim=embedding_dim)
+        self.model = None
+        self.init_kwargs = kwargs
+
+    def prepare(
+        self,
+        adata: ad.AnnData | None = None,
+        adata_path: str | None = None,
+        **kwargs,
+    ) -> None:
+        """
+        Prepare the embedder (e.g., load model, preprocess data).
+
+        Parameters
+        ----------
+        adata : anndata.AnnData, optional
+            Single-cell dataset in memory.
+        adata_path : str, optional
+            Path to the AnnData file (.h5ad or .zarr).
+        **kwargs
+            Additional keyword arguments for preparation.
+        """
+        # Use helper function to load adata if path is provided
+        adata = _check_load_adata(adata, adata_path)
+
+        logger.info("Preparing MyCustomEmbedder...")
+        # Your preparation logic here
+        # For example: load a pre-trained model, tokenize data, etc.
+        self.model = load_my_custom_model(**self.init_kwargs)
+
+    def embed(
+        self,
+        adata: ad.AnnData | None = None,
+        adata_path: str | None = None,
+        obsm_key: str = "X_my_custom",
+        **kwargs,
+    ) -> np.ndarray:
+        """
+        Generate embeddings from the data.
+
+        Parameters
+        ----------
+        adata : anndata.AnnData, optional
+            Single-cell dataset in memory.
+        adata_path : str, optional
+            Path to the AnnData file (.h5ad or .zarr).
+        obsm_key : str
+            Key in `adata.obsm` to store the embedding.
+        **kwargs
+            Additional keyword arguments for embedding.
+
+        Returns
+        -------
+        np.ndarray
+            Embedding matrix of shape (n_cells, embedding_dim).
+            Must be in the same order as adata.obs.index.
+        """
+        # Load adata if path is provided
+        adata = _check_load_adata(adata, adata_path)
+
+        logger.info("Generating embeddings with MyCustomEmbedder...")
+
+        # Generate embeddings
+        # IMPORTANT: Ensure output order matches adata.obs.index
+        embedding_matrix = self.model.embed(adata.X)
+
+        # Ensure correct shape and dtype
+        embedding_matrix = embedding_matrix.astype(np.float32)
+
+        # Store in adata.obsm if adata object was provided
+        if adata is not None:
+            adata.obsm[obsm_key] = embedding_matrix
+            logger.info(
+                f"Stored embeddings in adata.obsm['{obsm_key}'], shape: {embedding_matrix.shape}"
+            )
+
+        return embedding_matrix
+```
+
+#### 2. Key Requirements
+
+**Handle Both Input Types:**
+
+- Always use `_check_load_adata()` helper function to handle both in-memory `AnnData` objects and file paths
+- The helper automatically handles `.h5ad` and `.zarr` formats
+
+**Package Checking:**
+
+- Use `find_spec()` from `importlib.util` to check if required packages are installed
+- Provide helpful error messages with installation instructions if packages are missing
+
+**Output Requirements:**
+
+- Return a `np.ndarray` of shape `(n_cells, embedding_dim)`
+- **Critical**: The embedding matrix must be in the same order as `adata.obs.index`
+- Use `np.float32` dtype for consistency
+- If an `adata` object is provided, store embeddings in `adata.obsm[obsm_key]`
+
+**Memory Efficiency:**
+
+- When using file paths, you can read only necessary data from `.h5ad` or `.zarr` stores
+- For `.zarr` stores, you can write embeddings directly to `adata.obsm` without loading the entire object
+- See `GeneformerEmbedder` for an example of efficient file-based operations
+
+#### 3. Register Your Embedder
+
+Add your embedder class to the `embedder_classes` dictionary in the `InitialEmbedder` class:
+
+```python
+# In InitialEmbedder.__init__ method
+embedder_classes = {
+    "scvi_fm": SCVIEmbedderFM,
+    "geneformer": GeneformerEmbedder,
+    "geneformer-v1": GeneformerV1Embedder,
+    "pca": PCAEmbedder,
+    "hvg": HighlyVariableGenesEmbedder,
+    "gs": GeneSelectEmbedder,
+    "gs10k": GeneSelectEmbedder10k,
+    "my_custom": MyCustomEmbedder,  # Add your embedder here
+}
+```
+
+#### 4. Add to Configuration (For Pipeline Usage)
+
+If you want to use your embedder in the pipeline, add it to `conf/dataset_default.yaml`:
+
+```yaml
+embedding_cpu: # or embedding_gpu, depending on your method
+  embedding_dim_map:
+    scvi_fm: 50
+    geneformer: 768
+    pca: 50
+    hvg: 512
+    gs: 3936
+    gs10k: 10000
+    geneformer-v1: 512
+    my_custom: 64 # Add your embedding dimension here
+```
+
+Add the same entry to both `embedding_cpu` and `embedding_gpu` sections if applicable.
+
+#### 5. Usage
+
+Once registered, you can use your embedder:
+
+```python
+from adata_hf_datasets import InitialEmbedder
+
+# Initialize embedder
+embedder = InitialEmbedder(
+    method="my_custom",
+    embedding_dim=64,
+    # Your custom init_kwargs here
+)
+
+# Prepare (if needed)
+embedder.prepare(adata_path="path/to/data.h5ad")
+
+# Generate embeddings
+embeddings = embedder.embed(
+    adata_path="path/to/data.h5ad",
+    obsm_key="X_my_custom"
+)
+```
+
+Or use it in the pipeline by adding `"my_custom"` to the methods list in your dataset config:
+
+```yaml
+embedding_cpu:
+  enabled: true
+  methods: ["pca", "my_custom"]
+```
+
+### Best Practices
+
+1. **Error Handling**: Provide clear error messages when required data/attributes are missing
+2. **Logging**: Use the logger to inform users about what's happening
+3. **Documentation**: Add comprehensive docstrings explaining parameters and behavior
+4. **Testing**: Test with both `.h5ad` and `.zarr` formats, and with both in-memory and file-based inputs
+5. **Order Preservation**: Always ensure embeddings match the order of `adata.obs.index`
 
 ---
 

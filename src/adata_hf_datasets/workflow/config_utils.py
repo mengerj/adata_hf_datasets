@@ -374,64 +374,6 @@ def validate_parameter_values(cfg: DictConfig) -> None:
             if split is not None and (split <= 0 or split >= 1):
                 raise ValueError(f"train_split must be between 0 and 1, got {split}")
 
-    # Validate embedding parameters
-    # Handle new structure (embedding_cpu and embedding_gpu)
-    if hasattr(cfg, "embedding_cpu") and cfg.embedding_cpu is not None:
-        _validate_embedding_section(cfg.embedding_cpu, "embedding_cpu")
-
-    if hasattr(cfg, "embedding_gpu") and cfg.embedding_gpu is not None:
-        _validate_embedding_section(cfg.embedding_gpu, "embedding_gpu")
-
-    # Handle old structure for backward compatibility
-    if hasattr(cfg, "embedding") and cfg.embedding is not None:
-        _validate_embedding_section(cfg.embedding, "embedding")
-
-
-def _validate_embedding_section(embedding_cfg: DictConfig, section_name: str) -> None:
-    """
-    Validate a single embedding configuration section.
-
-    Parameters
-    ----------
-    embedding_cfg : DictConfig
-        The embedding configuration section to validate
-    section_name : str
-        Name of the section for error messages
-    """
-    # Validate embedding methods
-    if hasattr(embedding_cfg, "methods"):
-        valid_methods = [
-            "hvg",
-            "scvi_fm",
-            "geneformer",
-            "geneformer-v1",
-            "pca",
-            "gs",
-            "gs10k",
-        ]
-        invalid_methods = [
-            method for method in embedding_cfg.methods if method not in valid_methods
-        ]
-        if invalid_methods:
-            raise ValueError(
-                f"Invalid embedding methods in {section_name}: {invalid_methods}. Valid methods: {valid_methods}"
-            )
-
-    # Validate embedding dimensions
-    if hasattr(embedding_cfg, "embedding_dim_map"):
-        for method, dim in embedding_cfg.embedding_dim_map.items():
-            if dim <= 0:
-                raise ValueError(
-                    f"Embedding dimension for {method} in {section_name} must be positive, got {dim}"
-                )
-
-    # Validate batch size
-    if hasattr(embedding_cfg, "batch_size") and embedding_cfg.batch_size is not None:
-        if embedding_cfg.batch_size <= 0:
-            raise ValueError(
-                f"batch_size in {section_name} must be positive, got {embedding_cfg.batch_size}"
-            )
-
 
 def validate_config(cfg: DictConfig) -> bool:
     """
