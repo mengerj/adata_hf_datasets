@@ -66,7 +66,7 @@ dataset_creation:
   use_nextcloud: false
   use_zenodo: true
   zenodo_config:
-    - sandbox: true
+    sandbox: true
   force_reupload: true
   private: false
   # Dataset-specific parameters
