@@ -11,16 +11,15 @@ readme = "README.md"
 authors = [
   { name = "Jonatan Menger", email = "jonatan.menger@gmail.com" },
 ]
-requires-python = ">=3.10,<3.14"
+requires-python = ">=3.11,<3.14"
 classifiers = [
   "Programming Language :: Python :: 3 :: Only",
-  "Programming Language :: Python :: 3.10",
   "Programming Language :: Python :: 3.11",
   "Programming Language :: Python :: 3.12",
   "Programming Language :: Python :: 3.13",
 ]
 dependencies = [
-  "anndata",
+  "anndata>=0.12",
   "appdirs>=1.4.4",
   "boto3>=1.37.15",
   "botocore>=1.37.15",
@@ -40,8 +39,8 @@ dependencies = [
   "requests",
   "scanpy>=1.10.4",
   "torch>=2.6",                                 # Required for transformers; scvi-tools and geneformer are optional
-  "transformers>=4.43.4",
-  "zarr",                                       #had some compatibility issues with anndata and numcodecs and used 2.16.1
+  "transformers>=4.55",
+  "zarr>=3",                                    #had some compatibility issues with anndata and numcodecs and used 2.16.1
 ]
 
 optional-dependencies.dev = [
