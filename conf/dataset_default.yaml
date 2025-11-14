@@ -46,6 +46,7 @@ download:
   preserve_proportions: false # Whether to preserve proportions when stratifying
   validate: true # Validate downloaded file format
   keep_full_file: true # Keep the full downloaded file for future subsetting
+  venv_path: null # Virtual environment path (relative to project_directory). If null, uses workflow.venv_path or ".venv"
 
 # =============================================================================
 # PREPROCESSING CONFIGURATION (dataset-specific overrides)
@@ -87,6 +88,9 @@ preprocessing:
     - "total_counts"
     - "pct_counts_mt"
 
+  # Virtual environment configuration
+  venv_path: null # Virtual environment path (relative to project_directory). If null, uses workflow.venv_path or ".venv"
+
 # =============================================================================
 # EMBEDDING PREPARATION CONFIGURATION (dataset-specific overrides)
 # =============================================================================
@@ -119,6 +123,9 @@ embedding_preparation:
     gs10k: 10000
     geneformer-v1: 512
     cw-geneformer: 512
+
+  # Virtual environment configuration
+  venv_path: null # Virtual environment path (relative to project_directory). If null, uses workflow.venv_path or ".venv"
 
 # =============================================================================
 # CPU EMBEDDING CONFIGURATION (dataset-specific overrides)
@@ -153,6 +160,9 @@ embedding_cpu:
   overwrite: false # Whether to overwrite existing embeddings
   chunk_rows: 16384 # Number of cells written per chunk when streaming into Zarr
 
+  # Virtual environment configuration
+  venv_path: null # Virtual environment path (relative to project_directory). If null, uses workflow.venv_path or ".venv"
+
 # =============================================================================
 # GPU EMBEDDING CONFIGURATION (dataset-specific overrides)
 # =============================================================================
@@ -185,6 +195,9 @@ embedding_gpu:
   output_format: "zarr" # Output format preference
   overwrite: false # Whether to overwrite existing embeddings
   chunk_rows: 16384 # Number of cells written per chunk when streaming into Zarr
+
+  # Virtual environment configuration
+  venv_path: null # Virtual environment path (relative to project_directory). If null, uses workflow.venv_path or ".venv"
 
 # =============================================================================
 # DATASET CREATION CONFIGURATION (dataset-specific overrides)
@@ -240,3 +253,6 @@ dataset_creation:
     # - ZENODO_SANDBOX_TOKEN: Sandbox Zenodo access token (when sandbox: true)
     # Create tokens at: https://zenodo.org/account/settings/applications/ (production)
     #                  https://sandbox.zenodo.org/account/settings/applications/ (sandbox)
+
+  # Virtual environment configuration
+  venv_path: null # Virtual environment path (relative to project_directory). If null, uses workflow.venv_path or ".venv"

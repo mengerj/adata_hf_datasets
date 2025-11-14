@@ -381,6 +381,71 @@ class WorkflowOrchestrator:
             force=force,
         )
 
+    def _get_venv_path(
+        self,
+        dataset_config: DictConfig,
+        step_name: str,
+        workflow_config: DictConfig,
+    ) -> str:
+        """Get the virtual environment path for a workflow step.
+
+        Priority order:
+        1. Step-specific venv_path from dataset config (e.g., dataset_config.download.venv_path)
+        2. Workflow-level venv_path from workflow_config
+        3. Environment variable VENV_PATH
+        4. Default ".venv"
+
+        Parameters
+        ----------
+        dataset_config : DictConfig
+            The loaded dataset configuration
+        step_name : str
+            Name of the workflow step (e.g., "download", "preprocessing", "embedding_preparation")
+        workflow_config : DictConfig
+            The workflow configuration
+
+        Returns
+        -------
+        str
+            Path to the virtual environment (relative to project_directory)
+        """
+        # Map step names to config section names
+        step_to_section = {
+            "download": "download",
+            "preprocessing": "preprocessing",
+            "embedding_preparation": "embedding_preparation",
+            "embedding_cpu": "embedding_cpu",
+            "embedding_gpu": "embedding_gpu",
+            "dataset_creation": "dataset_creation",
+        }
+
+        section_name = step_to_section.get(step_name)
+
+        # Try step-specific venv_path from dataset config
+        if section_name and hasattr(dataset_config, section_name):
+            section = getattr(dataset_config, section_name)
+            if hasattr(section, "venv_path") and section.venv_path is not None:
+                venv_path = str(section.venv_path)
+                logger.info(f"Using venv_path from {section_name} config: {venv_path}")
+                return venv_path
+
+        # Fall back to workflow-level venv_path
+        if hasattr(workflow_config, "venv_path") and workflow_config.venv_path:
+            venv_path = str(workflow_config.venv_path)
+            logger.info(f"Using venv_path from workflow config: {venv_path}")
+            return venv_path
+
+        # Fall back to environment variable
+        env_venv_path = os.environ.get("VENV_PATH")
+        if env_venv_path:
+            logger.info(f"Using venv_path from environment variable: {env_venv_path}")
+            return env_venv_path
+
+        # Default fallback
+        default_venv = ".venv"
+        logger.info(f"Using default venv_path: {default_venv}")
+        return default_venv
+
     def _submit_slurm_job(
         self,
         host: str,
@@ -537,6 +602,10 @@ class WorkflowOrchestrator:
 
         logger.info(f"Using dataset config: {dataset_config_name}")
 
+        # Load dataset config to get venv_path
+        dataset_config = self._load_dataset_config(dataset_config_name)
+        venv_path = self._get_venv_path(dataset_config, "download", workflow_config)
+
         # Pass the dataset config name and workflow directory as environment variables
         env_vars = {
             "DATASET_CONFIG": dataset_config_name,
@@ -546,7 +615,7 @@ class WorkflowOrchestrator:
             "PROJECT_DIR": os.environ.get(
                 "PROJECT_DIR", "/home/menger/git/adata_hf_datasets"
             ),
-            "VENV_PATH": os.environ.get("VENV_PATH", ".venv"),
+            "VENV_PATH": venv_path,
             # Enforce base path from orchestrator for SLURM backend (no internal default)
             "BASE_FILE_PATH": workflow_config["slurm_base_file_path"],
         }
@@ -582,6 +651,11 @@ class WorkflowOrchestrator:
         base_file_path = dataset_config.get("base_file_path", default_slurm_base)
         dataset_name = dataset_config.dataset.name
 
+        # Get venv_path (transfer steps don't have dataset config sections, so use workflow-level)
+        venv_path = self._get_venv_path(
+            dataset_config, "transfer_cpu_to_gpu", workflow_config
+        )
+
         # Pass the required environment variables
         env_vars = {
             "DATASET_CONFIG": dataset_config_name,
@@ -596,7 +670,7 @@ class WorkflowOrchestrator:
             "PROJECT_DIR": os.environ.get(
                 "PROJECT_DIR", "/home/menger/git/adata_hf_datasets"
             ),
-            "VENV_PATH": os.environ.get("VENV_PATH", ".venv"),
+            "VENV_PATH": venv_path,
         }
 
         job_id = self._submit_slurm_job(
@@ -630,6 +704,11 @@ class WorkflowOrchestrator:
         base_file_path = dataset_config.get("base_file_path", default_slurm_base)
         dataset_name = dataset_config.dataset.name
 
+        # Get venv_path (transfer steps don't have dataset config sections, so use workflow-level)
+        venv_path = self._get_venv_path(
+            dataset_config, "transfer_gpu_to_cpu", workflow_config
+        )
+
         # Pass the required environment variables
         env_vars = {
             "DATASET_CONFIG": dataset_config_name,
@@ -644,7 +723,7 @@ class WorkflowOrchestrator:
             "PROJECT_DIR": os.environ.get(
                 "PROJECT_DIR", "/home/menger/git/adata_hf_datasets"
             ),
-            "VENV_PATH": os.environ.get("VENV_PATH", ".venv"),
+            "VENV_PATH": venv_path,
         }
 
         job_id = self._submit_slurm_job(
@@ -670,6 +749,12 @@ class WorkflowOrchestrator:
 
         logger.info(f"Using dataset config: {dataset_config_name}")
 
+        # Load dataset config to get venv_path
+        dataset_config = self._load_dataset_config(dataset_config_name)
+        venv_path = self._get_venv_path(
+            dataset_config, "preprocessing", workflow_config
+        )
+
         # Pass the dataset config name and workflow directory as environment variables
         env_vars = {
             "DATASET_CONFIG": dataset_config_name,
@@ -679,7 +764,7 @@ class WorkflowOrchestrator:
             "PROJECT_DIR": os.environ.get(
                 "PROJECT_DIR", "/home/menger/git/adata_hf_datasets"
             ),
-            "VENV_PATH": os.environ.get("VENV_PATH", ".venv"),
+            "VENV_PATH": venv_path,
             # Enforce base path from orchestrator for SLURM backend (no internal default)
             "BASE_FILE_PATH": workflow_config["slurm_base_file_path"],
         }
@@ -718,6 +803,11 @@ class WorkflowOrchestrator:
         memory_gb = getattr(dataset_config.embedding_preparation, "memory_gb", 60)
         logger.info(f"Using {memory_gb}GB memory for embedding preparation")
 
+        # Get venv_path for this step
+        venv_path = self._get_venv_path(
+            dataset_config, "embedding_preparation", workflow_config
+        )
+
         # Pass the dataset config name, workflow directory, and mode settings as environment variables
         env_vars = {
             "DATASET_CONFIG": dataset_config_name,
@@ -734,7 +824,7 @@ class WorkflowOrchestrator:
             "PROJECT_DIR": os.environ.get(
                 "PROJECT_DIR", "/home/menger/git/adata_hf_datasets"
             ),
-            "VENV_PATH": os.environ.get("VENV_PATH", ".venv"),
+            "VENV_PATH": venv_path,
         }
 
         job_id = self._submit_slurm_job(
@@ -772,6 +862,11 @@ class WorkflowOrchestrator:
         memory_gb = getattr(dataset_config.embedding_cpu, "memory_gb", 60)
         logger.info(f"Using {memory_gb}GB memory for CPU embedding")
 
+        # Get venv_path for this step
+        venv_path = self._get_venv_path(
+            dataset_config, "embedding_cpu", workflow_config
+        )
+
         # Pass the dataset config name, workflow directory, and mode settings as environment variables
         env_vars = {
             "DATASET_CONFIG": dataset_config_name,
@@ -788,7 +883,7 @@ class WorkflowOrchestrator:
             "PROJECT_DIR": os.environ.get(
                 "PROJECT_DIR", "/home/menger/git/adata_hf_datasets"
             ),
-            "VENV_PATH": os.environ.get("VENV_PATH", ".venv"),
+            "VENV_PATH": venv_path,
         }
 
         job_id = self._submit_slurm_job(
@@ -825,6 +920,11 @@ class WorkflowOrchestrator:
         memory_gb = getattr(dataset_config.embedding_gpu, "memory_gb", 60)
         logger.info(f"Using {memory_gb}GB memory for GPU embedding")
 
+        # Get venv_path for this step
+        venv_path = self._get_venv_path(
+            dataset_config, "embedding_gpu", workflow_config
+        )
+
         # Pass the dataset config name, workflow directory, and mode settings as environment variables
         # IMPORTANT: Master job runs on CPU cluster to avoid consuming GPU resources
         # Only the array jobs will use GPU resources
@@ -846,7 +946,7 @@ class WorkflowOrchestrator:
             "PROJECT_DIR": os.environ.get(
                 "PROJECT_DIR", "/home/menger/git/adata_hf_datasets"
             ),
-            "VENV_PATH": os.environ.get("VENV_PATH", ".venv"),
+            "VENV_PATH": venv_path,
         }
 
         job_id = self._submit_slurm_job(
@@ -877,6 +977,11 @@ class WorkflowOrchestrator:
 
         # Load dataset config to check for multiple cs_length and caption_keys values
         dataset_config = self._load_dataset_config(dataset_config_name)
+
+        # Get venv_path for this step
+        venv_path = self._get_venv_path(
+            dataset_config, "dataset_creation", workflow_config
+        )
 
         # Extract cs_length configuration
         cs_length_config = dataset_config.dataset_creation.cs_length
@@ -961,7 +1066,7 @@ class WorkflowOrchestrator:
                     "PROJECT_DIR": os.environ.get(
                         "PROJECT_DIR", "/home/menger/git/adata_hf_datasets"
                     ),
-                    "VENV_PATH": os.environ.get("VENV_PATH", ".venv"),
+                    "VENV_PATH": venv_path,
                 }
 
                 job_id = self._submit_slurm_job(
