@@ -999,7 +999,7 @@ class GeneformerEmbedder(BaseEmbedder):
             import zarr
 
             logger.debug("Trying to open zarr store from %s", file_path)
-            store = zarr.DirectoryStore(file_path)
+            store = zarr.storage.LocalStore(file_path)
             logger.debug("Opened zarr store from %s", file_path)
             root = zarr.group(store=store)
             logger.debug("Opened zarr group from %s", file_path)
@@ -1060,7 +1060,7 @@ class GeneformerEmbedder(BaseEmbedder):
             # For zarr, we can read groups directly
             import zarr
 
-            store = zarr.DirectoryStore(file_path)
+            store = zarr.storage.LocalStore(file_path)
             root = zarr.group(store=store)
 
             # Check var columns
@@ -2266,7 +2266,8 @@ class CWGeneformerEmbedder(BaseEmbedder):
 
     def __init__(
         self,
-        cw_model_path: str | Path,
+        cw_model_path: str
+        | Path = "/Users/mengerj/repos/adata_hf_datasets/external/Geneformer_v1/geneformer-12L-30M",
         processor_kwargs: dict | None = None,
         model_config: dict | None = None,
         device: str | None = None,
@@ -2357,7 +2358,7 @@ class CWGeneformerEmbedder(BaseEmbedder):
 
         # Load model
         self._model = GeneformerModel.from_pretrained(
-            "ctheodoris/Geneformer", config=self.model_config
+            self.cw_model_path, config=self.model_config
         )
 
         # Device placement
@@ -2435,25 +2436,6 @@ class CWGeneformerEmbedder(BaseEmbedder):
         # Move to device
         expression_tokens = expression_tokens.to(self.device)
         expression_token_lengths = expression_token_lengths.to(self.device)
-
-        # Sanity check: ensure tokenizer's max token id fits model vocab
-        try:
-            model_cfg = getattr(
-                getattr(self._model, "geneformer_model", self._model), "config", None
-            )
-            vocab_size = getattr(model_cfg, "vocab_size", None)
-            if vocab_size is not None:
-                max_token = int(expression_tokens.max().item())
-                if max_token >= int(vocab_size):
-                    raise ValueError(
-                        f"Tokenizer/model vocabulary mismatch: max token id {max_token} >= model vocab_size {vocab_size}. "
-                        "Use a CW Geneformer checkpoint trained with the same token dictionary as the processor, "
-                        "or switch to the matching Geneformer embedder for that model."
-                    )
-        except Exception as e:
-            if isinstance(e, ValueError):
-                raise
-            logger.debug(f"Vocab sanity check skipped: {e}")
 
         # Optionally override forward batch size in config
         if batch_size is not None and hasattr(self._model, "config"):
