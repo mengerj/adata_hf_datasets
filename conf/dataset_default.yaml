@@ -118,6 +118,7 @@ embedding_preparation:
     gs: 3936
     gs10k: 10000
     geneformer-v1: 512
+    cw-geneformer: 512
 
 # =============================================================================
 # CPU EMBEDDING CONFIGURATION (dataset-specific overrides)
@@ -144,6 +145,7 @@ embedding_cpu:
     gs: 3936
     gs10k: 10000
     geneformer-v1: 512
+    cw-geneformer: 512
 
   # Execution parameters (accessed by embedding script)
   input_format: "auto" # Input format detection
@@ -176,6 +178,7 @@ embedding_gpu:
     gs: 3936
     gs10k: 10000
     geneformer-v1: 512
+    cw-geneformer: 512
 
   # Execution parameters (accessed by embedding script)
   input_format: "auto" # Input format detection

@@ -1022,7 +1022,7 @@ class GeneformerEmbedder(BaseEmbedder):
             import zarr
 
             logger.debug("Trying to open zarr store from %s", file_path)
-            store = zarr.DirectoryStore(file_path)
+            store = zarr.storage.LocalStore(file_path)
             logger.debug("Opened zarr store from %s", file_path)
             root = zarr.group(store=store)
             logger.debug("Opened zarr group from %s", file_path)
@@ -1083,7 +1083,7 @@ class GeneformerEmbedder(BaseEmbedder):
             # For zarr, we can read groups directly
             import zarr
 
-            store = zarr.DirectoryStore(file_path)
+            store = zarr.storage.LocalStore(file_path)
             root = zarr.group(store=store)
 
             # Check var columns
@@ -3006,6 +3006,7 @@ class InitialEmbedder:
             "scvi_fm": SCVIEmbedderFM,
             "geneformer": GeneformerEmbedder,
             "geneformer-v1": GeneformerV1Embedder,
+            "cw-geneformer": CWGeneformerEmbedder,
             "pca": PCAEmbedder,
             "hvg": HighlyVariableGenesEmbedder,
             "gs": GeneSelectEmbedder,
@@ -3117,7 +3118,7 @@ class InitialEmbedder:
         adata: anndata.AnnData | None = None,
         adata_path: str | None = None,
         obsm_key: str | None = None,
-        batch_key: str = "batch",
+        batch_key: str | None = None,
         **embed_kwargs,
     ) -> np.ndarray:
         """
@@ -3132,8 +3133,8 @@ class InitialEmbedder:
         obsm_key : str, optional
             Key under which embeddings are stored in .obsm.
             Defaults to "X_{method}".
-        batch_key : str, default="batch"
-            Observation column for batch labels (used by some embedders).
+        batch_key : str, optional
+            Observation column for batch labels (only forwarded to embedders that accept it).
         **embed_kwargs
             Additional keyword arguments for the embedders embed().
 
@@ -3165,13 +3166,27 @@ class InitialEmbedder:
         if adata_path is not None:
             logger.info("Using file path: %s", adata_path)
 
-        embedding_matrix = self.embedder.embed(
-            adata=adata,
-            adata_path=adata_path,
-            obsm_key=obsm_key,
-            batch_key=batch_key,
-            **embed_kwargs,
-        )
+        # Build call kwargs and only include batch_key if the embedder accepts it
+        import inspect
+
+        # Avoid duplicating a user-provided batch_key in embed_kwargs
+        if "batch_key" in embed_kwargs:
+            # Prefer the explicit function argument if set; otherwise keep the kwarg value
+            if batch_key is None:
+                batch_key = embed_kwargs.pop("batch_key")
+            else:
+                embed_kwargs.pop("batch_key")
+
+        call_kwargs = dict(adata=adata, adata_path=adata_path, obsm_key=obsm_key)
+        try:
+            sig = inspect.signature(self.embedder.embed)
+            if batch_key is not None and "batch_key" in sig.parameters:
+                call_kwargs["batch_key"] = batch_key
+        except Exception:
+            # If signature inspection fails, do not pass batch_key
+            pass
+
+        embedding_matrix = self.embedder.embed(**call_kwargs, **embed_kwargs)
         # cast to float32
         embedding_matrix = embedding_matrix.astype(np.float32)
 
