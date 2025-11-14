@@ -1042,11 +1042,19 @@ def upload_folder_to_zenodo(
                 f"File {zenodo_filename} uploaded successfully, retrieving download URL..."
             )
 
-            # Wait a moment for Zenodo to process the file before fetching deposit info
-            time.sleep(1)
+            # Wait for Zenodo to process the file before fetching deposit info
+            # Wait time scales with file size - larger files need more processing time
+            file_size_mb = file_size / (1024 * 1024)
+            initial_wait = max(
+                5, min(30, int(file_size_mb / 100))
+            )  # 5-30 seconds based on file size
+            logger.info(
+                f"Waiting {initial_wait}s for Zenodo to process {zenodo_filename} ({file_size_mb:.1f} MB)..."
+            )
+            time.sleep(initial_wait)
 
             # Get file download URL from deposit (with retry logic)
-            max_retries = 3
+            max_retries = 5  # Increased from 3 to handle large files
             download_url = None
             for attempt in range(max_retries):
                 try:
@@ -1060,7 +1068,10 @@ def upload_folder_to_zenodo(
                             f"Failed to get deposit info (attempt {attempt + 1}/{max_retries}): {deposit_response.status_code}"
                         )
                         if attempt < max_retries - 1:
-                            time.sleep(2**attempt)  # Exponential backoff
+                            wait_time = min(
+                                30, 5 * (2**attempt)
+                            )  # Longer waits: 5s, 10s, 20s, 30s, 30s
+                            time.sleep(wait_time)
                             continue
                         else:
                             logger.error(
@@ -1075,14 +1086,18 @@ def upload_folder_to_zenodo(
                     )
                     if not file_info:
                         if attempt < max_retries - 1:
+                            wait_time = min(
+                                30, 5 * (2**attempt)
+                            )  # Longer waits: 5s, 10s, 20s, 30s, 30s
                             logger.warning(
-                                f"File {zenodo_filename} not yet available in deposit (attempt {attempt + 1}/{max_retries}), retrying..."
+                                f"File {zenodo_filename} not yet available in deposit (attempt {attempt + 1}/{max_retries}), waiting {wait_time}s before retry..."
                             )
-                            time.sleep(2**attempt)  # Exponential backoff
+                            time.sleep(wait_time)
                             continue
                         else:
                             logger.error(
-                                f"File {zenodo_filename} not found in deposit after {max_retries} attempts"
+                                f"File {zenodo_filename} not found in deposit after {max_retries} attempts. "
+                                f"The file may still be processing. Check Zenodo deposit {deposit_id} manually."
                             )
                             failed_uploads.append(rel_key)
                             break
@@ -1104,10 +1119,13 @@ def upload_folder_to_zenodo(
 
                 except requests.exceptions.RequestException as e:
                     if attempt < max_retries - 1:
+                        wait_time = min(
+                            30, 5 * (2**attempt)
+                        )  # Longer waits: 5s, 10s, 20s, 30s, 30s
                         logger.warning(
-                            f"Error retrieving deposit info (attempt {attempt + 1}/{max_retries}): {e}, retrying..."
+                            f"Error retrieving deposit info (attempt {attempt + 1}/{max_retries}): {e}, waiting {wait_time}s before retry..."
                         )
-                        time.sleep(2**attempt)  # Exponential backoff
+                        time.sleep(wait_time)
                         continue
                     else:
                         logger.error(
