@@ -1039,100 +1039,21 @@ def upload_folder_to_zenodo(
                 continue
 
             logger.info(
-                f"File {zenodo_filename} uploaded successfully, retrieving download URL..."
+                f"File {zenodo_filename} uploaded successfully (status {upload_response.status_code})"
             )
 
-            # Wait for Zenodo to process the file before fetching deposit info
-            # Wait time scales with file size - larger files need more processing time
-            file_size_mb = file_size / (1024 * 1024)
-            initial_wait = max(
-                5, min(30, int(file_size_mb / 100))
-            )  # 5-30 seconds based on file size
-            logger.info(
-                f"Waiting {initial_wait}s for Zenodo to process {zenodo_filename} ({file_size_mb:.1f} MB)..."
+            # Construct download URL directly from deposit_id and filename
+            # Format: https://zenodo.org/api/records/{deposit_id}/draft/files/{filename}/content
+            # For sandbox: https://sandbox.zenodo.org/api/records/{deposit_id}/draft/files/{filename}/content
+            download_url = (
+                f"{api_base}/records/{deposit_id}/draft/files/{zenodo_filename}/content"
             )
-            time.sleep(initial_wait)
 
-            # Get file download URL from deposit (with retry logic)
-            max_retries = 5  # Increased from 3 to handle large files
-            download_url = None
-            for attempt in range(max_retries):
-                try:
-                    deposit_response = requests.get(
-                        f"{api_base}/deposit/depositions/{deposit_id}",
-                        params={"access_token": zenodo_token},
-                        timeout=30,
-                    )
-                    if deposit_response.status_code != 200:
-                        logger.warning(
-                            f"Failed to get deposit info (attempt {attempt + 1}/{max_retries}): {deposit_response.status_code}"
-                        )
-                        if attempt < max_retries - 1:
-                            wait_time = min(
-                                30, 5 * (2**attempt)
-                            )  # Longer waits: 5s, 10s, 20s, 30s, 30s
-                            time.sleep(wait_time)
-                            continue
-                        else:
-                            logger.error(
-                                f"Failed to get deposit info after {max_retries} attempts"
-                            )
-                            failed_uploads.append(rel_key)
-                            break
-
-                    files = deposit_response.json().get("files", [])
-                    file_info = next(
-                        (f for f in files if f["filename"] == zenodo_filename), None
-                    )
-                    if not file_info:
-                        if attempt < max_retries - 1:
-                            wait_time = min(
-                                30, 5 * (2**attempt)
-                            )  # Longer waits: 5s, 10s, 20s, 30s, 30s
-                            logger.warning(
-                                f"File {zenodo_filename} not yet available in deposit (attempt {attempt + 1}/{max_retries}), waiting {wait_time}s before retry..."
-                            )
-                            time.sleep(wait_time)
-                            continue
-                        else:
-                            logger.error(
-                                f"File {zenodo_filename} not found in deposit after {max_retries} attempts. "
-                                f"The file may still be processing. Check Zenodo deposit {deposit_id} manually."
-                            )
-                            failed_uploads.append(rel_key)
-                            break
-
-                    download_url = file_info.get("links", {}).get("download")
-                    if not download_url:
-                        logger.error(f"No download URL for {zenodo_filename}")
-                        failed_uploads.append(rel_key)
-                        break
-
-                    # Success - save the download URL
-                    share_map[rel_key] = download_url
-                    # Save progress incrementally
-                    mapping_path.write_text(json.dumps(share_map, indent=2))
-                    logger.info(
-                        f"✅ Uploaded {zenodo_filename} - Download URL: {download_url}"
-                    )
-                    break
-
-                except requests.exceptions.RequestException as e:
-                    if attempt < max_retries - 1:
-                        wait_time = min(
-                            30, 5 * (2**attempt)
-                        )  # Longer waits: 5s, 10s, 20s, 30s, 30s
-                        logger.warning(
-                            f"Error retrieving deposit info (attempt {attempt + 1}/{max_retries}): {e}, waiting {wait_time}s before retry..."
-                        )
-                        time.sleep(wait_time)
-                        continue
-                    else:
-                        logger.error(
-                            f"Error retrieving deposit info after {max_retries} attempts: {e}"
-                        )
-                        failed_uploads.append(rel_key)
-                        break
+            # Success - save the download URL
+            share_map[rel_key] = download_url
+            # Save progress incrementally
+            mapping_path.write_text(json.dumps(share_map, indent=2))
+            logger.info(f"✅ Uploaded {zenodo_filename} - Download URL: {download_url}")
 
         except Exception as e:
             logger.error(f"Error uploading {zenodo_filename}: {e}", exc_info=True)
