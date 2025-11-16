@@ -727,6 +727,387 @@ def upload_folder_to_nextcloud(
     return share_map
 
 
+def upload_folder_to_zenodo(
+    data_folder: str | Path,
+    zenodo_token: str,
+    zenodo_config: dict[str, Any],
+    max_workers: int = 4,
+    *,
+    force_reupload: bool = False,
+    dataset_name: str | None = None,
+    dataset_description: str | None = None,
+    raw_data_link: str | None = None,
+    obsm_keys: list[str] | None = None,
+    hf_repo_id: str | None = None,
+    shared_mapping_path: str | Path | None = None,
+) -> dict[str, str]:
+    """
+    Upload *.zarr directories and *.h5ad files to Zenodo and return download links.
+
+    This function will:
+    • Convert *.zarr directories and *.h5ad files to ZIP format
+    • Create a new Zenodo deposit (or reuse existing from share_map.json)
+    • Upload each ZIP file to the deposit
+    • Return a mapping of local files to Zenodo download URLs
+
+    Parameters
+    ----------
+    data_folder : str | Path
+        Local directory containing *.zarr directories and/or *.h5ad files to upload.
+    zenodo_token : str
+        Zenodo access token (from ZENODO_TOKEN environment variable).
+    zenodo_config : dict[str, Any]
+        Configuration dictionary. Required keys:
+        - "sandbox": bool, whether to use Zenodo sandbox (default: False)
+    max_workers : int, optional
+        Not used (kept for API compatibility). Uploads are performed sequentially.
+    force_reupload : bool, optional
+        If True, re-upload files even if they exist in share_map.json (default: False).
+    dataset_name : str, optional
+        Name of the dataset (used as deposit title).
+    dataset_description : str, optional
+        Description of the dataset.
+    raw_data_link : str, optional
+        URL to the raw/original data source.
+    obsm_keys : list[str], optional
+        List of .obsm layer keys present in the AnnData objects.
+    hf_repo_id : str, optional
+        HuggingFace repository ID (e.g., "jo-mengr/dataset-name") for linking.
+    shared_mapping_path : str | Path, optional
+        Path to a shared share_map.json file. If provided, this will be used instead
+        of creating one in data_folder. Useful for sharing a single deposit across
+        multiple folders (e.g., train/val splits).
+
+    Returns
+    -------
+    dict[str, str]
+        Mapping of local file paths (relative to data_folder) to Zenodo download URLs.
+
+    Notes
+    -----
+    - Files are converted to ZIP format before upload for better compression
+    - Deposit metadata is minimal; you can edit it later on Zenodo
+    - Progress is saved incrementally to share_map.json
+    - Failed uploads will raise RuntimeError with details
+
+    Examples
+    --------
+    >>> import os
+    >>> token = os.getenv("ZENODO_TOKEN")
+    >>> config = {"sandbox": False}
+    >>> share_map = upload_folder_to_zenodo("/path/to/data", token, config)
+    """
+    data_folder = Path(data_folder).resolve()
+
+    # Use shared mapping path if provided, otherwise use local one
+    if shared_mapping_path:
+        mapping_path = Path(shared_mapping_path).resolve()
+        mapping_path.parent.mkdir(parents=True, exist_ok=True)
+    else:
+        mapping_path = data_folder / "share_map.json"
+
+    share_map = json.loads(mapping_path.read_text()) if mapping_path.exists() else {}
+
+    # Determine Zenodo API base URL
+    sandbox = zenodo_config.get("sandbox", False)
+    api_base = "https://sandbox.zenodo.org/api" if sandbox else "https://zenodo.org/api"
+
+    # ---------- 1) turn stores into zip files --------------------------
+    def ensure_zip(p: Path) -> Path:
+        if p.suffix == ".zip":
+            return p
+        if p.is_dir() and p.suffix == ".zarr":
+            z = p.with_suffix(".zarr.zip")
+            if not z.exists() or p.stat().st_mtime > z.stat().st_mtime:
+                logger.info(f"Creating zip for {p.name}...")
+                shutil.make_archive(z.with_suffix(""), "zip", p)
+            return z
+        if p.is_file() and p.suffix == ".h5ad":
+            z = p.with_suffix(".h5ad.zip")
+            if not z.exists() or p.stat().st_mtime > z.stat().st_mtime:
+                logger.info(f"Creating zip for {p.name}...")
+                shutil.make_archive(
+                    z.with_suffix(""), "zip", root_dir=p.parent, base_dir=p.name
+                )
+            return z
+        return p  # ignore everything else
+
+    zip_paths = [
+        ensure_zip(p) for p in data_folder.iterdir() if p.name != "share_map.json"
+    ]
+
+    # ---------- 2) Get or create deposit --------------------
+    deposit_id = share_map.get("_zenodo_deposit_id")
+    deposit_links = share_map.get("_zenodo_deposit_links", {})
+    is_new_deposit = False
+
+    if deposit_id and not force_reupload:
+        logger.info(f"Using existing Zenodo deposit: {deposit_id}")
+        # Verify deposit still exists
+        try:
+            r = requests.get(
+                f"{api_base}/deposit/depositions/{deposit_id}",
+                params={"access_token": zenodo_token},
+                timeout=30,
+            )
+            if r.status_code == 200:
+                deposit_links = r.json().get("links", {})
+            else:
+                logger.warning(
+                    f"Deposit {deposit_id} not found or inaccessible, creating new one"
+                )
+                deposit_id = None
+                is_new_deposit = True
+        except Exception as e:
+            logger.warning(
+                f"Error checking deposit {deposit_id}: {e}, creating new one"
+            )
+            deposit_id = None
+            is_new_deposit = True
+    else:
+        is_new_deposit = True
+
+    if is_new_deposit:
+        logger.info("Creating new Zenodo deposit...")
+
+        # Build comprehensive description
+        title = dataset_name if dataset_name else f"Dataset: {data_folder.name}"
+
+        description_parts = []
+
+        if dataset_description:
+            description_parts.append(dataset_description)
+
+        description_parts.append(
+            "\n\n## Processed AnnData Objects\n\n"
+            "This deposit contains processed AnnData objects (single-cell genomics data) "
+            "that were processed using the `adata_hf_datasets` Python package. "
+            "The files are in HDF5 (.h5ad) or Zarr format and contain preprocessed "
+            "gene expression data along with computed embeddings."
+        )
+
+        if obsm_keys:
+            obsm_list = ", ".join([f"`{key}`" for key in obsm_keys])
+            description_parts.append(
+                f"\n\n### Available Embeddings (.obsm layers)\n\n"
+                f"The AnnData objects contain the following embedding layers: {obsm_list}."
+            )
+
+        if hf_repo_id:
+            hf_url = f"https://huggingface.co/datasets/{hf_repo_id}"
+            description_parts.append(
+                f"\n\n## Related Resources\n\n"
+                f"- **HuggingFace Dataset**: [{hf_repo_id}]({hf_url})"
+            )
+
+        if raw_data_link:
+            description_parts.append(
+                f"- **Raw Data Source**: [Download]({raw_data_link})"
+            )
+
+        description_parts.append(
+            "\n\n## Package Information\n\n"
+            "These files were processed using the `adata_hf_datasets` package. "
+            "For more information about the processing pipeline, please refer to "
+            "the associated HuggingFace dataset repository."
+        )
+
+        full_description = "".join(description_parts)
+
+        # Create a new deposit with enhanced metadata
+        deposit_data = {
+            "metadata": {
+                "title": title,
+                "upload_type": "dataset",
+                "description": full_description,
+                "creators": [{"name": "jo-mengr", "affiliation": "HuggingFace"}],
+                "keywords": [
+                    "single-cell",
+                    "genomics",
+                    "anndata",
+                    "processed-data",
+                    "embeddings",
+                ],
+            }
+        }
+
+        # Add related identifiers if we have HF repo
+        if hf_repo_id:
+            deposit_data["metadata"]["related_identifiers"] = [
+                {
+                    "identifier": f"https://huggingface.co/datasets/{hf_repo_id}",
+                    "relation": "isSupplementTo",
+                    "scheme": "url",
+                }
+            ]
+        r = requests.post(
+            f"{api_base}/deposit/depositions",
+            params={"access_token": zenodo_token},
+            json=deposit_data,
+            timeout=30,
+        )
+        if r.status_code not in (200, 201):
+            error_msg = f"Failed to create Zenodo deposit: {r.status_code} {r.text}"
+            if r.status_code == 401:
+                error_msg += (
+                    "\n\nAuthentication failed. Please check your ZENODO_TOKEN in .env file. "
+                    "You can create a token at https://zenodo.org/account/settings/applications/"
+                )
+            raise RuntimeError(error_msg)
+        deposit = r.json()
+        deposit_id = deposit["id"]
+        deposit_links = deposit.get("links", {})
+        share_map["_zenodo_deposit_id"] = deposit_id
+        share_map["_zenodo_deposit_links"] = deposit_links
+        logger.info(f"Created Zenodo deposit: {deposit_id}")
+
+    # Get upload URL from deposit links
+    upload_url = deposit_links.get("bucket")
+    if not upload_url:
+        raise RuntimeError(
+            f"Deposit {deposit_id} does not have an upload bucket URL. "
+            "The deposit may have been published already."
+        )
+
+    # ---------- 3) Upload files --------------------
+    uploads = []
+    for z in zip_paths:
+        # When using shared mapping, prefix filename with split name to avoid conflicts
+        # e.g., "train_chunk_0.zarr.zip" instead of just "chunk_0.zarr.zip"
+        if shared_mapping_path:
+            # Create prefixed filename for Zenodo upload
+            zenodo_filename = f"{data_folder.name}_{z.name}"
+            # Use prefixed filename as key in mapping
+            rel_key = zenodo_filename
+        else:
+            zenodo_filename = z.name  # Use original filename
+            rel_key = z.relative_to(data_folder).as_posix()
+
+        if (
+            force_reupload
+            or rel_key not in share_map
+            or not share_map[rel_key].startswith("http")
+        ):
+            uploads.append((z, rel_key, zenodo_filename))
+
+    if not uploads:
+        logger.info("All files already uploaded to Zenodo")
+        # Return filtered results if using shared mapping
+        if shared_mapping_path:
+            folder_name = data_folder.name
+            filtered_map = {
+                k: v
+                for k, v in share_map.items()
+                if not k.startswith("_") and k.startswith(f"{folder_name}_")
+            }
+            result = {}
+            for k, v in filtered_map.items():
+                if k.startswith(f"{folder_name}_"):
+                    result[k[len(folder_name) + 1 :]] = v
+                else:
+                    result[k] = v
+            return result
+        else:
+            return {k: v for k, v in share_map.items() if not k.startswith("_")}
+
+    failed_uploads = []
+
+    # Upload files sequentially to avoid API rate limits and connection issues
+    for zip_path, rel_key, zenodo_filename in uploads:
+        file_size = zip_path.stat().st_size
+
+        try:
+            logger.info(
+                f"Uploading {zip_path.name} as {zenodo_filename} ({file_size / 1024 / 1024:.1f} MB)..."
+            )
+
+            # Upload file to Zenodo bucket with the prefixed filename
+            with open(zip_path, "rb") as f:
+                upload_response = requests.put(
+                    f"{upload_url}/{zenodo_filename}",
+                    data=f,
+                    params={"access_token": zenodo_token},
+                    timeout=(30, 1800),  # 30s connect, 30min read
+                )
+
+            if upload_response.status_code not in (200, 201):
+                error_msg = f"Upload failed for {zenodo_filename}: {upload_response.status_code} {upload_response.text}"
+                if upload_response.status_code == 401:
+                    error_msg += "\nAuthentication failed. Please check your ZENODO_TOKEN in .env file."
+                logger.error(error_msg)
+                failed_uploads.append(rel_key)
+                continue
+
+            logger.info(
+                f"File {zenodo_filename} uploaded successfully (status {upload_response.status_code})"
+            )
+
+            # Construct download URL directly from deposit_id and filename
+            # Format: https://zenodo.org/api/records/{deposit_id}/draft/files/{filename}/content
+            # For sandbox: https://sandbox.zenodo.org/api/records/{deposit_id}/draft/files/{filename}/content
+            download_url = (
+                f"{api_base}/records/{deposit_id}/draft/files/{zenodo_filename}/content"
+            )
+
+            # Success - save the download URL
+            share_map[rel_key] = download_url
+            # Save progress incrementally
+            mapping_path.write_text(json.dumps(share_map, indent=2))
+            logger.info(f"✅ Uploaded {zenodo_filename} - Download URL: {download_url}")
+
+        except Exception as e:
+            logger.error(f"Error uploading {zenodo_filename}: {e}", exc_info=True)
+            failed_uploads.append(rel_key)
+
+    # Final save of share_map
+    mapping_path.write_text(json.dumps(share_map, indent=2))
+
+    # Report results
+    if failed_uploads:
+        logger.error(
+            "❌ %d files failed to upload: %s", len(failed_uploads), failed_uploads
+        )
+        logger.info(
+            "✅ %d files uploaded successfully and saved to share_map.json",
+            len(
+                [
+                    k
+                    for k in share_map.keys()
+                    if k.endswith(".zip") and not k.startswith("_")
+                ]
+            ),
+        )
+        logger.info("🔄 Re-run the script to retry failed uploads")
+        raise RuntimeError(
+            f"Upload failed for {len(failed_uploads)} files: {failed_uploads}"
+        )
+
+    logger.info("✅ All uploads completed successfully!")
+    # Return only file mappings, not metadata
+    # If using shared mapping, filter to only return entries for current data_folder
+    if shared_mapping_path:
+        # Filter to only return entries for the current split/folder
+        # Keys are now in format "split_name_filename.zip" (e.g., "train_chunk_0.zarr.zip")
+        folder_name = data_folder.name
+        filtered_map = {
+            k: v
+            for k, v in share_map.items()
+            if not k.startswith("_") and k.startswith(f"{folder_name}_")
+        }
+        # Remove split prefix from keys for easier lookup in build_split_dataset
+        # e.g., "train_chunk_0.zarr.zip" -> "chunk_0.zarr.zip"
+        result = {}
+        for k, v in filtered_map.items():
+            if k.startswith(f"{folder_name}_"):
+                # Remove "split_name_" prefix from key for return value
+                result[k[len(folder_name) + 1 :]] = v
+            else:
+                result[k] = v
+        return result
+    else:
+        return {k: v for k, v in share_map.items() if not k.startswith("_")}
+
+
 # ------------------------------------------------------------------ #
 # helper: zip target if necessary and return Path to zip
 # ------------------------------------------------------------------ #

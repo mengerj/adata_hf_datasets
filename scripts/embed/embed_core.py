@@ -111,7 +111,7 @@ def check_existing_embeddings(file_path: Path, input_format: str = "auto") -> se
 
     if format_to_use == "zarr":
         # For zarr, we can check the obsm group directly
-        store = zarr.DirectoryStore(file_path)
+        store = zarr.storage.LocalStore(file_path)
         root = zarr.group(store=store)
         if "obsm" in root:
             return set(root["obsm"].keys())

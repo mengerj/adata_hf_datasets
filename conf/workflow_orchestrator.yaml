@@ -50,13 +50,13 @@ workflow:
 
   # Base data directories depending on backend
   # Used as default when dataset config doesn't set base_file_path explicitly
-  local_base_file_path: "../data/RNA"
+  local_base_file_path: "./data/RNA"
   slurm_base_file_path: "/scratch/global/menger/data/RNA"
 
   # Project directory on the cluster hosts (used for SSH/SLURM submissions)
   # All sbatch commands will `cd` into this directory before running
   project_directory: "/home/menger/git/adata_hf_datasets"
-  #project_directory: ".."
+  #project_directory: "."
 
   # Virtual environment path (relative to project_directory) used by SLURM scripts
   venv_path: ".venv"
@@ -68,4 +68,4 @@ workflow:
 force: false
 
 # Dataset config name to use (will be overridden by command line)
-dataset_config_name: "dataset_cellxgene_pseudo_bulk_35k"
+dataset_config_name: null

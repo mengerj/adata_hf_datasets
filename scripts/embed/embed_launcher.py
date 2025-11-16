@@ -224,7 +224,7 @@ class EmbeddingLauncher:
         sbatch_cmd = [
             "sbatch",
             f"--job-name=embed_{label}",
-            f"--array=0-{file_count - 1}%1",
+            f"--array=0-{file_count - 1}%{file_count}",
             "--time=24:00:00",
         ]
 

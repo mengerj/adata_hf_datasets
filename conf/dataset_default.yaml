@@ -118,6 +118,7 @@ embedding_preparation:
     gs: 3936
     gs10k: 10000
     geneformer-v1: 512
+    cw-geneformer: 512
 
 # =============================================================================
 # CPU EMBEDDING CONFIGURATION (dataset-specific overrides)
@@ -144,6 +145,7 @@ embedding_cpu:
     gs: 3936
     gs10k: 10000
     geneformer-v1: 512
+    cw-geneformer: 512
 
   # Execution parameters (accessed by embedding script)
   input_format: "auto" # Input format detection
@@ -176,6 +178,7 @@ embedding_gpu:
     gs: 3936
     gs10k: 10000
     geneformer-v1: 512
+    cw-geneformer: 512
 
   # Execution parameters (accessed by embedding script)
   input_format: "auto" # Input format detection
@@ -187,7 +190,10 @@ embedding_gpu:
 # DATASET CREATION CONFIGURATION (dataset-specific overrides)
 # =============================================================================
 dataset_creation:
-  # Dataset structure
+  # Dataset structue
+  dataset_name: ${dataset.name}
+  raw_data_link: ${dataset.download_url}
+  data_description: ${dataset.description}
   split_dataset: ${split_dataset} # Reference dataset-level split configuration
   dataset_format: "multiplets" # "multiplets" for training, "single" for test datasets
 
@@ -224,3 +230,13 @@ dataset_creation:
     username: "NEXTCLOUD_USER"
     password: "NEXTCLOUD_PASSWORD"
     remote_path: ""
+
+  # Zenodo upload (dataset-specific)
+  use_zenodo: false
+  zenodo_config:
+    sandbox: false # Set to true to use Zenodo sandbox (https://sandbox.zenodo.org) instead of production
+    # Environment variables required:
+    # - ZENODO_TOKEN: Production Zenodo access token (when sandbox: false)
+    # - ZENODO_SANDBOX_TOKEN: Sandbox Zenodo access token (when sandbox: true)
+    # Create tokens at: https://zenodo.org/account/settings/applications/ (production)
+    #                  https://sandbox.zenodo.org/account/settings/applications/ (sandbox)

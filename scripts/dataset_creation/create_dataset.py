@@ -21,6 +21,7 @@ For each split folder we
 from __future__ import annotations
 
 import logging
+import os
 import sys
 from pathlib import Path
 from typing import Dict, List
@@ -34,7 +35,10 @@ from hydra.core.hydra_config import HydraConfig
 from adata_hf_datasets.dataset import AnnDataSetConstructor
 from adata_hf_datasets.utils import annotate_and_push_dataset, setup_logging
 from adata_hf_datasets.dataset import create_cell_sentences
-from adata_hf_datasets.file_utils import upload_folder_to_nextcloud
+from adata_hf_datasets.file_utils import (
+    upload_folder_to_nextcloud,
+    upload_folder_to_zenodo,
+)
 from adata_hf_datasets.workflow import apply_all_transformations
 from hydra.utils import to_absolute_path
 
@@ -78,6 +82,7 @@ def build_split_dataset(
     annotation_key: str | None,
     cs_length: int,
     resolve_negatives: bool = False,
+    split_name: str | None = None,
 ) -> Dataset:
     """
     Build a Hugging Face dataset for **one split** (train / val / all).
@@ -88,7 +93,11 @@ def build_split_dataset(
         Folder with *.h5ad / *.zarr files.
     share_links
         Mapping *filename → Nextcloud share link or local path* returned by
-        ``upload_folder_to_nextcloud`` or created locally.
+        ``upload_folder_to_nextcloud`` or created locally. For Zenodo with shared
+        mapping, keys may be in format "split_name/filename.zip".
+    split_name
+        Name of the split (e.g., "train", "val"). Used for finding correct keys
+        in shared mapping scenarios.
     sentence_keys, caption_key, batch_key
         Column names to feed into `AnnDataSetConstructor`.
     negatives_per_sample, dataset_format
@@ -132,11 +141,26 @@ def build_split_dataset(
         )
 
         # Get the share link or local path for this file
-        # The key might be f.name + ".zip" (for Nextcloud) or just the path (for local)
-        file_reference = share_links.get(f.name + ".zip")
+        # For Zenodo with shared mapping, keys are "split_name/filename.zip"
+        # For Nextcloud/local, keys are "filename.zip" or relative paths
+        file_reference = None
+
+        # Try different key formats
+        possible_keys = [
+            f.name + ".zip",  # Standard format (Nextcloud, local Zenodo)
+            f.name,  # Without .zip suffix
+            f"{split_dir.name}/{f.name}.zip",  # Zenodo shared mapping format
+            f"{split_dir.name}/{f.name}",  # Zenodo shared mapping without .zip
+        ]
+
+        for key in possible_keys:
+            if key in share_links:
+                file_reference = share_links[key]
+                break
+
         if file_reference is None:
-            # Fallback: try without .zip suffix or use the file path directly
-            file_reference = share_links.get(f.name, str(f.resolve()))
+            # Fallback: use the file path directly
+            file_reference = str(f.resolve())
 
         constructor.add_anndata(
             adata=adata,
@@ -347,6 +371,45 @@ def main(cfg: DictConfig):
     use_nextcloud: bool = dataset_cfg.get(
         "use_nextcloud", True
     )  # Default to True for backward compatibility
+    use_zenodo: bool = dataset_cfg.get("use_zenodo", False)
+
+    # Validate that only one upload method is selected
+    if use_nextcloud and use_zenodo:
+        raise ValueError(
+            "Both 'use_nextcloud' and 'use_zenodo' are enabled. "
+            "Please choose only one upload method."
+        )
+
+    # Get Zenodo token if Zenodo is enabled
+    zenodo_token = None
+    zenodo_cfg = None
+    if use_zenodo:
+        zenodo_cfg = (
+            dict(dataset_cfg.zenodo_config)
+            if hasattr(dataset_cfg, "zenodo_config")
+            else {}
+        )
+        use_sandbox = zenodo_cfg.get("sandbox", False)
+
+        if use_sandbox:
+            zenodo_token = os.getenv("ZENODO_SANDBOX_TOKEN")
+            token_env_name = "ZENODO_SANDBOX_TOKEN"
+            token_url = "https://sandbox.zenodo.org/account/settings/applications/"
+        else:
+            zenodo_token = os.getenv("ZENODO_TOKEN")
+            token_env_name = "ZENODO_TOKEN"
+            token_url = "https://zenodo.org/account/settings/applications/"
+
+        if not zenodo_token:
+            logger.error(
+                f"Zenodo integration is enabled (sandbox={use_sandbox}), but {token_env_name} is not found in environment variables.\n"
+                f"Please add a valid {token_env_name} to your .env file.\n"
+                f"You can create a token at: {token_url}"
+            )
+            raise ValueError(
+                f"{token_env_name} not found. Please add it to your .env file. "
+                "See logs for instructions."
+            )
 
     nextcloud_cfg = dict(dataset_cfg.nextcloud_config) if use_nextcloud else None
 
@@ -364,6 +427,11 @@ def main(cfg: DictConfig):
 
     hf_splits: Dict[str, Dataset] = {}
     share_links_per_split: Dict[str, Dict[str, str]] = {}
+
+    # For Zenodo, use a shared mapping file at the data_dir level to share one deposit
+    shared_zenodo_mapping = None
+    if use_zenodo and zenodo_cfg and zenodo_token:
+        shared_zenodo_mapping = data_dir / "zenodo_share_map.json"
 
     for split in split_names:
         split_dir = data_dir / split
@@ -388,6 +456,56 @@ def main(cfg: DictConfig):
                 force_reupload=dataset_cfg.get("force_reupload", True),
             )
             logger.info("Uploaded files to Nextcloud for split '%s'", split)
+        elif use_zenodo and zenodo_cfg and zenodo_token:
+            try:
+                # Get dataset metadata from config
+                dataset_name = dataset_cfg.get("dataset_name")
+                dataset_description = dataset_cfg.get("data_description")
+                raw_data_link = dataset_cfg.get("raw_data_link")
+
+                # Build the final repo_id for HuggingFace (will be versioned later if needed)
+                # We'll build it here to pass to Zenodo, but it might get versioned later
+                temp_repo_id = build_repo_id(
+                    base_repo_id=base_repo_id,
+                    dataset_names=data_name,
+                    dataset_format=dataset_format,
+                    caption_key=caption_key or "no_caption",
+                )
+
+                share_links = upload_folder_to_zenodo(
+                    data_folder=str(split_dir),
+                    zenodo_token=zenodo_token,
+                    zenodo_config=zenodo_cfg,
+                    force_reupload=dataset_cfg.get("force_reupload", True),
+                    dataset_name=dataset_name,
+                    dataset_description=dataset_description,
+                    raw_data_link=raw_data_link,
+                    obsm_keys=required_obsm_keys,
+                    hf_repo_id=temp_repo_id,
+                    shared_mapping_path=str(shared_zenodo_mapping)
+                    if shared_zenodo_mapping
+                    else None,
+                )
+                logger.info("Uploaded files to Zenodo for split '%s'", split)
+            except RuntimeError as e:
+                error_msg = str(e)
+                if "401" in error_msg or "Authentication" in error_msg:
+                    use_sandbox = (
+                        zenodo_cfg.get("sandbox", False) if zenodo_cfg else False
+                    )
+                    token_env_name = (
+                        "ZENODO_SANDBOX_TOKEN" if use_sandbox else "ZENODO_TOKEN"
+                    )
+                    token_url = (
+                        "https://sandbox.zenodo.org/account/settings/applications/"
+                        if use_sandbox
+                        else "https://zenodo.org/account/settings/applications/"
+                    )
+                    logger.error(
+                        f"Zenodo authentication failed. Please check your {token_env_name} in .env file.\n"
+                        f"You can create a token at: {token_url}"
+                    )
+                raise
         else:
             # Create a mapping of filename to local path instead of share links
             share_links = {}
@@ -415,6 +533,7 @@ def main(cfg: DictConfig):
             annotation_key=annotation_key,
             cs_length=dataset_cfg.cs_length,
             resolve_negatives=resolve_negatives,
+            split_name=split,
         )
         # if the split is called all, change it to "test" to avoid issue with hf format
         if split == "all":
