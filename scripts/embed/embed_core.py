@@ -27,7 +27,7 @@ from pathlib import Path
 from typing import Union
 
 import hydra
-from omegaconf import DictConfig
+from omegaconf import DictConfig, OmegaConf
 from dotenv import load_dotenv
 import zarr
 import anndata as ad
@@ -455,8 +455,39 @@ def main(cfg: DictConfig):
                         )
                     emb_dim = embedding_cfg.embedding_dim_map[method]
 
+                    # Extract init_kwargs for this method
+                    # Support both general init_kwargs and method-specific init_kwargs_<method>
+                    init_kwargs = {}
+                    if (
+                        hasattr(embedding_cfg, "init_kwargs")
+                        and embedding_cfg.init_kwargs
+                    ):
+                        # Convert OmegaConf to dict if needed
+                        general_kwargs = OmegaConf.to_container(
+                            embedding_cfg.init_kwargs, resolve=True
+                        )
+                        if general_kwargs:
+                            init_kwargs.update(general_kwargs)
+
+                    # Method-specific kwargs override general ones
+                    method_specific_key = f"init_kwargs_{method.replace('-', '_')}"
+                    if hasattr(embedding_cfg, method_specific_key):
+                        method_kwargs = getattr(embedding_cfg, method_specific_key)
+                        if method_kwargs:
+                            # Convert OmegaConf to dict if needed
+                            method_kwargs_dict = OmegaConf.to_container(
+                                method_kwargs, resolve=True
+                            )
+                            if method_kwargs_dict:
+                                init_kwargs.update(method_kwargs_dict)
+                                logger.info(
+                                    f"Using method-specific init_kwargs for '{method}'"
+                                )
+
                     # monitor.log_event(f"Prepare {method}")
-                    embedder = InitialEmbedder(method=method, embedding_dim=emb_dim)
+                    embedder = InitialEmbedder(
+                        method=method, embedding_dim=emb_dim, **init_kwargs
+                    )
                     embedder.prepare(
                         adata_path=str(infile),
                         batch_key=embedding_cfg.batch_key,
@@ -521,8 +552,39 @@ def main(cfg: DictConfig):
                         )
                     emb_dim = embedding_cfg.embedding_dim_map[method]
 
+                    # Extract init_kwargs for this method
+                    # Support both general init_kwargs and method-specific init_kwargs_<method>
+                    init_kwargs = {}
+                    if (
+                        hasattr(embedding_cfg, "init_kwargs")
+                        and embedding_cfg.init_kwargs
+                    ):
+                        # Convert OmegaConf to dict if needed
+                        general_kwargs = OmegaConf.to_container(
+                            embedding_cfg.init_kwargs, resolve=True
+                        )
+                        if general_kwargs:
+                            init_kwargs.update(general_kwargs)
+
+                    # Method-specific kwargs override general ones
+                    method_specific_key = f"init_kwargs_{method.replace('-', '_')}"
+                    if hasattr(embedding_cfg, method_specific_key):
+                        method_kwargs = getattr(embedding_cfg, method_specific_key)
+                        if method_kwargs:
+                            # Convert OmegaConf to dict if needed
+                            method_kwargs_dict = OmegaConf.to_container(
+                                method_kwargs, resolve=True
+                            )
+                            if method_kwargs_dict:
+                                init_kwargs.update(method_kwargs_dict)
+                                logger.info(
+                                    f"Using method-specific init_kwargs for '{method}'"
+                                )
+
                     # monitor.log_event(f"Prepare {method}")
-                    embedder = InitialEmbedder(method=method, embedding_dim=emb_dim)
+                    embedder = InitialEmbedder(
+                        method=method, embedding_dim=emb_dim, **init_kwargs
+                    )
                     embedder.prepare(
                         adata_path=str(input_for_processing),
                         batch_key=embedding_cfg.batch_key,

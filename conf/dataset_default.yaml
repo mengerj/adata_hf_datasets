@@ -113,6 +113,22 @@ embedding_preparation:
   # Method-specific parameters
   batch_size: 128 # Used by geneformer
 
+  # Initialization kwargs for embedders (optional)
+  # General kwargs that apply to all methods:
+  init_kwargs: null # e.g., {"resources_dir": "custom_resources"}
+  # Method-specific kwargs (override general init_kwargs):
+  # Use format: init_kwargs_<method> where method name uses underscores (e.g., init_kwargs_cw_geneformer)
+  # Example for cw-geneformer:
+  # init_kwargs_cw_geneformer:
+  #   cw_model_path: "/path/to/model"
+  #   processor_kwargs:
+  #     nproc: 4
+  #     emb_label: ["sample_name"]
+  #   model_config:
+  #     emb_mode: "cell"
+  #     emb_layer: -1
+  #     forward_batch_size: 16
+
   # Embedding dimensions (dataset-specific)
   embedding_dim_map:
     scvi_fm: 50 # Can't be changed as the pretrained scvi model is fixed.
@@ -142,6 +158,22 @@ embedding_cpu:
 
   # Method-specific parameters
   batch_size: 128 # Used by geneformer
+
+  # Initialization kwargs for embedders (optional)
+  # General kwargs that apply to all methods:
+  init_kwargs: null # e.g., {"resources_dir": "custom_resources"}
+  # Method-specific kwargs (override general init_kwargs):
+  # Use format: init_kwargs_<method> where method name uses underscores (e.g., init_kwargs_cw_geneformer)
+  # Example for cw-geneformer:
+  # init_kwargs_cw_geneformer:
+  #   cw_model_path: "/path/to/model"
+  #   processor_kwargs:
+  #     nproc: 4
+  #     emb_label: ["sample_name"]
+  #   model_config:
+  #     emb_mode: "cell"
+  #     emb_layer: -1
+  #     forward_batch_size: 16
 
   # Embedding dimensions (dataset-specific)
   embedding_dim_map:
@@ -178,6 +210,22 @@ embedding_gpu:
 
   # Method-specific parameters
   batch_size: 128 # Used by geneformer
+
+  # Initialization kwargs for embedders (optional)
+  # General kwargs that apply to all methods:
+  init_kwargs: null # e.g., {"resources_dir": "custom_resources"}
+  # Method-specific kwargs (override general init_kwargs):
+  # Use format: init_kwargs_<method> where method name uses underscores (e.g., init_kwargs_cw_geneformer)
+  # Example for cw-geneformer:
+  # init_kwargs_cw_geneformer:
+  #   cw_model_path: "/path/to/model"
+  #   processor_kwargs:
+  #     nproc: 4
+  #     emb_label: ["sample_name"]
+  #   model_config:
+  #     emb_mode: "cell"
+  #     emb_layer: -1
+  #     forward_batch_size: 16
 
   # Embedding dimensions (dataset-specific)
   embedding_dim_map:
