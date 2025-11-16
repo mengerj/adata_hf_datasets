@@ -1542,7 +1542,7 @@ class GeneformerEmbedder(BaseEmbedder):
             # Create the extractor with updated batch size and device
             extractor_params = dict(self.emb_extractor_init)
             extractor_params["forward_batch_size"] = batch_size
-            extractor_params["device"] = self.device
+            # extractor_params["device"] = self.device
             extractor = EmbExtractor(**extractor_params)
 
             logger.info(
