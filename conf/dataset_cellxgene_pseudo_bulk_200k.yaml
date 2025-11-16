@@ -47,8 +47,8 @@ preprocessing:
     ] # Remove replicate layers to reduce file size
 # Embedding preparation overrides
 embedding_preparation:
-  enabled: true # Set to false to skip embedding preparation
-  methods: ["geneformer"] #run the prepare step on cpu to save gpu time
+  enabled: false # Set to false to skip embedding preparation
+  methods: ["geneformer", "geneformer-v1"] #run the prepare step on cpu to save gpu time
 
 # Embedding overrides (both dataset-specific and execution parameters)
 embedding_cpu:
@@ -57,17 +57,20 @@ embedding_cpu:
   methods: ["gs10k"] #, "scvi_fm", "gs", "gs10k"]
 
 embedding_gpu:
-  enabled: true
-  methods: ["geneformer"]
+  enabled: false
+  methods: ["geneformer", "geneformer-v1"]
 
 # Dataset creation overrides
 dataset_creation:
   enabled: true
-  use_nextcloud: true
+  use_nextcloud: false
+  use_zenodo: true
+  zenodo_config:
+    sandbox: true
   force_reupload: true
   private: false
   # Dataset-specific parameters
-  required_obsm_keys: ["X_gs10k", "X_geneformer"] #["X_pca", "X_scvi_fm", "X_geneformer", "X_gs10k", "X_geneformer-v1"]
+  required_obsm_keys: ["X_gs10k", "X_geneformer", "X_geneformer-v1"] #["X_pca", "X_scvi_fm", "X_geneformer", "X_gs10k", "X_geneformer-v1"]
   cs_length: 4096
   caption_keys: "caption_key"
   negatives_per_sample: 2

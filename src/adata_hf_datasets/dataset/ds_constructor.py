@@ -39,8 +39,8 @@ class AnnDataSetConstructor:
           format as it's most commonly used for inference.
         - **'multiplets'**: Training format with positive caption and multiple negative sample
           indices. Negatives alternate between caption negatives (different caption, even indices)
-          and sentence negatives (different sample, odd indices). Negatives are drawn from
-          in-batch samples based on ``batch_key``.
+          and sentence negatives (different sample, odd indices). If ``batch_key`` is provided,
+          negatives are preferentially drawn from the same batch; otherwise from all samples.
         - **'pairs'**: Training format that creates individual records with a binary ``label``
           column (1.0 for positive pairs, 0.0 for negative pairs). Each anchor generates
           one positive and one negative pair.
@@ -69,15 +69,16 @@ class AnnDataSetConstructor:
         or download link (``adata_link``) for each sample's source AnnData file. This allows
         downstream models to load the actual numeric data on-demand.
 
-    **Caption and Negative Sampling**
+        **Caption and Negative Sampling**
         The ``caption_key`` defines the positive label for each sample (stored as ``positive`` in
         multiplets format, or used for pair generation in pairs format). Captions are typically
         natural language descriptions of the sample metadata, such as "This sample was obtained
         from lung tissue and was annotated as a T cell. It's from a healthy 50 year old...".
 
-        Negative samples are drawn from in-batch samples that have different captions, where
-        "batch" is defined by ``batch_key``. This ensures contrastive learning happens within
-        meaningful groups.
+        Negative samples are drawn from samples that have different captions. If ``batch_key``
+        is provided, negatives are preferentially drawn from the same batch to ensure contrastive
+        learning happens within meaningful groups. If ``batch_key`` is not provided, negatives
+        are sampled from all available samples without batch restrictions.
 
         By default, negatives are stored as sample indices rather than resolved content. This
         design allows users to provide multiple cell sentence columns (e.g., both for textual and numeric representations) and have downstream methods choose which representation
@@ -170,12 +171,9 @@ class AnnDataSetConstructor:
         batch_key : str, optional
             Column name from ``adata.obs`` that defines batches for negative sampling.
             Negatives are preferentially drawn from the same batch to ensure meaningful
-            contrastive pairs. Required for 'pairs' and 'multiplets' formats, optional
-            (ignored) for 'single' format. Defaults to "batch" for non-single formats.
+            contrastive pairs. If not provided, negatives will be sampled from all samples
+            without batch restrictions. Optional for all formats (ignored for 'single' format).
         """
-        # Set default batch_key for non-single formats
-        if batch_key is None and self.dataset_format != "single":
-            batch_key = "batch"
 
         self._ingest_obs_df(
             obs_df=adata.obs,
@@ -213,9 +211,6 @@ class AnnDataSetConstructor:
         batch_key : str, optional
             Column name that defines batches. See :py:meth:`add_anndata` for details.
         """
-        # Set default batch_key for non-single formats
-        if batch_key is None and self.dataset_format != "single":
-            batch_key = "batch"
 
         self._ingest_obs_df(
             obs_df=df,
@@ -230,17 +225,19 @@ class AnnDataSetConstructor:
     # optimization methods
     # ------------------------------------------------------------------ #
     def _build_simple_pools(self) -> None:
-        """Build minimal pools for fast negative sampling."""
+        """Build minimal lookup structures for fast negative sampling."""
         if self._pools_built:
             return
 
-        # Build simple lookup structures from existing data
-        for batch, indices_list in self._batch_caption_map.keys():
+        # Build batch indices if batch_key was provided
+        for (batch, caption), indices in self._batch_caption_map.items():
             if batch not in self._batch_indices:
                 self._batch_indices[batch] = []
-
-        for (batch, caption), indices in self._batch_caption_map.items():
             self._batch_indices[batch].extend(indices)
+
+        # Build caption indices from _caption_map (contains all indices with captions)
+        # This works whether batch_key was provided or not
+        for caption, indices in self._caption_map.items():
             if caption not in self._caption_indices:
                 self._caption_indices[caption] = []
             self._caption_indices[caption].extend(indices)
@@ -421,11 +418,6 @@ class AnnDataSetConstructor:
         if self.dataset_format in {"pairs", "multiplets"} and caption_key is None:
             raise ValueError("caption_key must be supplied for this dataset_format.")
 
-        if self.dataset_format in {"pairs", "multiplets"} and batch_key is None:
-            raise ValueError(
-                "batch_key must be supplied for 'pairs' and 'multiplets' formats."
-            )
-
         # Track and validate number of sentence keys
         if self._num_sentence_keys is None:
             self._num_sentence_keys = len(sentence_keys)
@@ -455,25 +447,29 @@ class AnnDataSetConstructor:
 
             cap = obs_df.at[idx, caption_key] if caption_key else None
             self._index_to_caption[idx] = cap
-            if cap is not None and batch is not None:
-                self._batch_caption_map[(batch, cap)].append(idx)
+            if cap is not None:
+                # Always populate caption_map for negative sampling
                 self._caption_map[cap].append(idx)
+                # Only populate batch_caption_map if batch_key was provided
+                if batch is not None:
+                    self._batch_caption_map[(batch, cap)].append(idx)
 
         logger.info("%s ingested (%d rows).", source_name, obs_df.shape[0])
 
     def _get_negative_idx(self, anchor_idx: Any, pos_caption: str) -> Optional[Any]:
-        """Return an obs index with a *different* caption (preferring same batch)."""
-        anchor_batch = self._index_to_batch[anchor_idx]
+        """Return an obs index with a *different* caption (preferring same batch if batch_key provided)."""
+        anchor_batch = self._index_to_batch.get(anchor_idx)
 
-        # same-batch but different caption - iterate through batch_caption_map efficiently
-        for (batch, caption), indices in self._batch_caption_map.items():
-            if batch == anchor_batch and caption != pos_caption:
-                # Try to find a candidate that's not the anchor
-                for idx in indices:
-                    if idx != anchor_idx:
-                        return idx
+        # If batch_key was provided, prefer same-batch but different caption
+        if anchor_batch is not None:
+            for (batch, caption), indices in self._batch_caption_map.items():
+                if batch == anchor_batch and caption != pos_caption:
+                    # Try to find a candidate that's not the anchor
+                    for idx in indices:
+                        if idx != anchor_idx:
+                            return idx
 
-        # cross-batch fallback - iterate through caption_map efficiently
+        # cross-batch fallback or no batch_key - iterate through caption_map efficiently
         for caption, indices in self._caption_map.items():
             if caption != pos_caption:
                 # Try to find a candidate that's not the anchor
@@ -486,16 +482,18 @@ class AnnDataSetConstructor:
     def _get_sentence_negative_idx(
         self, anchor_idx: Any, seen_idxs: set
     ) -> Optional[Any]:
-        """Return an obs index for sentence negatives (different sample, any caption)."""
-        anchor_batch = self._index_to_batch[anchor_idx]
+        """Return an obs index for sentence negatives (different sample, any caption).
+        If batch_key was provided, prefers same-batch samples; otherwise samples from all.
+        """
+        anchor_batch = self._index_to_batch.get(anchor_idx)
 
-        # same-batch but different sample - iterate through batch efficiently
-        if anchor_batch in self._batch_indices:
+        # If batch_key was provided, prefer same-batch but different sample
+        if anchor_batch is not None and anchor_batch in self._batch_indices:
             for idx in self._batch_indices[anchor_batch]:
                 if idx != anchor_idx and idx not in seen_idxs:
                     return idx
 
-        # cross-batch fallback - iterate through all indices
+        # cross-batch fallback or no batch_key - iterate through all indices
         for idx in self._all_indices:
             if idx != anchor_idx and idx not in seen_idxs:
                 return idx

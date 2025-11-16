@@ -745,6 +745,7 @@ class GeneformerEmbedder(BaseEmbedder):
         tokenizer_kwargs: dict | None = None,
         geneformer_root: str | Path | None = None,
         validate_paths: bool = True,
+        device: str | None = None,
         **kwargs,
     ):
         """
@@ -768,6 +769,9 @@ class GeneformerEmbedder(BaseEmbedder):
         validate_paths : bool, optional
             Whether to validate that required paths exist during initialization.
             Default is True. Set to False if paths will be validated later (e.g., in subclasses).
+        device : str | torch.device | None, optional
+            Device to run the model on. If None, auto-detects: MPS (Mac) > CUDA > CPU.
+            Can be "mps", "cuda", "cpu", or a torch.device object.
         kwargs : dict
             Additional keyword arguments for the embedder, not used here but included
             for interface consistency.
@@ -834,14 +838,33 @@ class GeneformerEmbedder(BaseEmbedder):
         # Options forwarded to TranscriptomeTokenizer
         self.tokenizer_kwargs = tokenizer_kwargs or {}
 
+        # Device handling
+        import torch
+
+        if device is None:
+            # Auto-detect: MPS (Mac) > CUDA > CPU
+            if torch.backends.mps.is_available():
+                self.device = "mps"
+            elif torch.cuda.is_available():
+                self.device = "cuda"
+            else:
+                self.device = "cpu"
+        else:
+            # Normalize torch.device objects to strings
+            if isinstance(device, torch.device):
+                self.device = str(device)
+            else:
+                self.device = str(device).lower()
+
         # Name of the tokenized dataset
         self.dataset_name = "geneformer"
 
         logger.info(
-            "Initialized GeneformerEmbedder with model_name=%s, model_input_size=%d, geneformer_root=%s",
+            "Initialized GeneformerEmbedder with model_name=%s, model_input_size=%d, geneformer_root=%s, device=%s",
             self.model_name,
             self.model_input_size,
             self.geneformer_root,
+            self.device,
         )
 
     def _resolve_geneformer_root(self, geneformer_root: str | Path | None) -> Path:
@@ -1128,6 +1151,100 @@ class GeneformerEmbedder(BaseEmbedder):
                 else:
                     raise ValueError("obs not found in h5ad file")
 
+    def _check_counts_layer_exists(
+        self, file_path: str | Path, file_format: str
+    ) -> bool:
+        """
+        Check if 'counts' layer exists in the AnnData file without loading full data.
+
+        Parameters
+        ----------
+        file_path : str | Path
+            Path to the AnnData file
+        file_format : str
+            'zarr' or 'h5ad'
+
+        Returns
+        -------
+        bool
+            True if 'counts' layer exists, False otherwise
+        """
+        file_path = Path(file_path)
+
+        if file_format == "zarr":
+            import zarr
+
+            store = zarr.storage.LocalStore(file_path)
+            root = zarr.group(store=store)
+            return "layers" in root and "counts" in root["layers"]
+        elif file_format == "h5ad":
+            import h5py
+
+            with h5py.File(file_path, "r") as f:
+                return "layers" in f and "counts" in f["layers"]
+        return False
+
+    def _set_x_to_counts_in_file(self, file_path: str | Path, file_format: str) -> None:
+        """
+        Set adata.X to adata.layers["counts"] in the file without loading full object.
+        This modifies the file in-place.
+
+        Parameters
+        ----------
+        file_path : str | Path
+            Path to the AnnData file to modify
+        file_format : str
+            'zarr' or 'h5ad'
+
+        Raises
+        ------
+        ValueError
+            If 'counts' layer doesn't exist
+        """
+        file_path = Path(file_path)
+
+        if not self._check_counts_layer_exists(file_path, file_format):
+            raise ValueError(
+                f"'counts' layer not found in {file_path}. "
+                "Cannot set adata.X to adata.layers['counts']."
+            )
+
+        logger.info(f"Setting adata.X to adata.layers['counts'] in {file_path}")
+
+        if file_format == "zarr":
+            import zarr
+
+            # Open zarr store in read-write mode
+            store = zarr.storage.LocalStore(file_path)
+            root = zarr.group(store=store, mode="r+")
+
+            # Get counts array
+            counts_array = root["layers/counts"]
+
+            # Delete existing X if it exists
+            if "X" in root:
+                del root["X"]
+
+            # Use zarr's copy method to efficiently copy the array
+            # This preserves chunks, compression, and other metadata
+            zarr.copy(counts_array, root, name="X")
+
+            store.close()
+            logger.info("Successfully set X to counts in zarr store")
+
+        elif file_format == "h5ad":
+            # For h5ad, use AnnData's backed mode for efficient modification
+            # This loads only metadata and the counts layer, not the full X matrix
+            adata_backed = ad.read_h5ad(file_path, backed="r+")
+
+            # Set X to counts (works for both sparse and dense)
+            adata_backed.X = adata_backed.layers["counts"].copy()
+
+            # Force write the changes and close
+            adata_backed.file.close()
+
+            logger.info("Successfully set X to counts in h5ad file")
+
     def _copy_file_efficiently(
         self, src_path: str | Path, dest_path: str | Path, file_format: str
     ) -> str:
@@ -1223,6 +1340,19 @@ class GeneformerEmbedder(BaseEmbedder):
         from geneformer import TranscriptomeTokenizer
 
         if adata is not None:
+            # If adata object is provided, check if counts layer exists and set X to it
+            if "counts" in adata.layers:
+                logger.info(
+                    "Setting adata.X to adata.layers['counts'] for in-memory adata"
+                )
+                adata.X = adata.layers["counts"].copy()
+            else:
+                logger.warning(
+                    "'counts' layer not found in adata. "
+                    "Geneformer typically expects raw counts in adata.X. "
+                    "Proceeding with current adata.X."
+                )
+
             # If adata object is provided, we still need to save it temporarily to use the efficient methods
             logger.warning(
                 "AnnData object provided directly. For memory efficiency, consider providing adata_path instead."
@@ -1278,11 +1408,35 @@ class GeneformerEmbedder(BaseEmbedder):
                 self.in_adata_path, gf_adata_file, file_format
             )
             tokenize_format = actual_format
+
+            # Set X to counts in the copied file if counts layer exists
+            if self._check_counts_layer_exists(gf_adata_file, actual_format):
+                try:
+                    self._set_x_to_counts_in_file(gf_adata_file, actual_format)
+                except Exception as e:
+                    logger.warning(
+                        f"Failed to set X to counts in copied file: {e}. "
+                        "Proceeding with original X."
+                    )
+            else:
+                logger.warning(
+                    f"'counts' layer not found in {gf_adata_file}. "
+                    "Geneformer typically expects raw counts in adata.X. "
+                    "Proceeding with current adata.X."
+                )
         else:
             logger.info(
                 "AnnData already exists at %s. Skipping copying.",
                 gf_adata_file,
             )
+            # Check if we need to update X to counts in existing file
+            if self._check_counts_layer_exists(gf_adata_file, file_format):
+                logger.info(
+                    "Checking if X needs to be updated to counts in existing file..."
+                )
+                # For now, we'll skip modifying existing files to avoid breaking
+                # tokenized datasets. User can delete the file to force regeneration.
+                # TODO: Could add a flag to force update if needed
 
         self.out_dataset_dir = (
             self.og_adata_dir / self.dataset_name / adata_name / "tokenized_ds"
@@ -1385,13 +1539,16 @@ class GeneformerEmbedder(BaseEmbedder):
         # Check if csv with embeddings already exists (is simultaniously created for both splits of the dataset and therefore doesnt need to be recreated)
         embs_csv_path = self.out_dataset_dir / "geneformer_embeddings.csv"
         if not embs_csv_path.exists():
-            # Create the extractor with updated batch size
+            # Create the extractor with updated batch size and device
             extractor_params = dict(self.emb_extractor_init)
             extractor_params["forward_batch_size"] = batch_size
+            # extractor_params["device"] = self.device
             extractor = EmbExtractor(**extractor_params)
 
             logger.info(
-                "Extracting geneformer embeddings from model at %s...", self.model_dir
+                "Extracting geneformer embeddings from model at %s on device=%s...",
+                self.model_dir,
+                self.device,
             )
             embs_df = extractor.extract_embs(
                 str(self.model_dir),
@@ -2365,9 +2522,40 @@ class CWGeneformerEmbedder(BaseEmbedder):
         import torch
 
         if self.device is None:
-            self.device = "cuda" if torch.cuda.is_available() else "cpu"
+            # Check for MPS first (Mac), then CUDA, then CPU
+            if torch.backends.mps.is_available():
+                self.device = "mps"
+            elif torch.cuda.is_available():
+                self.device = "cuda"
+            else:
+                self.device = "cpu"
+        else:
+            # Normalize torch.device objects to strings
+            if isinstance(self.device, torch.device):
+                self.device = str(self.device)
+            # Ensure device string is lowercase
+            self.device = str(self.device).lower()
+
+        # Move model to device
         self._model.to(self.device)
         self._model.eval()
+
+        # Verify model is on the correct device
+        try:
+            # Check if model has parameters and verify their device
+            first_param = next(self._model.parameters(), None)
+            if first_param is not None:
+                actual_device = str(first_param.device)
+                if actual_device != self.device:
+                    logger.warning(
+                        f"Model device mismatch: expected {self.device}, but parameters are on {actual_device}"
+                    )
+                else:
+                    logger.info(
+                        f"Verified model parameters are on device: {actual_device}"
+                    )
+        except Exception as e:
+            logger.debug(f"Could not verify model device: {e}")
 
         # Sync embedding_dim with loaded model hidden_size when available
         try:
@@ -2437,6 +2625,11 @@ class CWGeneformerEmbedder(BaseEmbedder):
         expression_tokens = expression_tokens.to(self.device)
         expression_token_lengths = expression_token_lengths.to(self.device)
 
+        # Verify tensors are on the correct device
+        logger.info(
+            f"Input tensors on device: tokens={expression_tokens.device}, lengths={expression_token_lengths.device}"
+        )
+
         # Optionally override forward batch size in config
         if batch_size is not None and hasattr(self._model, "config"):
             try:
@@ -2450,6 +2643,13 @@ class CWGeneformerEmbedder(BaseEmbedder):
                 expression_tokens=expression_tokens,
                 expression_token_lengths=expression_token_lengths,
                 return_dict=False,
+            )
+
+        # Verify output embeddings are on the expected device
+        logger.info(f"Output embeddings on device: {embs.device}")
+        if str(embs.device) != self.device:
+            logger.warning(
+                f"Output device mismatch: expected {self.device}, got {embs.device}"
             )
 
         # Convert to numpy and store
@@ -2832,6 +3032,22 @@ class InitialEmbedder:
             self.embedding_dim,
             self.requires_mem_adata,
         )
+
+    @property
+    def emb_extractor_init(self):
+        """
+        Access to emb_extractor_init for Geneformer embedders.
+
+        This property allows you to modify EmbExtractor parameters after initialization.
+        For example:
+            ie.emb_extractor_init["forward_batch_size"] = 64
+
+        Returns
+        -------
+        dict or None
+            The emb_extractor_init dictionary if the embedder supports it, None otherwise.
+        """
+        return getattr(self.embedder, "emb_extractor_init", None)
 
     def _validate_file_path(self, file_path: str | Path) -> None:
         """
