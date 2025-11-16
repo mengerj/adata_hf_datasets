@@ -456,7 +456,8 @@ def main(cfg: DictConfig):
                     emb_dim = embedding_cfg.embedding_dim_map[method]
 
                     # Extract init_kwargs for this method
-                    # Support both general init_kwargs and method-specific init_kwargs_<method>
+                    # General init_kwargs are passed to all embedders; unused kwargs are ignored
+                    # Optional: method-specific init_kwargs_<method> can override for specific methods
                     init_kwargs = {}
                     if (
                         hasattr(embedding_cfg, "init_kwargs")
@@ -469,7 +470,7 @@ def main(cfg: DictConfig):
                         if general_kwargs:
                             init_kwargs.update(general_kwargs)
 
-                    # Method-specific kwargs override general ones
+                    # Method-specific kwargs override general ones (optional, for method-specific overrides)
                     method_specific_key = f"init_kwargs_{method.replace('-', '_')}"
                     if hasattr(embedding_cfg, method_specific_key):
                         method_kwargs = getattr(embedding_cfg, method_specific_key)
@@ -481,8 +482,13 @@ def main(cfg: DictConfig):
                             if method_kwargs_dict:
                                 init_kwargs.update(method_kwargs_dict)
                                 logger.info(
-                                    f"Using method-specific init_kwargs for '{method}'"
+                                    f"Using method-specific init_kwargs for '{method}' (overrides general init_kwargs)"
                                 )
+
+                    if init_kwargs:
+                        logger.debug(
+                            f"Passing init_kwargs to {method}: {list(init_kwargs.keys())}"
+                        )
 
                     # monitor.log_event(f"Prepare {method}")
                     embedder = InitialEmbedder(
@@ -553,7 +559,8 @@ def main(cfg: DictConfig):
                     emb_dim = embedding_cfg.embedding_dim_map[method]
 
                     # Extract init_kwargs for this method
-                    # Support both general init_kwargs and method-specific init_kwargs_<method>
+                    # General init_kwargs are passed to all embedders; unused kwargs are ignored
+                    # Optional: method-specific init_kwargs_<method> can override for specific methods
                     init_kwargs = {}
                     if (
                         hasattr(embedding_cfg, "init_kwargs")
@@ -566,7 +573,7 @@ def main(cfg: DictConfig):
                         if general_kwargs:
                             init_kwargs.update(general_kwargs)
 
-                    # Method-specific kwargs override general ones
+                    # Method-specific kwargs override general ones (optional, for method-specific overrides)
                     method_specific_key = f"init_kwargs_{method.replace('-', '_')}"
                     if hasattr(embedding_cfg, method_specific_key):
                         method_kwargs = getattr(embedding_cfg, method_specific_key)
@@ -578,8 +585,13 @@ def main(cfg: DictConfig):
                             if method_kwargs_dict:
                                 init_kwargs.update(method_kwargs_dict)
                                 logger.info(
-                                    f"Using method-specific init_kwargs for '{method}'"
+                                    f"Using method-specific init_kwargs for '{method}' (overrides general init_kwargs)"
                                 )
+
+                    if init_kwargs:
+                        logger.debug(
+                            f"Passing init_kwargs to {method}: {list(init_kwargs.keys())}"
+                        )
 
                     # monitor.log_event(f"Prepare {method}")
                     embedder = InitialEmbedder(

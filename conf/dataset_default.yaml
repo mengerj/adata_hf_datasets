@@ -114,13 +114,10 @@ embedding_preparation:
   batch_size: 128 # Used by geneformer
 
   # Initialization kwargs for embedders (optional)
-  # General kwargs that apply to all methods:
-  init_kwargs: null # e.g., {"resources_dir": "custom_resources"}
-  # Method-specific kwargs (override general init_kwargs):
-  # Use format: init_kwargs_<method> where method name uses underscores (e.g., init_kwargs_cw_geneformer)
+  # These kwargs are passed to all embedders; unused kwargs are ignored by embedders that don't need them
   # Example for cw-geneformer:
-  # init_kwargs_cw_geneformer:
-  #   cw_model_path: "/path/to/model"
+  # init_kwargs:
+  #   cw_model_path: "/path/to/geneformer-12L-30M"
   #   processor_kwargs:
   #     nproc: 4
   #     emb_label: ["sample_name"]
@@ -128,6 +125,9 @@ embedding_preparation:
   #     emb_mode: "cell"
   #     emb_layer: -1
   #     forward_batch_size: 16
+  # Optional: Method-specific kwargs (override general init_kwargs for specific methods)
+  # Use format: init_kwargs_<method> where method name uses underscores (e.g., init_kwargs_cw_geneformer)
+  init_kwargs: null
 
   # Embedding dimensions (dataset-specific)
   embedding_dim_map:
@@ -160,13 +160,10 @@ embedding_cpu:
   batch_size: 128 # Used by geneformer
 
   # Initialization kwargs for embedders (optional)
-  # General kwargs that apply to all methods:
-  init_kwargs: null # e.g., {"resources_dir": "custom_resources"}
-  # Method-specific kwargs (override general init_kwargs):
-  # Use format: init_kwargs_<method> where method name uses underscores (e.g., init_kwargs_cw_geneformer)
+  # These kwargs are passed to all embedders; unused kwargs are ignored by embedders that don't need them
   # Example for cw-geneformer:
-  # init_kwargs_cw_geneformer:
-  #   cw_model_path: "/path/to/model"
+  # init_kwargs:
+  #   cw_model_path: "/path/to/geneformer-12L-30M"
   #   processor_kwargs:
   #     nproc: 4
   #     emb_label: ["sample_name"]
@@ -174,6 +171,9 @@ embedding_cpu:
   #     emb_mode: "cell"
   #     emb_layer: -1
   #     forward_batch_size: 16
+  # Optional: Method-specific kwargs (override general init_kwargs for specific methods)
+  # Use format: init_kwargs_<method> where method name uses underscores (e.g., init_kwargs_cw_geneformer)
+  init_kwargs: null
 
   # Embedding dimensions (dataset-specific)
   embedding_dim_map:
@@ -212,13 +212,10 @@ embedding_gpu:
   batch_size: 128 # Used by geneformer
 
   # Initialization kwargs for embedders (optional)
-  # General kwargs that apply to all methods:
-  init_kwargs: null # e.g., {"resources_dir": "custom_resources"}
-  # Method-specific kwargs (override general init_kwargs):
-  # Use format: init_kwargs_<method> where method name uses underscores (e.g., init_kwargs_cw_geneformer)
+  # These kwargs are passed to all embedders; unused kwargs are ignored by embedders that don't need them
   # Example for cw-geneformer:
-  # init_kwargs_cw_geneformer:
-  #   cw_model_path: "/path/to/model"
+  # init_kwargs:
+  #   cw_model_path: "/path/to/geneformer-12L-30M"
   #   processor_kwargs:
   #     nproc: 4
   #     emb_label: ["sample_name"]
@@ -226,6 +223,9 @@ embedding_gpu:
   #     emb_mode: "cell"
   #     emb_layer: -1
   #     forward_batch_size: 16
+  # Optional: Method-specific kwargs (override general init_kwargs for specific methods)
+  # Use format: init_kwargs_<method> where method name uses underscores (e.g., init_kwargs_cw_geneformer)
+  init_kwargs: null
 
   # Embedding dimensions (dataset-specific)
   embedding_dim_map:

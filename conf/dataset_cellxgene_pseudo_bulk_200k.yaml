@@ -59,7 +59,7 @@ embedding_cpu:
 embedding_gpu:
   enabled: true
   venv_path: "cw_gf"
-  init_kwargs_cw_geneformer:
+  init_kwargs:
     cw_model_path: "/h/menger/git/adata_hf_datasets/external/Geneformer_v1/geneformer-12L-30M"
   methods: ["cw-geneformer"]
 
