@@ -44,6 +44,14 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet
+          sudo rm -rf /usr/local/lib/android
+          sudo rm -rf "$AGENT_TOOLSDIRECTORY"
+          df -h
+
       - name: Set up Python ${{ matrix.python }}
         uses: actions/setup-python@v5
         with:
@@ -54,9 +62,17 @@ jobs:
       - name: Install test dependencies
         run: |
           python -m pip install --upgrade pip wheel
+
       - name: Install dependencies
         run: |
-          pip install ${{ matrix.pip-flags }} ".[dev,test]"
+          # Use --no-cache-dir to prevent disk space issues with large packages like torch
+          pip install ${{ matrix.pip-flags }} --no-cache-dir ".[dev,test]"
+
+      - name: Clear pip cache and check disk space
+        if: always()
+        run: |
+          pip cache purge || true
+          df -h
       - name: Test
         env:
           MPLBACKEND: agg
