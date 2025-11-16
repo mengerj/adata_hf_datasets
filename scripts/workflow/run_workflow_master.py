@@ -40,6 +40,8 @@ print("Loading configs...")
 config_path = str(Path.cwd() / "conf")
 print(f"Config path: {config_path}")
 
+# Load workflow config and exit Hydra context before calling orchestrator
+# This allows the orchestrator to initialize Hydra for dataset config loading
 with initialize_config_dir(config_dir=config_path, version_base=None):
     # Load the workflow orchestrator config to get parameters
     workflow_config = compose(config_name="workflow_orchestrator")
@@ -61,15 +63,8 @@ with initialize_config_dir(config_dir=config_path, version_base=None):
     # Set BASE_FILE_PATH early so config transformations use the correct backend path
     os.environ["BASE_FILE_PATH"] = str(resolved_config["base_file_path"])
 
-    if execution_mode == "local":
-        print("Execution mode: local - running localhost backend...")
-        run_workflow_localhost(
-            dataset_config_name_or_path=dataset_config_name_or_path,
-            workflow_config=resolved_config,
-            force=False,
-        )
-    else:
-        # For SLURM mode, we need login configs
+    # Convert login configs to plain dicts if needed (before exiting Hydra context)
+    if execution_mode != "local":
         cpu_login = workflow_section.get("cpu_login")
         gpu_login = workflow_section.get("gpu_login")
 
@@ -78,20 +73,33 @@ with initialize_config_dir(config_dir=config_path, version_base=None):
             cpu_login = OmegaConf.to_container(cpu_login)
         if not isinstance(gpu_login, dict):
             gpu_login = OmegaConf.to_container(gpu_login)
+    else:
+        cpu_login = None
+        gpu_login = None
 
-        if not cpu_login:
-            raise ValueError(
-                "CPU login configuration required in workflow_orchestrator config"
-            )
-
-        print(f"CPU login: {cpu_login}")
-        print(f"GPU login: {gpu_login}")
-        print("Creating orchestrator...")
-        orchestrator = WorkflowOrchestrator(cpu_login=cpu_login, gpu_login=gpu_login)
-        print("Starting workflow execution (SLURM, wait mode)...")
-        orchestrator.run_workflow_local(
-            dataset_config_name_or_path=dataset_config_name_or_path,
-            workflow_config=resolved_config,
-            force=False,
+# Exit Hydra context before calling orchestrator (orchestrator will initialize its own)
+if execution_mode == "local":
+    print("Execution mode: local - running localhost backend...")
+    run_workflow_localhost(
+        dataset_config_name_or_path=dataset_config_name_or_path,
+        workflow_config=resolved_config,
+        force=False,
+    )
+else:
+    # For SLURM mode, we need login configs
+    if not cpu_login:
+        raise ValueError(
+            "CPU login configuration required in workflow_orchestrator config"
         )
+
+    print(f"CPU login: {cpu_login}")
+    print(f"GPU login: {gpu_login}")
+    print("Creating orchestrator...")
+    orchestrator = WorkflowOrchestrator(cpu_login=cpu_login, gpu_login=gpu_login)
+    print("Starting workflow execution (SLURM, wait mode)...")
+    orchestrator.run_workflow_local(
+        dataset_config_name_or_path=dataset_config_name_or_path,
+        workflow_config=resolved_config,
+        force=False,
+    )
 print("Workflow execution completed")

@@ -2131,6 +2131,7 @@ class WorkflowOrchestrator:
             The loaded and transformed dataset configuration
         """
         from hydra import compose, initialize_config_dir
+        from hydra.core.global_hydra import GlobalHydra
 
         # Determine if input is a path or a name
         config_path_obj = Path(dataset_config_name_or_path)
@@ -2164,6 +2165,10 @@ class WorkflowOrchestrator:
 
             # Use Hydra's proper composition to handle defaults inheritance
             try:
+                # Clear Hydra if already initialized (e.g., from previous config loading)
+                if GlobalHydra.instance().is_initialized():
+                    GlobalHydra.instance().clear()
+
                 with initialize_config_dir(config_dir=config_dir, version_base=None):
                     config = compose(config_name=config_name)
             except Exception as e:
@@ -2185,6 +2190,10 @@ class WorkflowOrchestrator:
 
             # Use Hydra's proper composition to handle defaults inheritance
             try:
+                # Clear Hydra if already initialized (e.g., from previous config loading)
+                if GlobalHydra.instance().is_initialized():
+                    GlobalHydra.instance().clear()
+
                 with initialize_config_dir(
                     config_dir=str(config_path), version_base=None
                 ):
