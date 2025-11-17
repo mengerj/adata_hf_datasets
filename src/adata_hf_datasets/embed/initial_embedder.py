@@ -2454,7 +2454,7 @@ class CWGeneformerEmbedder(BaseEmbedder):
         self._model = None
         # create a "recources" dir in "external/Cellwhisperer"
         external_dir = (
-            self.cw_model_path.parents[3] / "external" / "CellWhisperer" / "resources"
+            self.cw_model_path.parents[2] / "external" / "CellWhisperer" / "resources"
         )
         external_dir.mkdir(parents=True, exist_ok=True)
 
