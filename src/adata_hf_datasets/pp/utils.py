@@ -312,15 +312,17 @@ def ensure_raw_counts_layer(
     Guarantee that `adata.X` and `adata.layers['counts']` contain the raw count matrix.
 
     This will (in order):
-      1. If `raw_layer_key` is provided and exists in `adata.layers`,
+      1. If `adata.raw.X` exists and contains raw counts, set `adata.X` to it
+         and store it in `adata.layers['counts']`.
+      2. Else if `raw_layer_key` is provided and exists in `adata.layers`,
          copy that layer into `'counts'` and set `adata.X` to it.
-      2. Else if `adata.X` itself appears to be raw counts (via `is_raw_counts`),
+      3. Else if `adata.X` itself appears to be raw counts (via `is_raw_counts`),
          store a copy as `adata.layers['counts']`.
-      3. Else if a `'counts'` layer already exists and is valid,
+      4. Else if a `'counts'` layer already exists and is valid,
          set `adata.X` to that layer.
-      4. Otherwise log an error (and optionally raise).
+      5. Otherwise log an error (and optionally raise).
 
-    After one of steps 1–3, it re‑validates that `adata.layers['counts']`
+    After one of steps 1–4, it re‑validates that `adata.layers['counts']`
     really look like integer counts and logs an error if not.
 
     Parameters
@@ -338,14 +340,12 @@ def ensure_raw_counts_layer(
     ValueError
         If `raise_on_missing` is True and no raw counts could be located.
     """
-    # 1) Prefer the user‐specified layer
-    if raw_layer_key and raw_layer_key in adata.layers:
-        logger.info("Using layer '%s' for raw counts", raw_layer_key)
-        adata.X = adata.layers[raw_layer_key]
-        adata.layers["counts"] = adata.layers[raw_layer_key]
-    # 2) Detect if X is raw counts
-    elif adata.raw is not None and is_raw_counts(adata.raw.X):
-        logger.info("Detected raw counts in adata.raw.X; saving to layer 'counts'")
+    # 1) First check adata.raw.X (highest priority)
+    raw_counts_set = False
+    if adata.raw is not None and is_raw_counts(adata.raw.X):
+        logger.info(
+            "Detected raw counts in adata.raw.X; setting adata.X and layer 'counts'"
+        )
         # Handle case where adata.raw might have more variables than adata
         if adata.raw.n_vars > adata.n_vars:
             # Find intersection of variable names between raw and current adata
@@ -368,21 +368,45 @@ def ensure_raw_counts_layer(
                     var: idx for idx, var in enumerate(adata.raw.var_names)
                 }
                 var_indices = [raw_var_to_idx[var] for var in adata.var_names]
-                adata.layers["counts"] = adata.raw.X[:, var_indices].copy()
+                raw_counts = adata.raw.X[:, var_indices].copy()
+                adata.X = raw_counts
+                adata.layers["counts"] = raw_counts
+                raw_counts_set = True
         else:
             # Standard case: raw has same or fewer variables
-            adata.layers["counts"] = adata.raw.X.copy()
-    elif is_raw_counts(adata.X):
+            raw_counts = adata.raw.X.copy()
+            adata.X = raw_counts
+            adata.layers["counts"] = raw_counts
+            raw_counts_set = True
+
+    # 2) Prefer the user‐specified layer (if raw wasn't used)
+    if not raw_counts_set and raw_layer_key and raw_layer_key in adata.layers:
+        logger.info("Using layer '%s' for raw counts", raw_layer_key)
+        adata.X = adata.layers[raw_layer_key]
+        adata.layers["counts"] = adata.layers[raw_layer_key]
+        raw_counts_set = True
+
+    # 3) Detect if X is raw counts (if raw wasn't used and layer wasn't used)
+    if not raw_counts_set and is_raw_counts(adata.X):
         logger.info("Detected raw counts in adata.X; saving to layer 'counts'")
         adata.layers["counts"] = adata.X.copy()
-    # 3) Fall back to an existing 'counts' layer
-    elif "counts" in adata.layers and is_raw_counts(adata.layers["counts"]):
+        raw_counts_set = True
+
+    # 4) Fall back to an existing 'counts' layer (if nothing else worked)
+    if (
+        not raw_counts_set
+        and "counts" in adata.layers
+        and is_raw_counts(adata.layers["counts"])
+    ):
         logger.info("Using existing 'counts' layer for raw counts")
         adata.X = adata.layers["counts"]
-    else:
+        raw_counts_set = True
+
+    # 5) If nothing worked, log error and optionally raise
+    if not raw_counts_set:
         msg = (
             "Could not find raw counts: "
-            f"no layer '{raw_layer_key}', adata.X and adata.raw.X not raw, and no valid 'counts' layer."
+            f"adata.raw.X not raw, no layer '{raw_layer_key}', adata.X not raw, and no valid 'counts' layer."
         )
         logger.error(msg)
         if raise_on_missing:
