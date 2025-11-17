@@ -8,68 +8,69 @@ defaults:
 # DATASET METADATA
 # =============================================================================
 dataset:
-  name: "cellxgene_pseudo_bulk_full"
-  description: "CellxGene pseudo bulk dataset with 350k samples. Annotated with natural language descriptions obtained in CellWhisperer Study."
-  download_url: "https://medical-epigenomics.org/papers/schaefer2024/data/datasets/cellxgene_census/full_data.h5ad" # Example URL
-  full_name: "cellxgene_pseudo_bulk_full"
+  name: "geo_350k" #name of the subset being used
+  description: "GEO dataset with 700k samples, subsetted to 350k samples. Annotated with natural language descriptions obtained in CellWhisperer Study."
+  download_url: "https://medical-epigenomics.org/papers/schaefer2024/data/datasets/archs4_geo/full_data.h5ad" # Example URL
+  full_name: "geo_full" #name of the full dataset
 
 # =============================================================================
 # COMMON KEYS (dataset-specific)
 # =============================================================================
-batch_key: "dataset_title"
-annotation_key: "cell_type"
+batch_key: "study"
+annotation_key: null
 caption_key: "natural_language_annotation"
-instrument_key: "assay"
-other_bio_labels: ["tissue", "disease"]
+instrument_key: "instrument_model"
+other_bio_labels: []
 
 # =============================================================================
 # DATASET-SPECIFIC OVERRIDES
 # =============================================================================
 # Download configuration
 download:
-  enabled: false
-  subset_size: null
+  enabled: true
+  subset_size: 350000
 
 # Preprocessing overrides (both dataset-specific and execution parameters)
 preprocessing:
   # Dataset-specific parameters
-  enabled: false
-  chunk_size: 100000 #small to test many chunks
+  enabled: true
+  chunk_size: 80000
   split_dataset: true # Important for training datasets. Set to false for test datasets. (Similar parameters in dataset_creation)
   count_layer_key: "counts" # Key in adata.layers with raw counts. If not present, adata.raw.X is checked.
-  # Layer management - example of removing replicate layers
-  layers_to_delete: [
-      "replicate_1",
-      "replicate_2",
-      "replicate_3",
-      "replicate_4",
-      "replicate_5",
-    ] # Remove replicate layers to reduce file size
+  # Bimodal splitting (for specific datasets)
+  split_bimodal: true
+  bimodal_col: readsaligned
+
+  # SRA metadata fetching (dataset-specific)
+  skip_sra_fetch: false
+  sra_max_retries: 3
+  sra_continue_on_fail: true
+  sra_chunk_size: 10000
+  sra_extra_cols: ["instrument_model", "library_layout"]
+
 # Embedding preparation overrides
 embedding_preparation:
-  enabled: false # Set to false to skip embedding preparation
+  enabled: true # Set to false to skip embedding preparation
   methods: ["geneformer-v1", "geneformer"] #run the prepare step on cpu to save gpu time
 
 # Embedding overrides (both dataset-specific and execution parameters)
 embedding_cpu:
-  enabled: false
-  overwrite: true
-  methods: ["gs10k"] #, "scvi_fm", "gs", "gs10k"]
+  enabled: true
+  methods: ["pca", "gs10k", "scvi_fm"] #, "scvi_fm", "gs"]
 
 embedding_gpu:
-  enabled: false
+  enabled: true
   methods: ["geneformer-v1", "geneformer"]
 
 # Dataset creation overrides
 dataset_creation:
-  enabled: true
-  use_nextcloud: true
-  force_reupload: true
-  private: false
+  memory_gb: 256
+  enabled: false
+  use_nextcloud: false
   # Dataset-specific parameters
   required_obsm_keys:
-    ["X_pca", "X_scvi_fm", "X_geneformer", "X_gs10k", "X_geneformer-v1"]
+    ["X_pca", "X_scvi_fm", "X_gs10k", "X_geneformer", "X_geneformer-v1"]
   cs_length: 4096
-  caption_keys: "caption_key"
   negatives_per_sample: 2
+  split_dataset: true # Important for training datasets. Set to false for test datasets.
   dataset_format: "multiplets" # Important for training datasets. Set to "single" for test datasets.
