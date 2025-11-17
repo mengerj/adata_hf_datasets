@@ -23,6 +23,7 @@ is more efficient on the CPU and would otherwise block the precious GPU for a lo
 """
 
 import sys
+import os
 from pathlib import Path
 from typing import Union
 
@@ -483,6 +484,37 @@ def main(cfg: DictConfig):
                                 init_kwargs.update(method_kwargs_dict)
                                 logger.info(
                                     f"Using method-specific init_kwargs for '{method}' (overrides general init_kwargs)"
+                                )
+
+                    # Resolve relative paths in init_kwargs (e.g., cw_model_path) relative to PROJECT_DIR
+                    if init_kwargs and "cw_model_path" in init_kwargs:
+                        cw_model_path = Path(init_kwargs["cw_model_path"])
+                        # If path is relative, resolve it relative to PROJECT_DIR
+                        if not cw_model_path.is_absolute():
+                            project_dir = os.environ.get("PROJECT_DIR")
+                            if project_dir:
+                                project_dir = Path(project_dir)
+                                resolved_path = (project_dir / cw_model_path).resolve()
+                                init_kwargs["cw_model_path"] = str(resolved_path)
+                                logger.info(
+                                    f"Resolved relative cw_model_path to: {resolved_path} "
+                                    f"(relative to PROJECT_DIR: {project_dir})"
+                                )
+                            else:
+                                # Fallback: try to infer project root from current working directory
+                                # or use current working directory
+                                cwd = Path.cwd()
+                                # Try to find project root by looking for conf/ directory
+                                project_root = cwd
+                                for parent in [cwd] + list(cwd.parents):
+                                    if (parent / "conf").exists():
+                                        project_root = parent
+                                        break
+                                resolved_path = (project_root / cw_model_path).resolve()
+                                init_kwargs["cw_model_path"] = str(resolved_path)
+                                logger.warning(
+                                    f"PROJECT_DIR not set, resolved relative cw_model_path to: {resolved_path} "
+                                    f"(inferred project root: {project_root})"
                                 )
 
                     if init_kwargs:

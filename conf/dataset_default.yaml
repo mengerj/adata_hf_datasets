@@ -113,20 +113,6 @@ embedding_preparation:
   # Method-specific parameters
   batch_size: 128 # Used by geneformer
 
-  # Initialization kwargs for embedders (optional)
-  # These kwargs are passed to all embedders; unused kwargs are ignored by embedders that don't need them
-  # Example for cw-geneformer:
-  # init_kwargs:
-  #   cw_model_path: "/path/to/geneformer-12L-30M"
-  #   processor_kwargs:
-  #     nproc: 4
-  #     emb_label: ["sample_name"]
-  #   model_config:
-  #     emb_mode: "cell"
-  #     emb_layer: -1
-  #     forward_batch_size: 16
-  # Optional: Method-specific kwargs (override general init_kwargs for specific methods)
-  # Use format: init_kwargs_<method> where method name uses underscores (e.g., init_kwargs_cw_geneformer)
   init_kwargs: null
 
   # Embedding dimensions (dataset-specific)
@@ -161,18 +147,6 @@ embedding_cpu:
 
   # Initialization kwargs for embedders (optional)
   # These kwargs are passed to all embedders; unused kwargs are ignored by embedders that don't need them
-  # Example for cw-geneformer:
-  # init_kwargs:
-  #   cw_model_path: "/path/to/geneformer-12L-30M"
-  #   processor_kwargs:
-  #     nproc: 4
-  #     emb_label: ["sample_name"]
-  #   model_config:
-  #     emb_mode: "cell"
-  #     emb_layer: -1
-  #     forward_batch_size: 16
-  # Optional: Method-specific kwargs (override general init_kwargs for specific methods)
-  # Use format: init_kwargs_<method> where method name uses underscores (e.g., init_kwargs_cw_geneformer)
   init_kwargs: null
 
   # Embedding dimensions (dataset-specific)
@@ -214,8 +188,9 @@ embedding_gpu:
   # Initialization kwargs for embedders (optional)
   # These kwargs are passed to all embedders; unused kwargs are ignored by embedders that don't need them
   # Example for cw-geneformer:
-  # init_kwargs:
-  #   cw_model_path: "/path/to/geneformer-12L-30M"
+  init_kwargs:
+    cw_model_path: "external/Geneformer_v1/geneformer-12L-30M" # Relative paths are resolved relative to PROJECT_DIR
+  #   # Or use absolute path: "/absolute/path/to/geneformer-12L-30M"
   #   processor_kwargs:
   #     nproc: 4
   #     emb_label: ["sample_name"]
@@ -223,9 +198,6 @@ embedding_gpu:
   #     emb_mode: "cell"
   #     emb_layer: -1
   #     forward_batch_size: 16
-  # Optional: Method-specific kwargs (override general init_kwargs for specific methods)
-  # Use format: init_kwargs_<method> where method name uses underscores (e.g., init_kwargs_cw_geneformer)
-  init_kwargs: null
 
   # Embedding dimensions (dataset-specific)
   embedding_dim_map:
