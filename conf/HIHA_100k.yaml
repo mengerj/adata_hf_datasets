@@ -49,6 +49,7 @@ embedding_preparation:
 embedding_cpu:
   # Dataset-specific parameters
   enabled: true
+  memory_gb: 120
   methods: ["pca", "scvi_fm", "gs10k"] #, "scvi_fm", "gs", "gs10k"]
 
 embedding_gpu:
