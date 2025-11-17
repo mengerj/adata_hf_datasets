@@ -28,6 +28,7 @@ other_bio_labels: []
 # Download configuration
 download:
   enabled: true
+  memory_gb: 128
   subset_size: 350000
 
 # Preprocessing overrides (both dataset-specific and execution parameters)
