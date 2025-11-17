@@ -25,6 +25,51 @@ import zarr
 logger = logging.getLogger(__name__)
 
 
+def sanitize_zarr_keys(adata: ad.AnnData) -> None:
+    """
+    Sanitize column names in .obs and .var to be compatible with Zarr.
+
+    Zarr does not allow forward slashes in keys. This function replaces
+    forward slashes with underscores in all column names.
+
+    Parameters
+    ----------
+    adata : AnnData
+        The AnnData object to sanitize (modified in-place).
+    """
+    # Sanitize .obs column names
+    obs_columns_to_rename = {
+        col: col.replace("/", "_") for col in adata.obs.columns if "/" in col
+    }
+    if obs_columns_to_rename:
+        logger.warning(
+            f"Renaming .obs columns with forward slashes for Zarr compatibility: {obs_columns_to_rename}"
+        )
+        adata.obs = adata.obs.rename(columns=obs_columns_to_rename)
+
+    # Sanitize .var column names
+    var_columns_to_rename = {
+        col: col.replace("/", "_") for col in adata.var.columns if "/" in col
+    }
+    if var_columns_to_rename:
+        logger.warning(
+            f"Renaming .var columns with forward slashes for Zarr compatibility: {var_columns_to_rename}"
+        )
+        adata.var = adata.var.rename(columns=var_columns_to_rename)
+
+    # Sanitize layer names
+    layers_to_rename = {
+        layer: layer.replace("/", "_") for layer in adata.layers.keys() if "/" in layer
+    }
+    if layers_to_rename:
+        logger.warning(
+            f"Renaming layers with forward slashes for Zarr compatibility: {layers_to_rename}"
+        )
+        for old_name, new_name in layers_to_rename.items():
+            adata.layers[new_name] = adata.layers[old_name]
+            del adata.layers[old_name]
+
+
 def add_obs_column_to_h5ad(
     infile: Union[str, Path],
     temp_out: Union[str, Path],
@@ -2076,6 +2121,10 @@ def safe_write_zarr(
     Atomically write *adata* to *target* (a directory-Zarr store),
     **overwriting** any existing store at the same path.
     """
+    # Sanitize column names to remove forward slashes (not allowed in Zarr keys)
+    # Create a copy to avoid modifying the original
+    adata = adata.copy()
+    sanitize_zarr_keys(adata)
 
     for attempt in range(1, max_retry + 1):
         tmp_dir = Path(tempfile.mkdtemp(dir=target.parent, suffix=".zarr.tmp"))

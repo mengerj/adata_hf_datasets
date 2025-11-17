@@ -12,6 +12,7 @@ from .utils import (
 from .bimodal import split_if_bimodal
 from .sra import maybe_add_sra_metadata
 from .loader import BatchChunkLoader
+from ..file_utils import sanitize_zarr_keys
 import numpy as np
 from anndata import concat
 import pandas as pd
@@ -365,6 +366,8 @@ def preprocess_h5ad(
             chunk_path = chunk_dir / f"chunk_{i}.{output_format}"
             logger.info("Writing chunk %d to %s", i, chunk_path)
             if output_format == "zarr":
+                # Sanitize column names to remove forward slashes (not allowed in Zarr keys)
+                sanitize_zarr_keys(adata_merged)
                 adata_merged.write_zarr(chunk_path)
             else:
                 adata_merged.write_h5ad(chunk_path)
