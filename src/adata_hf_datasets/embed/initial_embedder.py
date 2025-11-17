@@ -2452,6 +2452,11 @@ class CWGeneformerEmbedder(BaseEmbedder):
         self.device = device
         self._processor = None
         self._model = None
+        # create a "recources" dir in "external/Cellwhisperer"
+        external_dir = (
+            self.cw_model_path.parents[3] / "external" / "CellWhisperer" / "resources"
+        )
+        external_dir.mkdir(parents=True, exist_ok=True)
 
     def _import_cw(self):
         """Import CellWhisperer Geneformer classes dynamically."""
