@@ -8,7 +8,7 @@ defaults:
 # DATASET METADATA
 # =============================================================================
 dataset:
-  name: "human_pancreas"
+  name: "human_pancreas_luecken"
   description: "Pancreas dataset with complex batch effects (different assays) from Luecken et. al"
   download_url: https://figshare.com/ndownloader/files/24539828
   full_name: "human_pancreas_full"
@@ -28,13 +28,13 @@ other_bio_labels: []
 # =============================================================================
 # Download configuration
 download:
-  enabled: false
+  enabled: true
   subset_size: null
 
 # Preprocessing overrides (both dataset-specific and execution parameters)
 preprocessing:
   # Dataset-specific parameters
-  enabled: false
+  enabled: true
   chunk_size: 100000
   split_dataset: false # Important for training datasets. Set to false for test datasets. (Similar parameters in dataset_creation)
   count_layer_key: "counts" # Key in adata.layers with raw counts. If not present, adata.raw.X is checked.
@@ -46,10 +46,10 @@ embedding_preparation:
 
 # Embedding overrides (both dataset-specific and execution parameters)
 embedding_cpu:
-  enabled: false
+  enabled: true
   overwrite: true
   memory_gb: 120
-  methods: ["pca"] #, "scvi_fm", "gs", "gs10k"]
+  methods: ["pca", "scvi_fm", "gs10k"] #, "scvi_fm", "gs", "gs10k"]
 
 embedding_gpu:
   enabled: true
