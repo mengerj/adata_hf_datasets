@@ -17,11 +17,11 @@ dataset:
 # =============================================================================
 # COMMON KEYS (dataset-specific)
 # =============================================================================
-batch_key: "donor_id"
-annotation_key: cell_type
+batch_key: "donor"
+annotation_key: cell_ontology_class
 caption_key: null
 instrument_key: assay
-other_bio_labels: []
+other_bio_labels: ["organ_tissue", "cluster_label"]
 
 # =============================================================================
 # DATASET-SPECIFIC OVERRIDES
