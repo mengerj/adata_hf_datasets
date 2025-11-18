@@ -8,7 +8,7 @@ defaults:
 # DATASET METADATA
 # =============================================================================
 dataset:
-  name: "geo_350k" #name of the subset being used
+  name: "geo_full_v2" #name of the subset being used
   description: "GEO dataset with 700k samples, subsetted to 350k samples. Annotated with natural language descriptions obtained in CellWhisperer Study."
   download_url: "https://medical-epigenomics.org/papers/schaefer2024/data/datasets/archs4_geo/full_data.h5ad" # Example URL
   full_name: "geo_full" #name of the full dataset
@@ -28,8 +28,8 @@ other_bio_labels: []
 # Download configuration
 download:
   enabled: true
-  memory_gb: 256
-  subset_size: 350000
+  memory_gb: 128
+  subset_size: null
 
 # Preprocessing overrides (both dataset-specific and execution parameters)
 preprocessing:
