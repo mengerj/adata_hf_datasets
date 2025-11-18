@@ -1,5 +1,6 @@
 # src/my_pipeline/preprocessing.py
 import logging
+import shutil
 from pathlib import Path
 from .qc import pp_quality_control
 from .general import pp_adata_general
@@ -322,6 +323,28 @@ def preprocess_h5ad(
 
     chunk_dir = outdir
     chunk_dir.mkdir(parents=True, exist_ok=True)
+
+    # Clean existing chunk files to ensure we start fresh
+    # This prevents old chunks from interfering with new preprocessing runs
+    logger.info(f"Cleaning existing chunk files in {chunk_dir}")
+    existing_chunks = list(chunk_dir.glob(f"chunk_*.{output_format}"))
+    if existing_chunks:
+        logger.info(
+            f"Found {len(existing_chunks)} existing chunk file(s), removing them..."
+        )
+        for chunk_file in existing_chunks:
+            try:
+                if chunk_file.is_dir():  # zarr format is a directory
+                    shutil.rmtree(chunk_file)
+                    logger.debug(f"Removed existing zarr chunk directory: {chunk_file}")
+                else:  # h5ad format is a file
+                    chunk_file.unlink()
+                    logger.debug(f"Removed existing h5ad chunk file: {chunk_file}")
+            except Exception as e:
+                logger.warning(f"Failed to remove existing chunk {chunk_file}: {e}")
+        logger.info("Finished cleaning existing chunk files")
+    else:
+        logger.debug("No existing chunk files found, starting fresh")
 
     # Initialize loader based on input file format
     if infile.suffix == ".zarr":
