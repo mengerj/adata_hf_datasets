@@ -18,24 +18,24 @@ dataset:
 # COMMON KEYS (dataset-specific)
 # =============================================================================
 batch_key: "donor_id"
-annotation_key: cell_ontology_class
+annotation_key: cell_type
 caption_key: null
 instrument_key: assay
-other_bio_labels: [organ_tissue, cluster_label]
+other_bio_labels: []
 
 # =============================================================================
 # DATASET-SPECIFIC OVERRIDES
 # =============================================================================
 # Download configuration
 download:
-  enabled: false
+  enabled: true
   preserve_proportions: true
   subset_size: 100000
 
 # Preprocessing overrides (both dataset-specific and execution parameters)
 preprocessing:
   # Dataset-specific parameters
-  enabled: false
+  enabled: true
   chunk_size: 100000
   split_dataset: false # Important for training datasets. Set to false for test datasets. (Similar parameters in dataset_creation)
   count_layer_key: "decontXcounts" # Key in adata.layers with raw counts. If not present, adata.raw.X is checked.
