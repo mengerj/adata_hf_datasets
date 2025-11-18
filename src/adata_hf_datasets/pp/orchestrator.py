@@ -16,6 +16,7 @@ from ..file_utils import sanitize_zarr_keys
 import numpy as np
 from anndata import concat
 import pandas as pd
+import zarr
 
 logger = logging.getLogger(__name__)
 
@@ -369,6 +370,8 @@ def preprocess_h5ad(
                 # Sanitize column names to remove forward slashes (not allowed in Zarr keys)
                 sanitize_zarr_keys(adata_merged)
                 adata_merged.write_zarr(chunk_path)
+                # Consolidate metadata to avoid KeyError when reading
+                zarr.consolidate_metadata(chunk_path)
             else:
                 adata_merged.write_h5ad(chunk_path)
 
