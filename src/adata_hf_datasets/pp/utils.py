@@ -58,6 +58,33 @@ def delete_layers(adata: AnnData, layers_to_delete: list[str] | None = None) -> 
     return adata_processed
 
 
+def remove_all_na_columns(adata: AnnData) -> None:
+    """
+    Remove columns from .obs and .var that contain only NA values.
+
+    This function modifies the AnnData object in-place by dropping columns
+    from both .obs and .var dataframes that are entirely NA.
+
+    Parameters
+    ----------
+    adata : AnnData
+        The AnnData object to clean (modified in-place).
+    """
+    # Remove all-NA columns from .obs
+    obs_cols_before = len(adata.obs.columns)
+    adata.obs = adata.obs.dropna(axis=1, how="all")
+    obs_cols_removed = obs_cols_before - len(adata.obs.columns)
+    if obs_cols_removed > 0:
+        logger.info(f"Removed {obs_cols_removed} all-NA column(s) from .obs")
+
+    # Remove all-NA columns from .var
+    var_cols_before = len(adata.var.columns)
+    adata.var = adata.var.dropna(axis=1, how="all")
+    var_cols_removed = var_cols_before - len(adata.var.columns)
+    if var_cols_removed > 0:
+        logger.info(f"Removed {var_cols_removed} all-NA column(s) from .var")
+
+
 def consolidate_low_frequency_categories(
     adata: AnnData, columns: list | str, threshold: int, remove=False
 ):

@@ -9,6 +9,7 @@ from .utils import (
     ensure_raw_counts_layer,
     prepend_instrument_to_description,
     delete_layers,
+    remove_all_na_columns,
 )
 from .bimodal import split_if_bimodal
 from .sra import maybe_add_sra_metadata
@@ -172,6 +173,8 @@ def preprocess_adata(
                 instrument_key=instrument_key,
                 description_key=description_key,
             )
+        # Remove columns that contain only NAs
+        remove_all_na_columns(ad_sub)
         processed_splits.append(ad_sub)
 
     # Re-concatenate splits back into a single AnnData
@@ -203,6 +206,8 @@ def preprocess_adata(
             adata_merged.var[attr_name] = pd.Series(
                 {gene: attr_dict.get(gene, None) for gene in adata_merged.var_names}
             )
+        # Remove all-NA columns that may have been created during merging
+        remove_all_na_columns(adata_merged)
     else:
         adata_merged = processed_splits[0]
 
