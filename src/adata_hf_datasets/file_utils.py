@@ -29,45 +29,38 @@ def sanitize_zarr_keys(adata: ad.AnnData) -> None:
     """
     Sanitize column names in .obs and .var to be compatible with Zarr.
 
-    Zarr does not allow forward slashes in keys. This function replaces
-    forward slashes with underscores in all column names.
+    Zarr does not allow forward slashes in keys. This function removes
+    columns and layers with forward slashes from the AnnData object.
 
     Parameters
     ----------
     adata : AnnData
         The AnnData object to sanitize (modified in-place).
     """
-    # Sanitize .obs column names
-    obs_columns_to_rename = {
-        col: col.replace("/", "_") for col in adata.obs.columns if "/" in col
-    }
-    if obs_columns_to_rename:
+    # Remove .obs columns with forward slashes
+    obs_columns_to_remove = [col for col in adata.obs.columns if "/" in col]
+    if obs_columns_to_remove:
         logger.warning(
-            f"Renaming .obs columns with forward slashes for Zarr compatibility: {obs_columns_to_rename}"
+            f"Removing .obs columns with forward slashes for Zarr compatibility: {obs_columns_to_remove}"
         )
-        adata.obs = adata.obs.rename(columns=obs_columns_to_rename)
+        adata.obs = adata.obs.drop(columns=obs_columns_to_remove)
 
-    # Sanitize .var column names
-    var_columns_to_rename = {
-        col: col.replace("/", "_") for col in adata.var.columns if "/" in col
-    }
-    if var_columns_to_rename:
+    # Remove .var columns with forward slashes
+    var_columns_to_remove = [col for col in adata.var.columns if "/" in col]
+    if var_columns_to_remove:
         logger.warning(
-            f"Renaming .var columns with forward slashes for Zarr compatibility: {var_columns_to_rename}"
+            f"Removing .var columns with forward slashes for Zarr compatibility: {var_columns_to_remove}"
         )
-        adata.var = adata.var.rename(columns=var_columns_to_rename)
+        adata.var = adata.var.drop(columns=var_columns_to_remove)
 
-    # Sanitize layer names
-    layers_to_rename = {
-        layer: layer.replace("/", "_") for layer in adata.layers.keys() if "/" in layer
-    }
-    if layers_to_rename:
+    # Remove layers with forward slashes
+    layers_to_remove = [layer for layer in adata.layers.keys() if "/" in layer]
+    if layers_to_remove:
         logger.warning(
-            f"Renaming layers with forward slashes for Zarr compatibility: {layers_to_rename}"
+            f"Removing layers with forward slashes for Zarr compatibility: {layers_to_remove}"
         )
-        for old_name, new_name in layers_to_rename.items():
-            adata.layers[new_name] = adata.layers[old_name]
-            del adata.layers[old_name]
+        for layer_name in layers_to_remove:
+            del adata.layers[layer_name]
 
 
 def add_obs_column_to_h5ad(
