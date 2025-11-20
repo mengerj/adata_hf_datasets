@@ -7,7 +7,7 @@
 # =============================================================================
 workflow:
   # Execution backend: "slurm" (default, submit via SSH + SLURM) or "local" (run on this machine)
-  execution_mode: slurm
+  execution_mode: local
 
   # Transfer mode configuration
   # Set to true to use local scratch storage with transfers between clusters (faster processing, slower transfers)
@@ -34,8 +34,10 @@ workflow:
   # Node constraint for CPU jobs (optional)
   # If set, all CPU jobs will be constrained to run on this specific node
   # GPU jobs are not affected by this setting
-  # Example: "node001" or null to allow any node
-  cpu_node: imbi13
+  # Must be a node that exists in the cpu_partition (slurm)
+  # Available nodes in slurm partition: imbi3, imbi4, imbi5, imbi6, imbi7, imbi11
+  # Example: "imbi3" or null to allow any node
+  cpu_node: imbi3
 
   # Job polling interval (seconds)
   poll_interval: 3600
