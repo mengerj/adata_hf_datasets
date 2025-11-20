@@ -634,9 +634,13 @@ class WorkflowOrchestrator:
 
         logger.info(f"Using dataset config: {dataset_config_name_or_path}")
 
-        # Load dataset config to get venv_path
+        # Load dataset config to get venv_path and memory settings
         dataset_config = self._load_dataset_config(dataset_config_name_or_path)
         venv_path = self._get_venv_path(dataset_config, "download", workflow_config)
+
+        # Get memory setting from download config section
+        memory_gb = getattr(dataset_config.download, "memory_gb", 60)
+        logger.info(f"Using {memory_gb}GB memory for download step")
 
         # Determine host, partition, and node based on mode
         if execution_mode == "cpu":
@@ -668,6 +672,7 @@ class WorkflowOrchestrator:
             partition=partition,
             env_vars=env_vars,
             step_name=f"Download ({execution_mode.upper()})",
+            memory_gb=memory_gb,
             node=node,
         )
         return job_id
@@ -688,11 +693,15 @@ class WorkflowOrchestrator:
 
         logger.info(f"Using dataset config: {dataset_config_name_or_path}")
 
-        # Load dataset config to get venv_path
+        # Load dataset config to get venv_path and memory settings
         dataset_config = self._load_dataset_config(dataset_config_name_or_path)
         venv_path = self._get_venv_path(
             dataset_config, "preprocessing", workflow_config
         )
+
+        # Get memory setting from preprocessing config section
+        memory_gb = getattr(dataset_config.preprocessing, "memory_gb", 60)
+        logger.info(f"Using {memory_gb}GB memory for preprocessing step")
 
         # Determine host, partition, and node based on mode
         if execution_mode == "cpu":
@@ -725,6 +734,7 @@ class WorkflowOrchestrator:
             dependencies=dependencies,
             env_vars=env_vars,
             step_name=f"Preprocessing ({execution_mode.upper()})",
+            memory_gb=memory_gb,
             node=node,
         )
         return job_id
@@ -843,6 +853,10 @@ class WorkflowOrchestrator:
         # Load dataset config to check for multiple cs_length and caption_keys values
         dataset_config = self._load_dataset_config(dataset_config_name_or_path)
 
+        # Get memory setting from dataset_creation config section
+        memory_gb = getattr(dataset_config.dataset_creation, "memory_gb", 60)
+        logger.info(f"Using {memory_gb}GB memory for dataset creation step")
+
         # Get venv_path for this step
         venv_path = self._get_venv_path(
             dataset_config, "dataset_creation", workflow_config
@@ -951,6 +965,7 @@ class WorkflowOrchestrator:
                     dependencies=dependencies,
                     env_vars=env_vars,
                     step_name=f"{step_name} ({execution_mode.upper()})",
+                    memory_gb=memory_gb,
                     node=node,
                 )
                 job_ids.append(job_id)
@@ -2288,7 +2303,7 @@ def run_workflow_localhost(
             "--backend",
             "local",
         ]
-        step_name = f"embedding_{embedding_mode}"
+        step_name = "embedding"  # Use consistent step name for directory structure
         out_name = f"{embedding_mode}_master.out"
         err_name = f"{embedding_mode}_master.err"
         run_logged(cmd, step_name, out_name, err_name, env=env_embed)
