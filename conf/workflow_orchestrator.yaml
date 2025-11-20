@@ -9,12 +9,6 @@ workflow:
   # Execution backend: "slurm" (default, submit via SSH + SLURM) or "local" (run on this machine)
   execution_mode: slurm
 
-  # Transfer mode configuration
-  # Set to true to use local scratch storage with transfers between clusters (faster processing, slower transfers)
-  # Set to false to use shared filesystem directly (slower processing, no transfer overhead)
-  # This allows performance comparison between local scratch + transfers vs shared filesystem
-  enable_transfers: false
-
   # SSH connection settings for CPU cluster
   # Using SSH aliases from ~/.ssh/config (handles ProxyJump automatically)
   cpu_login:
@@ -31,13 +25,25 @@ workflow:
   cpu_partition: "slurm" # CPU partition on imbi13
   gpu_partition: "gpu" # GPU partition on imbi_gpu_H100
 
+  # Execution host: "cpu" or "gpu"
+  # Determines which cluster/hardware to use for ALL workflow steps (download, preprocessing, embedding, dataset creation)
+  # When set to "cpu": All steps run on the CPU cluster using cpu_partition and cpu_node (if specified)
+  # When set to "gpu": All steps run on the GPU cluster using gpu_partition and gpu_node (if specified)
+  # Note: For embedding in GPU mode, the master coordination job runs on CPU cluster, but array jobs run on GPU
+  host: cpu # Options: "cpu" or "gpu"
+
   # Node constraint for CPU jobs (optional)
   # If set, all CPU jobs will be constrained to run on this specific node
-  # GPU jobs are not affected by this setting
   # Must be a node that exists in the cpu_partition (slurm)
   # Available nodes in slurm partition: imbi3, imbi4, imbi5, imbi6, imbi7, imbi11
   # Example: "imbi3" or null to allow any node
   cpu_node: imbi3
+
+  # Node constraint for GPU jobs (optional)
+  # If set, GPU embedding jobs will be constrained to run on this specific node
+  # If null, any available GPU node will be used
+  # Example: "gpu-node-1" or null to allow any GPU node
+  gpu_node: null
 
   # Job polling interval (seconds)
   poll_interval: 3600
@@ -69,7 +75,7 @@ workflow:
   slurm_base_file_path: "/scratch/local/menger/data/RNA"
 
   # Virtual environment path (relative to project_directory) used by SLURM scripts
-  venv_path: ".venv"
+  venv_path: "/scratch/local/menger/adata_hf_datasets/venv"
 
 # =============================================================================
 # ORCHESTRATOR SETTINGS
