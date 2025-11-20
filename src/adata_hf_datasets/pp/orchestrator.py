@@ -130,6 +130,8 @@ def preprocess_adata(
 
     # Delete specified layers early in the process
     adata = delete_layers(adata, layers_to_delete)
+    # Remove columns that contain only NAs
+    remove_all_na_columns(adata)
 
     processed_splits = []
     if split_bimodal and bimodal_col in adata.obs:
@@ -173,8 +175,6 @@ def preprocess_adata(
                 instrument_key=instrument_key,
                 description_key=description_key,
             )
-        # Remove columns that contain only NAs
-        remove_all_na_columns(ad_sub)
         processed_splits.append(ad_sub)
 
     # Re-concatenate splits back into a single AnnData
