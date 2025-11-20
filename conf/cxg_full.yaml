@@ -33,7 +33,7 @@ download:
 # Preprocessing overrides (both dataset-specific and execution parameters)
 preprocessing:
   # Dataset-specific parameters
-  enabled: false
+  enabled: true
   chunk_size: 100000 #small to test many chunks
   split_dataset: true # Important for training datasets. Set to false for test datasets. (Similar parameters in dataset_creation)
   count_layer_key: "counts" # Key in adata.layers with raw counts. If not present, adata.raw.X is checked.
@@ -62,8 +62,9 @@ embedding_gpu:
 
 # Dataset creation overrides
 dataset_creation:
-  enabled: false
-  use_nextcloud: true
+  enabled: true
+  use_nextcloud: false
+  use_zenodo: true
   force_reupload: true
   private: false
   # Dataset-specific parameters

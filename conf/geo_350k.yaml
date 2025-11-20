@@ -34,7 +34,7 @@ download:
 # Preprocessing overrides (both dataset-specific and execution parameters)
 preprocessing:
   # Dataset-specific parameters
-  enabled: false
+  enabled: true
   n_chunks: 5
   chunk_size: 80000
   split_dataset: true # Important for training datasets. Set to false for test datasets. (Similar parameters in dataset_creation)
@@ -67,8 +67,9 @@ embedding_gpu:
 # Dataset creation overrides
 dataset_creation:
   memory_gb: 256
-  enabled: false
+  enabled: true
   use_nextcloud: false
+  use_zenodo: true
   # Dataset-specific parameters
   required_obsm_keys:
     ["X_pca", "X_scvi_fm", "X_gs10k", "X_geneformer", "X_geneformer-v1"]

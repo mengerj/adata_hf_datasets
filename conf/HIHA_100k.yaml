@@ -59,7 +59,7 @@ embedding_gpu:
 # Dataset creation overrides
 dataset_creation:
   # Dataset-specific parameters
-  enabled: false
+  enabled: true
   use_nextcloud: true
   required_obsm_keys:
     ["X_pca", "X_scvi_fm", "X_geneformer", "X_gs", "X_gs10k", "X_geneformer-v1"]

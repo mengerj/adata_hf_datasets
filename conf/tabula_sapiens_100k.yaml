@@ -56,7 +56,7 @@ embedding_gpu:
 
 # Dataset creation overrides
 dataset_creation:
-  enabled: false
+  enabled: true
   use_nextcloud: true
   # Dataset-specific parameters
   required_obsm_keys:
