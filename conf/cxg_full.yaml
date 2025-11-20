@@ -33,7 +33,7 @@ download:
 # Preprocessing overrides (both dataset-specific and execution parameters)
 preprocessing:
   # Dataset-specific parameters
-  enabled: true
+  enabled: false
   chunk_size: 100000 #small to test many chunks
   split_dataset: true # Important for training datasets. Set to false for test datasets. (Similar parameters in dataset_creation)
   count_layer_key: "counts" # Key in adata.layers with raw counts. If not present, adata.raw.X is checked.
@@ -48,7 +48,7 @@ preprocessing:
 # Embedding preparation overrides
 embedding_preparation:
   enabled: true # Set to false to skip embedding preparation
-  methods: ["geneformer"] #run the prepare step on cpu to save gpu time
+  methods: ["geneformer", "geneformer-v1"] #run the prepare step on cpu to save gpu time
 
 # Embedding overrides (both dataset-specific and execution parameters)
 embedding_cpu:
@@ -58,7 +58,7 @@ embedding_cpu:
 
 embedding_gpu:
   enabled: true
-  methods: ["geneformer"]
+  methods: ["geneformer", "geneformer-v1"]
 
 # Dataset creation overrides
 dataset_creation:
