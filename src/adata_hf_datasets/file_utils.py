@@ -25,6 +25,48 @@ import zarr
 logger = logging.getLogger(__name__)
 
 
+def get_zarr_store_class():
+    """
+    Get the appropriate zarr store class based on the installed zarr version.
+
+    In zarr <3, DirectoryStore is used from zarr directly.
+    In zarr >=3, LocalStore is used from zarr.storage.
+
+    Returns
+    -------
+    class
+        The appropriate zarr store class (DirectoryStore for zarr<3, LocalStore for zarr>=3)
+
+    Examples
+    --------
+    >>> StoreClass = get_zarr_store_class()
+    >>> store = StoreClass('/path/to/store')
+    """
+    try:
+        zarr_version = tuple(map(int, zarr.__version__.split(".")))
+    except (AttributeError, ValueError):
+        # Fallback: try to detect by checking if LocalStore exists
+        try:
+            from zarr.storage import LocalStore
+
+            return LocalStore
+        except ImportError:
+            from zarr import DirectoryStore
+
+            return DirectoryStore
+
+    if zarr_version < (3, 0, 0):
+        # zarr <3: use DirectoryStore from zarr
+        from zarr import DirectoryStore
+
+        return DirectoryStore
+    else:
+        # zarr >=3: use LocalStore from zarr.storage
+        from zarr.storage import LocalStore
+
+        return LocalStore
+
+
 def sanitize_zarr_keys(adata: ad.AnnData) -> None:
     """
     Sanitize column names in .obs and .var to be compatible with Zarr.

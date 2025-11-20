@@ -35,7 +35,7 @@ import anndata as ad
 import numpy as np
 
 from adata_hf_datasets.utils import setup_logging
-from adata_hf_datasets.file_utils import safe_read_h5ad
+from adata_hf_datasets.file_utils import safe_read_h5ad, get_zarr_store_class
 from adata_hf_datasets.embed import InitialEmbedder
 
 # from adata_hf_datasets.sys_monitor import SystemMonitor
@@ -112,7 +112,8 @@ def check_existing_embeddings(file_path: Path, input_format: str = "auto") -> se
 
     if format_to_use == "zarr":
         # For zarr, we can check the obsm group directly
-        store = zarr.storage.LocalStore(file_path)
+        ZarrStore = get_zarr_store_class()
+        store = ZarrStore(file_path)
         root = zarr.group(store=store)
         if "obsm" in root:
             return set(root["obsm"].keys())

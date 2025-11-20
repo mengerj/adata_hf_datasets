@@ -11,6 +11,7 @@ from adata_hf_datasets.pp.utils import (
     consolidate_low_frequency_categories,
 )
 from adata_hf_datasets.pp.pybiomart_utils import add_ensembl_ids, ensure_ensembl_index
+from adata_hf_datasets.file_utils import get_zarr_store_class
 import shutil
 import tempfile
 import uuid
@@ -1022,7 +1023,8 @@ class GeneformerEmbedder(BaseEmbedder):
             import zarr
 
             logger.debug("Trying to open zarr store from %s", file_path)
-            store = zarr.storage.LocalStore(file_path)
+            ZarrStore = get_zarr_store_class()
+            store = ZarrStore(file_path)
             logger.debug("Opened zarr store from %s", file_path)
             root = zarr.group(store=store)
             logger.debug("Opened zarr group from %s", file_path)
@@ -1083,7 +1085,8 @@ class GeneformerEmbedder(BaseEmbedder):
             # For zarr, we can read groups directly
             import zarr
 
-            store = zarr.storage.LocalStore(file_path)
+            ZarrStore = get_zarr_store_class()
+            store = ZarrStore(file_path)
             root = zarr.group(store=store)
 
             # Check var columns
@@ -1174,7 +1177,8 @@ class GeneformerEmbedder(BaseEmbedder):
         if file_format == "zarr":
             import zarr
 
-            store = zarr.storage.LocalStore(file_path)
+            ZarrStore = get_zarr_store_class()
+            store = ZarrStore(file_path)
             root = zarr.group(store=store)
             return "layers" in root and "counts" in root["layers"]
         elif file_format == "h5ad":
@@ -1215,7 +1219,8 @@ class GeneformerEmbedder(BaseEmbedder):
             import zarr
 
             # Open zarr store in read-write mode
-            store = zarr.storage.LocalStore(file_path)
+            ZarrStore = get_zarr_store_class()
+            store = ZarrStore(file_path)
             root = zarr.group(store=store, mode="r+")
 
             # Get counts array
