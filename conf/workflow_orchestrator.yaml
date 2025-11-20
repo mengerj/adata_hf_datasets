@@ -31,6 +31,12 @@ workflow:
   cpu_partition: "slurm" # CPU partition on imbi13
   gpu_partition: "gpu" # GPU partition on imbi_gpu_H100
 
+  # Node constraint for CPU jobs (optional)
+  # If set, all CPU jobs will be constrained to run on this specific node
+  # GPU jobs are not affected by this setting
+  # Example: "node001" or null to allow any node
+  cpu_node: imbi13
+
   # Job polling interval (seconds)
   poll_interval: 3600
 
@@ -40,7 +46,7 @@ workflow:
   # Output directory configuration
   # Separate paths for local and SLURM execution modes
   # The actual workflow directory will be: {output_directory}/{date}/workflow_{job_id}/
-  local_output_directory: "../outputs" # For local execution
+  local_output_directory: "./outputs" # For local execution
   slurm_output_directory: "/home/menger/git/adata_hf_datasets/outputs" # For SLURM execution
 
   # Project directory configuration
@@ -58,7 +64,7 @@ workflow:
   # Base data directories depending on backend
   # Used as default when dataset config doesn't set base_file_path explicitly
   local_base_file_path: "./data/RNA"
-  slurm_base_file_path: "/scratch/global/menger/data/RNA"
+  slurm_base_file_path: "/scratch/local/menger/data/RNA"
 
   # Virtual environment path (relative to project_directory) used by SLURM scripts
   venv_path: ".venv"
