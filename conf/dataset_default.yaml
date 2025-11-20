@@ -47,12 +47,14 @@ download:
   validate: true # Validate downloaded file format
   keep_full_file: true # Keep the full downloaded file for future subsetting
   venv_path: null # Virtual environment path (relative to project_directory). If null, uses workflow.venv_path or ".venv"
+  memory_gb: 60
 
 # =============================================================================
 # PREPROCESSING CONFIGURATION (dataset-specific overrides)
 # =============================================================================
 preprocessing:
   # Dataset-specific processing parameters
+  memory_gb: 60
   min_cells: 20 # Minimum number of cells a gene should be expressed in
   min_genes: 200 # Minimum number of genes a cell should express
   n_top_genes: 5000 # Number of top genes to select
@@ -140,6 +142,7 @@ embedding:
 # DATASET CREATION CONFIGURATION (dataset-specific overrides)
 # =============================================================================
 dataset_creation:
+  memory_gb: 60
   # Dataset structue
   dataset_name: ${dataset.name}
   raw_data_link: ${dataset.download_url}
