@@ -28,7 +28,7 @@ other_bio_labels: ["organ_tissue", "cluster_label"]
 # =============================================================================
 # Download configuration
 download:
-  enabled: true
+  enabled: false
   preserve_proportions: true
   subset_size: null
 
@@ -43,7 +43,7 @@ preprocessing:
 
 # Embedding overrides (both dataset-specific and execution parameters)
 embedding:
-  enabled: true
+  enabled: false
   methods: ["pca", "scvi_fm", "gs10k", "geneformer", "geneformer-v1"] #, "scvi_fm", "gs", "gs10k"]
 
 # Dataset creation overrides
