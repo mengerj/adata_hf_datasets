@@ -479,6 +479,7 @@ class WorkflowOrchestrator:
         env_vars: Optional[Dict[str, str]] = None,
         step_name: str = "unknown",
         memory_gb: Optional[int] = None,
+        node: Optional[str] = None,
     ) -> int:
         """Submit a SLURM job using ssh command.
 
@@ -498,6 +499,8 @@ class WorkflowOrchestrator:
             Human-readable name for the step (for logging)
         memory_gb : Optional[int]
             Memory allocation in GB (e.g., 60 for 60GB)
+        node : Optional[str]
+            Specific node to run the job on (adds --nodelist constraint)
 
         Returns
         -------
@@ -516,6 +519,10 @@ class WorkflowOrchestrator:
 
         # Add partition
         sbatch_cmd.extend(["--partition", partition])
+
+        # Add node constraint if specified
+        if node:
+            sbatch_cmd.extend(["--nodelist", node])
 
         # Add memory allocation if specified
         if memory_gb is not None:
@@ -645,12 +652,16 @@ class WorkflowOrchestrator:
             "BASE_FILE_PATH": workflow_config["base_file_path"],
         }
 
+        # Get cpu_node from config (if set, all CPU jobs will run on this node)
+        cpu_node = workflow_config.get("cpu_node")
+
         job_id = self._submit_slurm_job(
             self.cpu_login["host"],  # Use CPU cluster for download
             script_path,
             partition=workflow_config.cpu_partition,  # Use partition from config
             env_vars=env_vars,
             step_name="Download",
+            node=cpu_node,
         )
         return job_id
 
@@ -695,6 +706,9 @@ class WorkflowOrchestrator:
             "VENV_PATH": venv_path,
         }
 
+        # Get cpu_node from config (if set, all CPU jobs will run on this node)
+        cpu_node = workflow_config.get("cpu_node")
+
         job_id = self._submit_slurm_job(
             self.cpu_login["host"],  # Use CPU cluster for transfer coordination
             script_path,
@@ -702,6 +716,7 @@ class WorkflowOrchestrator:
             dependencies=dependencies,
             env_vars=env_vars,
             step_name="Transfer CPU→GPU",
+            node=cpu_node,
         )
         return job_id
 
@@ -746,6 +761,9 @@ class WorkflowOrchestrator:
             "VENV_PATH": venv_path,
         }
 
+        # Get cpu_node from config (if set, all CPU jobs will run on this node)
+        cpu_node = workflow_config.get("cpu_node")
+
         job_id = self._submit_slurm_job(
             self.cpu_login["host"],  # Use CPU cluster for transfer coordination
             script_path,
@@ -753,6 +771,7 @@ class WorkflowOrchestrator:
             dependencies=dependencies,
             env_vars=env_vars,
             step_name="Transfer GPU→CPU",
+            node=cpu_node,
         )
         return job_id
 
@@ -789,6 +808,9 @@ class WorkflowOrchestrator:
             "BASE_FILE_PATH": workflow_config["base_file_path"],
         }
 
+        # Get cpu_node from config (if set, all CPU jobs will run on this node)
+        cpu_node = workflow_config.get("cpu_node")
+
         job_id = self._submit_slurm_job(
             self.cpu_login["host"],  # Use CPU cluster for preprocessing
             script_path,
@@ -796,6 +818,7 @@ class WorkflowOrchestrator:
             dependencies=dependencies,
             env_vars=env_vars,
             step_name="Preprocessing",
+            node=cpu_node,
         )
         return job_id
 
@@ -828,6 +851,9 @@ class WorkflowOrchestrator:
             dataset_config, "embedding_preparation", workflow_config
         )
 
+        # Get cpu_node from config (if set, all CPU jobs will run on this node)
+        cpu_node = workflow_config.get("cpu_node")
+
         # Pass the dataset config name, workflow directory, and mode settings as environment variables
         env_vars = {
             "DATASET_CONFIG": dataset_config_name_or_path,
@@ -844,6 +870,12 @@ class WorkflowOrchestrator:
             ),
             "VENV_PATH": venv_path,
         }
+        # Pass cpu_node to embed_launcher if set
+        if cpu_node:
+            env_vars["CPU_NODE"] = cpu_node
+
+        # Get cpu_node from config (if set, all CPU jobs will run on this node)
+        cpu_node = workflow_config.get("cpu_node")
 
         job_id = self._submit_slurm_job(
             self.cpu_login["host"],  # Use CPU cluster for preparation
@@ -853,6 +885,7 @@ class WorkflowOrchestrator:
             env_vars=env_vars,
             step_name="Embedding Preparation",
             memory_gb=memory_gb,
+            node=cpu_node,
         )
         return job_id
 
@@ -885,6 +918,9 @@ class WorkflowOrchestrator:
             dataset_config, "embedding_cpu", workflow_config
         )
 
+        # Get cpu_node from config (if set, all CPU jobs will run on this node)
+        cpu_node = workflow_config.get("cpu_node")
+
         # Pass the dataset config name, workflow directory, and mode settings as environment variables
         env_vars = {
             "DATASET_CONFIG": dataset_config_name_or_path,
@@ -901,6 +937,12 @@ class WorkflowOrchestrator:
             ),
             "VENV_PATH": venv_path,
         }
+        # Pass cpu_node to embed_launcher if set
+        if cpu_node:
+            env_vars["CPU_NODE"] = cpu_node
+
+        # Get cpu_node from config (if set, all CPU jobs will run on this node)
+        cpu_node = workflow_config.get("cpu_node")
 
         job_id = self._submit_slurm_job(
             self.cpu_login["host"],  # Use CPU cluster for CPU embedding
@@ -910,6 +952,7 @@ class WorkflowOrchestrator:
             env_vars=env_vars,
             step_name="CPU Embedding",
             memory_gb=memory_gb,
+            node=cpu_node,
         )
         return job_id
 
@@ -963,6 +1006,8 @@ class WorkflowOrchestrator:
             "VENV_PATH": venv_path,
         }
 
+        # GPU embedding master job: do NOT apply cpu_node constraint
+        # (this is a coordination job that submits GPU array jobs)
         job_id = self._submit_slurm_job(
             self.cpu_login[
                 "host"
@@ -973,6 +1018,7 @@ class WorkflowOrchestrator:
             env_vars=env_vars,
             step_name="GPU Embedding",
             memory_gb=memory_gb,
+            node=None,  # Explicitly exclude from cpu_node constraint
         )
         return job_id
 
@@ -1065,6 +1111,9 @@ class WorkflowOrchestrator:
                     f"Submitting dataset creation job with cs_length={cs_length}, caption_key={caption_key_value}"
                 )
 
+                # Get cpu_node from config (if set, all CPU jobs will run on this node)
+                cpu_node = workflow_config.get("cpu_node")
+
                 # Pass the dataset config name, workflow directory, and specific overrides
                 env_vars = {
                     "DATASET_CONFIG": dataset_config_name_or_path,
@@ -1090,6 +1139,7 @@ class WorkflowOrchestrator:
                     dependencies=dependencies,
                     env_vars=env_vars,
                     step_name=step_name,
+                    node=cpu_node,
                 )
                 job_ids.append(job_id)
 
@@ -2280,6 +2330,9 @@ def resolve_workflow_config(
         "execution_mode": execution_mode,
         "cpu_partition": workflow_config.get("cpu_partition", "slurm"),
         "gpu_partition": workflow_config.get("gpu_partition", "gpu"),
+        "cpu_node": workflow_config.get(
+            "cpu_node"
+        ),  # Optional node constraint for CPU jobs
         "venv_path": workflow_config.get("venv_path", ".venv"),
         "enable_transfers": workflow_config.get("enable_transfers", False),
         "local_max_workers": workflow_config.get("local_max_workers", 4),

@@ -241,6 +241,11 @@ class EmbeddingLauncher:
                     "--cpus-per-task=4",
                 ]
             )
+            # Add node constraint for CPU jobs if CPU_NODE is set
+            cpu_node = os.environ.get("CPU_NODE")
+            if cpu_node:
+                sbatch_cmd.extend(["--nodelist", cpu_node])
+                logger.info(f"🔍 DEBUG: CPU node constraint: {cpu_node}")
         elif self.mode == "gpu":
             sbatch_cmd.extend(
                 [
@@ -249,6 +254,7 @@ class EmbeddingLauncher:
                     "--gres=gpu:1",
                 ]
             )
+            # GPU jobs are not constrained by cpu_node
 
         # Add partition if specified
         if partition:
