@@ -968,6 +968,9 @@ class WorkflowOrchestrator:
             f"Starting workflow for dataset config: {dataset_config_name_or_path}"
         )
 
+        # Store workflow config for use in _wait_for_job_completion
+        self.workflow_config = workflow_config
+
         # Ensure base path is available for any config transformations in this process
         try:
             os.environ["BASE_FILE_PATH"] = workflow_config["base_file_path"]
@@ -1096,6 +1099,9 @@ class WorkflowOrchestrator:
         self.workflow_logger = WorkflowLogger(
             base_dir, master_job_id, dataset_config_name_or_path, workflow_config
         )
+
+        # Store workflow config for use in _wait_for_job_completion
+        self.workflow_config = workflow_config
 
         logger.info(
             f"Starting local workflow for dataset config: {dataset_config_name_or_path}"
@@ -1302,18 +1308,60 @@ class WorkflowOrchestrator:
         logger.info("Job cancellation complete")
 
     def _wait_for_job_completion(
-        self, host: str, job_id: int, step_name: str, timeout_hours: int = 144
+        self,
+        host: str,
+        job_id: int,
+        step_name: str,
+        timeout_hours: Optional[int] = None,
+        poll_interval: Optional[int] = None,
     ) -> None:
-        """Wait for a SLURM job to complete and check for errors."""
+        """Wait for a SLURM job to complete and check for errors.
+
+        Parameters
+        ----------
+        host : str
+            SSH host where the job is running
+        job_id : int
+            SLURM job ID to wait for
+        step_name : str
+            Human-readable name for the step (for logging)
+        timeout_hours : Optional[int]
+            Maximum time to wait in hours. If None, uses workflow_config.job_timeout.
+            If 0, no timeout (wait indefinitely).
+        poll_interval : Optional[int]
+            How often to check job status in seconds. If None, uses workflow_config.poll_interval.
+        """
+        # Get timeout and poll interval from workflow config if not provided
+        if timeout_hours is None:
+            if hasattr(self, "workflow_config") and self.workflow_config:
+                job_timeout_seconds = self.workflow_config.get("job_timeout", 0)
+                if job_timeout_seconds > 0:
+                    timeout_hours = (
+                        job_timeout_seconds // 3600
+                    )  # Convert seconds to hours
+                else:
+                    timeout_hours = 0  # 0 means no timeout
+            else:
+                timeout_hours = 0  # Default: no timeout if config not available
+
+        if poll_interval is None:
+            if hasattr(self, "workflow_config") and self.workflow_config:
+                poll_interval = self.workflow_config.get(
+                    "poll_interval", 600
+                )  # Default 10 minutes
+            else:
+                poll_interval = 600  # Default 10 minutes if config not available
+
+        timeout_str = f"{timeout_hours}h" if timeout_hours > 0 else "no timeout"
         logger.info(
-            f"Waiting for {step_name} job {job_id} to complete (timeout: {timeout_hours}h)..."
+            f"Waiting for {step_name} job {job_id} to complete (timeout: {timeout_str}, checking every {poll_interval}s)..."
         )
 
         import time
 
         start_time = time.time()
-        timeout_seconds = timeout_hours * 3600
-        check_interval = 600  # check every 10 minutes
+        timeout_seconds = timeout_hours * 3600 if timeout_hours > 0 else float("inf")
+        check_interval = poll_interval
 
         while True:
             # Check if we've exceeded the timeout
@@ -1483,10 +1531,15 @@ class WorkflowOrchestrator:
 
             # Job is still running, wait a bit
             elapsed_minutes = int(elapsed_time / 60)
-            remaining_minutes = int((timeout_seconds - elapsed_time) / 60)
-            logger.info(
-                f"  {step_name} job {job_id} still running... (elapsed: {elapsed_minutes}m, remaining: {remaining_minutes}m)"
-            )
+            if timeout_hours > 0:
+                remaining_minutes = int((timeout_seconds - elapsed_time) / 60)
+                logger.info(
+                    f"  {step_name} job {job_id} still running... (elapsed: {elapsed_minutes}m, remaining: {remaining_minutes}m)"
+                )
+            else:
+                logger.info(
+                    f"  {step_name} job {job_id} still running... (elapsed: {elapsed_minutes}m)"
+                )
             time.sleep(check_interval)
 
     def _check_job_status_fallback(
@@ -2005,6 +2058,8 @@ def resolve_workflow_config(
         "local_enable_gpu": workflow_config.get("local_enable_gpu", False),
         "cpu_login": workflow_config.get("cpu_login"),
         "gpu_login": workflow_config.get("gpu_login"),
+        "poll_interval": workflow_config.get("poll_interval", 600),
+        "job_timeout": workflow_config.get("job_timeout", 0),
     }
 
     return OmegaConf.create(resolved)

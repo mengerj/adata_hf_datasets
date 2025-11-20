@@ -46,10 +46,17 @@ workflow:
   gpu_node: null
 
   # Job polling interval (seconds)
-  poll_interval: 3600
+  # How often the master job checks if a submitted SLURM job has finished
+  # Default: 600 seconds (10 minutes)
+  # Lower values = more frequent checks (faster detection of completion, more SSH overhead)
+  # Higher values = less frequent checks (less SSH overhead, slower detection of completion)
+  poll_interval: 120 # Check every 2 minutes
 
   # Timeout for job completion (seconds, 0 = no timeout)
-  job_timeout: 0
+  # Maximum time to wait for a job to complete before timing out
+  # If 0, wait indefinitely (no timeout)
+  # If > 0, timeout after this many seconds
+  job_timeout: 0 # No timeout (wait indefinitely)
 
   # Output directory configuration
   # Separate paths for local and SLURM execution modes
