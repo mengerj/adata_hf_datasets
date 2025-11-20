@@ -2042,6 +2042,7 @@ def resolve_workflow_config(
         )
         project_directory = workflow_config.get("local_project_directory", ".")
         base_file_path = workflow_config.get("local_base_file_path", "./data/RNA")
+        venv_path = workflow_config.get("local_venv_path", ".venv")
     else:  # slurm
         output_directory = workflow_config.get(
             "slurm_output_directory", "/home/menger/git/adata_hf_datasets/outputs"
@@ -2052,6 +2053,7 @@ def resolve_workflow_config(
         base_file_path = workflow_config.get(
             "slurm_base_file_path", "/scratch/global/menger/data/RNA"
         )
+        venv_path = workflow_config.get("slurm_venv_path", ".venv")
 
     # Create resolved config with all values
     resolved = {
@@ -2068,7 +2070,7 @@ def resolve_workflow_config(
         "gpu_node": workflow_config.get(
             "gpu_node"
         ),  # Optional node constraint for GPU jobs
-        "venv_path": workflow_config.get("venv_path", ".venv"),
+        "venv_path": venv_path,  # Resolved based on execution_mode
         "local_max_workers": workflow_config.get("local_max_workers", 4),
         "local_enable_gpu": workflow_config.get("local_enable_gpu", False),
         "cpu_login": workflow_config.get("cpu_login"),
