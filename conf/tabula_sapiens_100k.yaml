@@ -28,7 +28,7 @@ other_bio_labels: ["organ_tissue", "cluster_label"]
 # =============================================================================
 # Download configuration
 download:
-  enabled: false
+  enabled: true
   preserve_proportions: true
   subset_size: 100000
 
@@ -42,7 +42,7 @@ preprocessing:
 
 # Embedding preparation overrides
 embedding_preparation:
-  enabled: true # Set to false to skip embedding preparation
+  enabled: false # Set to false to skip embedding preparation
   methods: ["geneformer-v1", "geneformer"] #run the prepare step on cpu to save gpu time
 
 # Embedding overrides (both dataset-specific and execution parameters)
@@ -52,7 +52,7 @@ embedding_cpu:
   methods: ["pca", "scvi_fm", "gs10k"] #, "scvi_fm", "gs", "gs10k"]
 
 embedding_gpu:
-  enabled: true
+  enabled: false
   methods: ["geneformer-v1", "geneformer"]
 
 # Dataset creation overrides
