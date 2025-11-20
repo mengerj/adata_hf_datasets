@@ -11,14 +11,14 @@ from omegaconf import DictConfig
 from hydra.core.hydra_config import HydraConfig
 import os
 
-import adata_hf_datasets.pp as pp
 from adata_hf_datasets.pp.plotting import qc_evaluation_plots
+from adata_hf_datasets.pp.loader import BatchChunkLoader
+from adata_hf_datasets.pp.orchestrator import preprocess_adata
 
 # from adata_hf_datasets.sys_monitor import SystemMonitor
 from adata_hf_datasets.utils import subset_sra_and_plot
 from adata_hf_datasets.workflow import apply_all_transformations, validate_config
-from adata_hf_datasets.file_utils import safe_write_h5ad
-from adata_hf_datasets.pp.utils import safe_read_h5ad_backed
+from adata_hf_datasets.file_utils import sanitize_zarr_keys
 
 # Disable HDF5 file locking to prevent BlockingIOError on shared filesystems
 os.environ["HDF5_USE_FILE_LOCKING"] = "FALSE"
@@ -122,217 +122,208 @@ def main(cfg: DictConfig):
     # monitor.daemon = True  # to terminate the thread when the main thread exits
     # monitor.start()
 
-    ad_bk = None  # Initialize to None for proper cleanup
-    current_ad_bk = None  # Initialize current AnnData for loop cleanup
+    # Extract configuration parameters
+    enable_plotting = preprocess_cfg.get("enable_plotting", True)
+    split_dataset = preprocess_cfg.get("split_dataset", False)
+    output_format = preprocess_cfg.get("output_format", "zarr")
+    n_chunks = preprocess_cfg.get("n_chunks", None)
+
+    # Use batch_key from top level if available, otherwise from preprocessing
+    batch_key = cfg.get("batch_key", preprocess_cfg.get("batch_key"))
+
+    # Use instrument_key from top level if available, otherwise from preprocessing
+    instrument_key = cfg.get("instrument_key", preprocess_cfg.get("instrument_key"))
+
+    # Use caption_key from top level if available, otherwise from preprocessing
+    caption_key = cfg.get("caption_key", preprocess_cfg.get("description_key"))
+
+    # Decide split function
+    split_fn = (
+        import_callable(preprocess_cfg.split_fn)
+        if preprocess_cfg.get("split_fn", None)
+        else default_split_fn
+    )
+
+    logger.info("Split dataset? %s", split_dataset)
+    if n_chunks is not None:
+        logger.info(f"Limiting processing to {n_chunks} chunks")
+
+    # Determine input file format
+    if infile.suffix == ".zarr":
+        file_format = "zarr"
+    else:
+        file_format = "h5ad"
+
+    # Create BatchChunkLoader - this is the first step
+    logger.info("Creating BatchChunkLoader for chunked processing")
+    loader = BatchChunkLoader(
+        path=infile,
+        chunk_size=int(preprocess_cfg.chunk_size),
+        batch_key=batch_key,
+        file_format=file_format,
+    )
+
+    # Track chunk indices for each split
+    chunk_counters = {"train": 0, "val": 0, "all": 0}
+    chunks_processed = 0
+    first_chunk_for_plotting = None
+
+    # Process each chunk from the loader
     try:
-        ## Add a sample index without loading the whole object into memory
-        # temp_infile = add_sample_index_to_h5ad(
-        #    infile=infile, temp_out=out_dir / f"{input_stem}_temp_input.h5ad"
-        # )
-        ad_bk = safe_read_h5ad_backed(infile)
+        for chunk_idx, adata_chunk in enumerate(loader):
+            # Check if we've reached the chunk limit
+            if n_chunks is not None and chunks_processed >= n_chunks:
+                logger.info(
+                    f"Reached chunk limit ({n_chunks}). Stopping processing after {chunks_processed} chunks."
+                )
+                break
 
-        # Plot some quality control plots prior to processing (if enabled).
-        enable_plotting = preprocess_cfg.get("enable_plotting", True)
-        if enable_plotting:
-            subset_sra_and_plot(
-                adata_bk=ad_bk, cfg=preprocess_cfg, run_dir=run_dir + "/before"
-            )
-        else:
-            logger.info("Plotting is disabled. Skipping pre-processing plots.")
+            logger.info(f"Processing chunk {chunk_idx} with {adata_chunk.n_obs} cells")
 
-        # 3) Decide split function
-        split_fn = (
-            import_callable(preprocess_cfg.split_fn)
-            if preprocess_cfg.get("split_fn", None)
-            else default_split_fn
-        )
-        logger.info("Split dataset? %s", preprocess_cfg.split_dataset)
+            # Store first chunk for plotting if enabled
+            if enable_plotting and first_chunk_for_plotting is None:
+                first_chunk_for_plotting = adata_chunk.copy()
 
-        subsets = {}
-        if preprocess_cfg.split_dataset:
-            train_idx, val_idx = split_fn(
-                ad_bk,
-                float(preprocess_cfg.train_split),
-                int(preprocess_cfg.random_seed),
-            )
-            subsets["train"] = train_idx
-            subsets["val"] = val_idx
-            logger.info("Train/val sizes: %d / %d", len(train_idx), len(val_idx))
-        else:
-            subsets["all"] = list(range(ad_bk.n_obs))
-            logger.info("No split; processing full dataset of %d cells", ad_bk.n_obs)
+            # Split chunk into train/val if requested
+            if split_dataset:
+                train_idx, val_idx = split_fn(
+                    adata_chunk,
+                    float(preprocess_cfg.train_split),
+                    int(preprocess_cfg.random_seed),
+                )
+                logger.info(
+                    f"Chunk {chunk_idx} split: train={len(train_idx)}, val={len(val_idx)}"
+                )
 
-        # Close the backed file; we'll re-open for each slice
-        ad_bk.file.close()
-        del ad_bk  # Explicitly delete reference to ensure file is released
+                splits = {
+                    "train": (adata_chunk[train_idx], train_idx),
+                    "val": (adata_chunk[val_idx], val_idx),
+                }
+            else:
+                splits = {"all": (adata_chunk, list(range(adata_chunk.n_obs)))}
 
-        # Helper: write a slice of the backed file to disk using direct approach
-        def write_subset(indices: list[int], name: str) -> Path:
-            """
-            Write a subset of cells to disk using direct approach.
-            This is simpler and more reliable than chunked writing.
-            """
-            out_path = out_dir / f"{name}_input.h5ad"
-            logger.info(
-                "Writing subset '%s' with %d cells to %s",
-                name,
-                len(indices),
-                out_path,
-            )
+            # Process each split
+            for split_name, (split_adata, split_indices) in splits.items():
+                if len(split_indices) == 0:
+                    logger.info(
+                        f"Skipping empty {split_name} split for chunk {chunk_idx}"
+                    )
+                    continue
 
-            ad_backed = None
-            try:
-                # Open the backed file
-                ad_backed = safe_read_h5ad_backed(infile)
+                # Create output directory for this split
+                out_dir_split = out_dir / split_name
+                out_dir_split.mkdir(parents=True, exist_ok=True)
 
-                # Create the subset directly
-                ad_subset = ad_backed[indices]
+                # Get chunk index for this split
+                chunk_counter = chunk_counters[split_name]
+                chunk_path = out_dir_split / f"chunk_{chunk_counter}.{output_format}"
 
-                # Write the subset
-                safe_write_h5ad(ad_subset, out_path, compression="gzip")
-
-                logger.info("Successfully wrote subset to %s", out_path)
-                return out_path
-
-            except Exception as e:
-                logger.error("Failed to write subset '%s': %s", name, e)
-                raise e
-            finally:
-                # Ensure file handles are properly closed and clean up temporary files
-                if ad_backed is not None:
-                    try:
-                        if hasattr(ad_backed, "file") and ad_backed.file is not None:
-                            ad_backed.file.close()
-                        # Clean up temporary local copy if it exists
-                        if (
-                            hasattr(ad_backed, "_temp_local_copy")
-                            and ad_backed._temp_local_copy is not None
-                            and ad_backed._temp_local_copy.exists()
-                        ):
-                            logger.info(
-                                f"Cleaning up temporary local copy: {ad_backed._temp_local_copy}"
-                            )
-                            ad_backed._temp_local_copy.unlink()
-                    except Exception as cleanup_error:
-                        logger.warning(f"Error during cleanup: {cleanup_error}")
-                    try:
-                        del ad_backed
-                    except Exception:
-                        pass
-
-        # 4) Write each subset to its own input file using direct approach
-        subset_files = {name: write_subset(idx, name) for name, idx in subsets.items()}
-
-        # 5) Now preprocess each subset on disk via your chunked pipeline
-        current_ad_bk = None  # Track current AnnData for cleanup
-        for name, path_in in subset_files.items():
-            out_dir_split = out_dir / name
-            logger.info("Preprocessing %s → %s", path_in, out_dir)
-            output_format = preprocess_cfg.get("output_format", "zarr")
-
-            # Use batch_key from top level if available, otherwise from preprocessing
-            batch_key = cfg.get("batch_key", preprocess_cfg.get("batch_key"))
-
-            # Use instrument_key from top level if available, otherwise from preprocessing
-            instrument_key = cfg.get(
-                "instrument_key", preprocess_cfg.get("instrument_key")
-            )
-
-            # Use caption_key from top level if available, otherwise from preprocessing
-            caption_key = cfg.get("caption_key", preprocess_cfg.get("description_key"))
-            logger.info("SRA Settings:")
-            logger.info(f"SRA chunk size: {preprocess_cfg.get('sra_chunk_size', None)}")
-            logger.info(f"SRA extra cols: {preprocess_cfg.get('sra_extra_cols', None)}")
-            logger.info(
-                f"Skip SRA fetch: {preprocess_cfg.get('skip_sra_fetch', False)}"
-            )
-            logger.info(f"SRA max retries: {preprocess_cfg.get('sra_max_retries', 3)}")
-            logger.info(
-                f"SRA continue on fail: {preprocess_cfg.get('sra_continue_on_fail', False)}"
-            )
-
-            n_chunks = preprocess_cfg.get("n_chunks", None)
-            if n_chunks is not None:
-                logger.info(f"Limiting processing to {n_chunks} chunks")
-
-            pp.preprocess_h5ad(
-                path_in,
-                out_dir_split,
-                chunk_size=int(preprocess_cfg.chunk_size),
-                min_cells=int(preprocess_cfg.min_cells),
-                min_genes=int(preprocess_cfg.min_genes),
-                batch_key=batch_key,
-                count_layer_key=preprocess_cfg.count_layer_key,
-                n_top_genes=int(preprocess_cfg.n_top_genes),
-                consolidation_categories=list(preprocess_cfg.consolidation_categories)
-                if preprocess_cfg.consolidation_categories
-                else None,
-                category_threshold=preprocess_cfg.get("category_threshold", 1),
-                remove_low_frequency=preprocess_cfg.get("remove_low_frequency", False),
-                geneformer_pp=bool(preprocess_cfg.geneformer_pp),
-                sra_chunk_size=preprocess_cfg.get("sra_chunk_size", None),
-                sra_extra_cols=preprocess_cfg.get("sra_extra_cols", None),
-                skip_sra_fetch=preprocess_cfg.get("skip_sra_fetch", False),
-                sra_max_retries=preprocess_cfg.get("sra_max_retries", 3),
-                sra_continue_on_fail=preprocess_cfg.get("sra_continue_on_fail", False),
-                instrument_key=instrument_key,
-                description_key=caption_key,
-                bimodal_col=preprocess_cfg.get("bimodal_col", None),
-                split_bimodal=bool(preprocess_cfg.get("split_bimodal", False)),
-                output_format=output_format,
-                layers_to_delete=preprocess_cfg.get("layers_to_delete", None),
-                n_chunks=n_chunks,
-            )
-            logger.info("Preprocessing %s → %s", path_in, out_dir_split)
-
-            # Clean up previous iteration's AnnData if exists
-            if current_ad_bk is not None:
                 try:
-                    if (
-                        hasattr(current_ad_bk, "file")
-                        and current_ad_bk.file is not None
-                    ):
-                        current_ad_bk.file.close()
-                    del current_ad_bk
-                except Exception:
-                    pass  # Ignore cleanup errors
+                    # Preprocess the split chunk
+                    logger.info(
+                        f"Preprocessing {split_name} split of chunk {chunk_idx} ({split_adata.n_obs} cells)"
+                    )
 
-            if output_format == "h5ad":
-                # If using h5ad, we need to close the file before reading it
-                current_ad_bk = anndata.read_h5ad(
-                    out_dir_split / f"chunk_0.{output_format}", backed="r"
-                )
-            else:
-                current_ad_bk = anndata.read_zarr(
-                    out_dir_split / f"chunk_0.{output_format}"
-                )
+                    processed_adata = preprocess_adata(
+                        split_adata,
+                        min_cells=int(preprocess_cfg.min_cells),
+                        min_genes=int(preprocess_cfg.min_genes),
+                        batch_key=batch_key,
+                        count_layer_key=preprocess_cfg.count_layer_key,
+                        n_top_genes=int(preprocess_cfg.n_top_genes),
+                        consolidation_categories=list(
+                            preprocess_cfg.consolidation_categories
+                        )
+                        if preprocess_cfg.consolidation_categories
+                        else None,
+                        category_threshold=preprocess_cfg.get("category_threshold", 1),
+                        remove_low_frequency=preprocess_cfg.get(
+                            "remove_low_frequency", False
+                        ),
+                        geneformer_pp=bool(preprocess_cfg.geneformer_pp),
+                        sra_chunk_size=preprocess_cfg.get("sra_chunk_size", None),
+                        sra_extra_cols=preprocess_cfg.get("sra_extra_cols", None),
+                        skip_sra_fetch=preprocess_cfg.get("skip_sra_fetch", False),
+                        sra_max_retries=preprocess_cfg.get("sra_max_retries", 3),
+                        sra_continue_on_fail=preprocess_cfg.get(
+                            "sra_continue_on_fail", False
+                        ),
+                        instrument_key=instrument_key,
+                        description_key=caption_key,
+                        bimodal_col=preprocess_cfg.get("bimodal_col", None),
+                        split_bimodal=bool(preprocess_cfg.get("split_bimodal", False)),
+                        layers_to_delete=preprocess_cfg.get("layers_to_delete", None),
+                    )
 
-            # Plot some quality control plots after processing (if enabled)
-            if enable_plotting:
-                qc_evaluation_plots(
-                    current_ad_bk,
-                    save_plots=True,
-                    save_dir=run_dir + "/after",
-                    metrics_of_interest=list(preprocess_cfg.metrics_of_interest),
-                    categories_of_interest=list(preprocess_cfg.categories_of_interest)
-                    if preprocess_cfg.categories_of_interest
-                    else None,
-                )
-            else:
-                logger.info("Plotting is disabled. Skipping post-processing plots.")
-            # Close the file handle for this iteration
-            if hasattr(current_ad_bk, "file") and current_ad_bk.file is not None:
-                current_ad_bk.file.close()
+                    # Write processed chunk
+                    logger.info(
+                        f"Writing {split_name} chunk {chunk_counter} to {chunk_path}"
+                    )
+                    if output_format == "zarr":
+                        sanitize_zarr_keys(processed_adata)
+                        processed_adata.write_zarr(chunk_path)
+                    else:
+                        processed_adata.write_h5ad(chunk_path)
 
-        # Update ad_bk for cleanup in finally block
-        ad_bk = current_ad_bk
+                    chunk_counters[split_name] += 1
+
+                except Exception as e:
+                    logger.error(
+                        f"Error processing {split_name} split of chunk {chunk_idx}: {e}"
+                    )
+                    continue
+
+            chunks_processed += 1
+
+        logger.info(f"Finished processing {chunks_processed} chunks")
+        logger.info(f"Chunk counts: {chunk_counters}")
+
+        # Plotting (if enabled)
+        if enable_plotting and first_chunk_for_plotting is not None:
+            # Pre-processing plots
+            logger.info("Generating pre-processing plots")
+            subset_sra_and_plot(
+                adata_bk=first_chunk_for_plotting,
+                cfg=preprocess_cfg,
+                run_dir=run_dir + "/before",
+            )
+
+            # Post-processing plots (read first processed chunk)
+            logger.info("Generating post-processing plots")
+            # Determine which split to use for plotting
+            plot_split = (
+                "train" if split_dataset and (out_dir / "train").exists() else "all"
+            )
+            plot_dir = out_dir / plot_split
+
+            if plot_dir.exists():
+                # Find first chunk file
+                chunk_files = sorted(plot_dir.glob(f"chunk_*.{output_format}"))
+                if chunk_files:
+                    if output_format == "h5ad":
+                        plot_adata = anndata.read_h5ad(chunk_files[0], backed="r")
+                    else:
+                        plot_adata = anndata.read_zarr(chunk_files[0])
+
+                    qc_evaluation_plots(
+                        plot_adata,
+                        save_plots=True,
+                        save_dir=run_dir + "/after",
+                        metrics_of_interest=list(preprocess_cfg.metrics_of_interest),
+                        categories_of_interest=list(
+                            preprocess_cfg.categories_of_interest
+                        )
+                        if preprocess_cfg.categories_of_interest
+                        else None,
+                    )
+
+                    # Clean up
+                    if hasattr(plot_adata, "file") and plot_adata.file is not None:
+                        plot_adata.file.close()
+        elif not enable_plotting:
+            logger.info("Plotting is disabled. Skipping all plots.")
 
         logger.info("Done. Outputs in %s", out_dir)
-
-        # Clean up temporary input split files
-        for path_in in subset_files.values():
-            logger.info("Removing temporary file: %s", path_in)
-            path_in.unlink()
 
         # Save system monitor metrics
     except Exception as e:
@@ -346,43 +337,9 @@ def main(cfg: DictConfig):
         # monitor.save(run_dir)
         sys.exit(1)
     finally:
-        # Safely close any remaining file handles and clean up local copies
-        try:
-            # Clean up both ad_bk and current_ad_bk if they exist
-            for var_name, var_obj in [
-                ("ad_bk", ad_bk),
-                ("current_ad_bk", current_ad_bk),
-            ]:
-                if var_obj is not None:
-                    try:
-                        if hasattr(var_obj, "file") and var_obj.file is not None:
-                            var_obj.file.close()
-                        # Clean up temporary local copy if it exists
-                        if (
-                            hasattr(var_obj, "_temp_local_copy")
-                            and var_obj._temp_local_copy is not None
-                            and var_obj._temp_local_copy.exists()
-                        ):
-                            logger.info(
-                                f"Cleaning up temporary local copy for {var_name}: {var_obj._temp_local_copy}"
-                            )
-                            var_obj._temp_local_copy.unlink()
-                    except Exception as cleanup_error:
-                        logger.warning(
-                            f"Error during final cleanup of {var_name}: {cleanup_error}"
-                        )
-
-            # Always stop monitor and save results
-            # try:
-            # monitor.stop()
-            # monitor.print_summary()
-            # monitor.save(run_dir)
-            # monitor.plot_metrics(run_dir)
-            # except Exception as monitor_error:
-            #    logger.warning(f"Error during monitor cleanup: {monitor_error}")
-
-        except Exception as final_error:
-            logger.error(f"Critical error during final cleanup: {final_error}")
+        # Cleanup is handled automatically by the BatchChunkLoader
+        # which closes file handles when iteration completes
+        pass
 
 
 if __name__ == "__main__":
