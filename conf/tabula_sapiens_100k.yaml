@@ -8,7 +8,7 @@ defaults:
 # DATASET METADATA
 # =============================================================================
 dataset:
-  name: "tabula_sapiens_100k"
+  name: "tabula_sapiens_schafer"
   description: "Tabula Sapiens dataset as used in schafer et al."
   download_url: https://medical-epigenomics.org/papers/schaefer2024/data/datasets/tabula_sapiens/cellxgene.h5ad
   full_name: "tabula_sapiens_schafer"
@@ -30,13 +30,14 @@ other_bio_labels: ["organ_tissue", "cluster_label"]
 download:
   enabled: true
   preserve_proportions: true
-  subset_size: 100000
+  subset_size: null
 
 # Preprocessing overrides (both dataset-specific and execution parameters)
 preprocessing:
   # Dataset-specific parameters
   enabled: true
   chunk_size: 100000
+  n_chunks: 1
   split_dataset: false # Important for training datasets. Set to false for test datasets. (Similar parameters in dataset_creation)
   count_layer_key: "decontXcounts" # Key in adata.layers with raw counts. If not present, adata.raw.X is checked.
 

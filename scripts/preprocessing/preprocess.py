@@ -131,10 +131,14 @@ def main(cfg: DictConfig):
         # )
         ad_bk = safe_read_h5ad_backed(infile)
 
-        # Plot some quality control plots prior to processing.
-        subset_sra_and_plot(
-            adata_bk=ad_bk, cfg=preprocess_cfg, run_dir=run_dir + "/before"
-        )
+        # Plot some quality control plots prior to processing (if enabled).
+        enable_plotting = preprocess_cfg.get("enable_plotting", True)
+        if enable_plotting:
+            subset_sra_and_plot(
+                adata_bk=ad_bk, cfg=preprocess_cfg, run_dir=run_dir + "/before"
+            )
+        else:
+            logger.info("Plotting is disabled. Skipping pre-processing plots.")
 
         # 3) Decide split function
         split_fn = (
@@ -247,6 +251,10 @@ def main(cfg: DictConfig):
                 f"SRA continue on fail: {preprocess_cfg.get('sra_continue_on_fail', False)}"
             )
 
+            n_chunks = preprocess_cfg.get("n_chunks", None)
+            if n_chunks is not None:
+                logger.info(f"Limiting processing to {n_chunks} chunks")
+
             pp.preprocess_h5ad(
                 path_in,
                 out_dir_split,
@@ -273,6 +281,7 @@ def main(cfg: DictConfig):
                 split_bimodal=bool(preprocess_cfg.get("split_bimodal", False)),
                 output_format=output_format,
                 layers_to_delete=preprocess_cfg.get("layers_to_delete", None),
+                n_chunks=n_chunks,
             )
             logger.info("Preprocessing %s → %s", path_in, out_dir_split)
 
@@ -298,16 +307,19 @@ def main(cfg: DictConfig):
                     out_dir_split / f"chunk_0.{output_format}"
                 )
 
-            # Plot some quality control plots after processing
-            qc_evaluation_plots(
-                current_ad_bk,
-                save_plots=True,
-                save_dir=run_dir + "/after",
-                metrics_of_interest=list(preprocess_cfg.metrics_of_interest),
-                categories_of_interest=list(preprocess_cfg.categories_of_interest)
-                if preprocess_cfg.categories_of_interest
-                else None,
-            )
+            # Plot some quality control plots after processing (if enabled)
+            if enable_plotting:
+                qc_evaluation_plots(
+                    current_ad_bk,
+                    save_plots=True,
+                    save_dir=run_dir + "/after",
+                    metrics_of_interest=list(preprocess_cfg.metrics_of_interest),
+                    categories_of_interest=list(preprocess_cfg.categories_of_interest)
+                    if preprocess_cfg.categories_of_interest
+                    else None,
+                )
+            else:
+                logger.info("Plotting is disabled. Skipping post-processing plots.")
             # Close the file handle for this iteration
             if hasattr(current_ad_bk, "file") and current_ad_bk.file is not None:
                 current_ad_bk.file.close()

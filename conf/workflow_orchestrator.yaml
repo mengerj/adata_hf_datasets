@@ -7,7 +7,7 @@
 # =============================================================================
 workflow:
   # Execution backend: "slurm" (default, submit via SSH + SLURM) or "local" (run on this machine)
-  execution_mode: slurm
+  execution_mode: local
 
   # SSH connection settings for CPU cluster
   # Using SSH aliases from ~/.ssh/config (handles ProxyJump automatically)

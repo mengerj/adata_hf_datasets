@@ -239,6 +239,7 @@ def preprocess_h5ad(
     split_bimodal: bool = False,
     output_format: str = "zarr",
     layers_to_delete: list[str] | None = None,
+    n_chunks: int | None = None,
 ) -> None:
     """
     Preprocess a large AnnData file in chunks and writes each chunk to disk.
@@ -308,6 +309,9 @@ def preprocess_h5ad(
     layers_to_delete : list[str] | None, optional
         List of layer names to delete from adata.layers. If None, no layers are deleted.
         Passed to `preprocess_adata`.
+    n_chunks : int | None, optional
+        Maximum number of chunks to process. If None, all chunks are processed.
+        If set, processing stops after this many chunks have been processed and written to disk.
 
     Notes
     -----
@@ -363,7 +367,15 @@ def preprocess_h5ad(
             infile, chunk_size, batch_key=batch_key, file_format="h5ad"
         )
 
+    chunks_processed = 0
     for i, adata in enumerate(loader):
+        # Check if we've reached the chunk limit
+        if n_chunks is not None and chunks_processed >= n_chunks:
+            logger.info(
+                f"Reached chunk limit ({n_chunks}). Stopping processing after {chunks_processed} chunks."
+            )
+            break
+
         try:
             logger.info("Preprocessing chunk %d", i)
             # Process the chunk using the main preprocessing function
@@ -400,8 +412,15 @@ def preprocess_h5ad(
             else:
                 adata_merged.write_h5ad(chunk_path)
 
+            chunks_processed += 1
+
         except Exception as e:
             logger.error(f"Error processing chunk {i}: {e}")
             continue
 
-    logger.info("Finished processing all chunks")
+    if n_chunks is not None:
+        logger.info(
+            f"Finished processing {chunks_processed} chunk(s) (limit: {n_chunks})"
+        )
+    else:
+        logger.info(f"Finished processing all chunks ({chunks_processed} total)")
