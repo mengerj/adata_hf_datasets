@@ -193,6 +193,7 @@ def submit_local_workflow(
 
     if foreground:
         logging.info("Running local master in foreground...")
+        logging.info("Press Ctrl+C to stop the workflow")
         subprocess.run(cmd, cwd=str(project_dir), env=env, check=False)
     else:
         logging.info(
@@ -202,6 +203,8 @@ def submit_local_workflow(
         log_dir.mkdir(parents=True, exist_ok=True)
         stdout_path = log_dir / "workflow_master.out"
         stderr_path = log_dir / "workflow_master.err"
+        pid_file = log_dir / "workflow_master.pid"
+
         # Build background command with caffeinate if available (prevents sleep)
         bg_cmd = ["nohup"]
         if shutil.which("caffeinate"):
@@ -212,7 +215,7 @@ def submit_local_workflow(
             )
         bg_cmd += cmd
         with open(stdout_path, "a") as out_f, open(stderr_path, "a") as err_f:
-            subprocess.Popen(
+            process = subprocess.Popen(
                 bg_cmd,
                 cwd=str(project_dir),
                 env=env,
@@ -220,9 +223,24 @@ def submit_local_workflow(
                 stderr=err_f,
                 start_new_session=True,
             )
-        logging.info(f"Logs: {str(log_dir)}")
 
-    logging.info(f"Outputs will be under: {str(base_out)}")
+        # Save PID to file
+        pid = process.pid
+        with open(pid_file, "w") as f:
+            f.write(f"{pid}\n")
+
+        # Log kill command
+        kill_cmd = f"kill {pid}"
+        logging.info(f"Logs: {str(log_dir)}")
+        logging.info(f"Outputs will be under: {str(base_out)}")
+        logging.info("=" * 80)
+        logging.info("WORKFLOW RUNNING IN BACKGROUND")
+        logging.info("=" * 80)
+        logging.info(f"Process ID (PID): {pid}")
+        logging.info(f"To stop this workflow, run: {kill_cmd}")
+        logging.info(f"Or use: kill $(cat {pid_file})")
+        logging.info(f"PID file: {pid_file}")
+        logging.info("=" * 80)
 
 
 def main():

@@ -2372,6 +2372,8 @@ def run_workflow_localhost(
     This mirrors the step ordering and logging of run_workflow_local, but executes
     each step via local subprocesses and bounded parallelism inside the step scripts.
     """
+    import signal
+
     logger.info(
         f"Starting localhost workflow for dataset config: {dataset_config_name_or_path}"
     )
@@ -2395,6 +2397,38 @@ def run_workflow_localhost(
     def project_root() -> Path:
         return Path(__file__).resolve().parents[3]
 
+    # Track active subprocesses for cleanup
+    active_processes: List[subprocess.Popen] = []
+    current_step_name: Optional[str] = None
+
+    def signal_handler(signum, frame):
+        """Handle termination signals by killing all subprocesses."""
+        logger.warning(
+            f"Received signal {signum}, terminating workflow and subprocesses..."
+        )
+        for proc in active_processes:
+            if proc.poll() is None:  # Process is still running
+                logger.info(
+                    f"Terminating subprocess {proc.pid} (step: {current_step_name})"
+                )
+                try:
+                    proc.terminate()
+                    # Wait a bit for graceful termination
+                    try:
+                        proc.wait(timeout=5)
+                    except subprocess.TimeoutExpired:
+                        logger.warning(f"Force killing subprocess {proc.pid}")
+                        proc.kill()
+                except Exception as e:
+                    logger.error(f"Error terminating subprocess {proc.pid}: {e}")
+        # Re-raise the signal to exit
+        signal.signal(signum, signal.SIG_DFL)
+        os.kill(os.getpid(), signum)
+
+    # Register signal handlers
+    signal.signal(signal.SIGTERM, signal_handler)
+    signal.signal(signal.SIGINT, signal_handler)
+
     def run_logged(
         cmd: List[str],
         step: str,
@@ -2402,23 +2436,44 @@ def run_workflow_localhost(
         err_name: str,
         env: Optional[Dict[str, str]] = None,
     ) -> None:
+        nonlocal current_step_name
+        current_step_name = step
         job_id = master_job_id
         step_dir = workflow_logger.get_step_log_dir(step, job_id)
         step_dir.mkdir(parents=True, exist_ok=True)
         stdout_path = step_dir / out_name
         stderr_path = step_dir / err_name
         logger.info(f"Executing local step '{step}': {' '.join(cmd)}")
+
         with open(stdout_path, "w") as out_f, open(stderr_path, "w") as err_f:
-            result = subprocess.run(
+            # Use Popen instead of run to track the process
+            proc = subprocess.Popen(
                 cmd,
                 cwd=str(project_root()),
                 env=env,
                 text=True,
                 stdout=out_f,
                 stderr=err_f,
+                start_new_session=False,  # Keep in same process group for signal propagation
             )
-        if result.returncode != 0:
-            raise RuntimeError(f"Step {step} failed with exit code {result.returncode}")
+            active_processes.append(proc)
+            try:
+                result = proc.wait()
+                active_processes.remove(proc)
+            except KeyboardInterrupt:
+                logger.warning(
+                    f"Interrupted during step '{step}', terminating subprocess..."
+                )
+                proc.terminate()
+                try:
+                    proc.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    proc.kill()
+                active_processes.remove(proc)
+                raise
+
+        if result != 0:
+            raise RuntimeError(f"Step {step} failed with exit code {result}")
 
     # Load dataset config to check flags
     # Reuse internal config loader
