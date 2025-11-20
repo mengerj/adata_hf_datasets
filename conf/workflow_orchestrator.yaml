@@ -30,7 +30,7 @@ workflow:
   # When set to "cpu": All steps run on the CPU cluster using cpu_partition and cpu_node (if specified)
   # When set to "gpu": All steps run on the GPU cluster using gpu_partition and gpu_node (if specified)
   # Note: For embedding in GPU mode, the master coordination job runs on CPU cluster, but array jobs run on GPU
-  host: cpu # Options: "cpu" or "gpu"
+  host: gpu # Options: "cpu" or "gpu"
 
   # Node constraint for CPU jobs (optional)
   # If set, all CPU jobs will be constrained to run on this specific node
