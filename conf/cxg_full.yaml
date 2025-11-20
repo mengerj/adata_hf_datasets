@@ -48,17 +48,17 @@ preprocessing:
 # Embedding preparation overrides
 embedding_preparation:
   enabled: true # Set to false to skip embedding preparation
-  methods: ["geneformer-v1", "geneformer"] #run the prepare step on cpu to save gpu time
+  methods: ["geneformer"] #run the prepare step on cpu to save gpu time
 
 # Embedding overrides (both dataset-specific and execution parameters)
 embedding_cpu:
   enabled: true
-  overwrite: true
+  overwrite: false
   methods: ["gs10k", "scvi_fm", "pca"] #, "scvi_fm", "gs", "gs10k"]
 
 embedding_gpu:
   enabled: true
-  methods: ["geneformer-v1", "geneformer"]
+  methods: ["geneformer"]
 
 # Dataset creation overrides
 dataset_creation:
