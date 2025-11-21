@@ -34,7 +34,7 @@ download:
 # Preprocessing overrides (both dataset-specific and execution parameters)
 preprocessing:
   # Dataset-specific parameters
-  enabled: true
+  enabled: false
   n_chunks: 1
   chunk_size: 80000
   split_dataset: true # Important for training datasets. Set to false for test datasets. (Similar parameters in dataset_creation)
