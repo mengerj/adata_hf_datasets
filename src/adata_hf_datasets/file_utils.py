@@ -25,6 +25,86 @@ import zarr
 logger = logging.getLogger(__name__)
 
 
+def get_zarr_store_class():
+    """
+    Get the appropriate zarr store class based on the installed zarr version.
+
+    In zarr <3, DirectoryStore is used from zarr directly.
+    In zarr >=3, LocalStore is used from zarr.storage.
+
+    Returns
+    -------
+    class
+        The appropriate zarr store class (DirectoryStore for zarr<3, LocalStore for zarr>=3)
+
+    Examples
+    --------
+    >>> StoreClass = get_zarr_store_class()
+    >>> store = StoreClass('/path/to/store')
+    """
+    try:
+        zarr_version = tuple(map(int, zarr.__version__.split(".")))
+    except (AttributeError, ValueError):
+        # Fallback: try to detect by checking if LocalStore exists
+        try:
+            from zarr.storage import LocalStore
+
+            return LocalStore
+        except ImportError:
+            from zarr import DirectoryStore
+
+            return DirectoryStore
+
+    if zarr_version < (3, 0, 0):
+        # zarr <3: use DirectoryStore from zarr
+        from zarr import DirectoryStore
+
+        return DirectoryStore
+    else:
+        # zarr >=3: use LocalStore from zarr.storage
+        from zarr.storage import LocalStore
+
+        return LocalStore
+
+
+def sanitize_zarr_keys(adata: ad.AnnData) -> None:
+    """
+    Sanitize column names in .obs and .var to be compatible with Zarr.
+
+    Zarr does not allow forward slashes in keys. This function removes
+    columns and layers with forward slashes from the AnnData object.
+
+    Parameters
+    ----------
+    adata : AnnData
+        The AnnData object to sanitize (modified in-place).
+    """
+    # Remove .obs columns with forward slashes
+    obs_columns_to_remove = [col for col in adata.obs.columns if "/" in col]
+    if obs_columns_to_remove:
+        logger.warning(
+            f"Removing .obs columns with forward slashes for Zarr compatibility: {obs_columns_to_remove}"
+        )
+        adata.obs = adata.obs.drop(columns=obs_columns_to_remove)
+
+    # Remove .var columns with forward slashes
+    var_columns_to_remove = [col for col in adata.var.columns if "/" in col]
+    if var_columns_to_remove:
+        logger.warning(
+            f"Removing .var columns with forward slashes for Zarr compatibility: {var_columns_to_remove}"
+        )
+        adata.var = adata.var.drop(columns=var_columns_to_remove)
+
+    # Remove layers with forward slashes
+    layers_to_remove = [layer for layer in adata.layers.keys() if "/" in layer]
+    if layers_to_remove:
+        logger.warning(
+            f"Removing layers with forward slashes for Zarr compatibility: {layers_to_remove}"
+        )
+        for layer_name in layers_to_remove:
+            del adata.layers[layer_name]
+
+
 def add_obs_column_to_h5ad(
     infile: Union[str, Path],
     temp_out: Union[str, Path],
@@ -2076,6 +2156,10 @@ def safe_write_zarr(
     Atomically write *adata* to *target* (a directory-Zarr store),
     **overwriting** any existing store at the same path.
     """
+    # Sanitize column names to remove forward slashes (not allowed in Zarr keys)
+    # Create a copy to avoid modifying the original
+    adata = adata.copy()
+    sanitize_zarr_keys(adata)
 
     for attempt in range(1, max_retry + 1):
         tmp_dir = Path(tempfile.mkdtemp(dir=target.parent, suffix=".zarr.tmp"))

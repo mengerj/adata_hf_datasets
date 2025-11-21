@@ -57,8 +57,11 @@ embedding_cpu:
   methods: ["gs10k"] #, "scvi_fm", "gs", "gs10k"]
 
 embedding_gpu:
-  enabled: false
-  methods: ["geneformer", "geneformer-v1"]
+  enabled: true
+  venv_path: "cw_gf"
+  init_kwargs:
+    cw_model_path: "/h/menger/git/adata_hf_datasets/external/Geneformer_v1/geneformer-12L-30M"
+  methods: ["cw-geneformer"]
 
 # Dataset creation overrides
 dataset_creation:
@@ -70,7 +73,12 @@ dataset_creation:
   force_reupload: true
   private: false
   # Dataset-specific parameters
-  required_obsm_keys: ["X_gs10k", "X_geneformer", "X_geneformer-v1"] #["X_pca", "X_scvi_fm", "X_geneformer", "X_gs10k", "X_geneformer-v1"]
+  required_obsm_keys: [
+      "X_gs10k",
+      "X_geneformer",
+      "X_geneformer-v1",
+      "X_cw-geneformer",
+    ] #["X_pca", "X_scvi_fm", "X_geneformer", "X_gs10k", "X_geneformer-v1"]
   cs_length: 4096
   caption_keys: "caption_key"
   negatives_per_sample: 2

@@ -6,55 +6,56 @@ defaults:
 
 # =============================================================================
 # DATASET METADATA
-# =============================================================================
+# =============================================================================+
+#base_file_path: "/Users/mengerj/repos/adata_hf_datasets/data/RNA"
+
 dataset:
-  name: "tabula_sapiens_50k"
-  description: "Tabula Sapiens dataset as used in schafer et al."
-  download_url: https://medical-epigenomics.org/papers/schaefer2024/data/datasets/tabula_sapiens/cellxgene.h5ad
-  full_name: "tabula_sapiens_schafer"
+  name: "human_disease_schaefer"
+  description: "Human disease dataset annoted in Schaefer et al. 2024"
+  download_url: https://medical-epigenomics.org/papers/schaefer2024/data/datasets/human_disease/rnaseq._.samples.h5ad
+  full_name: "human_disease_full"
   # file_path will be auto-generated as: data/RNA/raw/test/tabula_sapiens_bone_marrow_10k.h5ad
 
 # =============================================================================
 # COMMON KEYS (dataset-specific)
 # =============================================================================
-batch_key: "donor"
-annotation_key: cell_ontology_class
+batch_key: "sra_study_acc"
+annotation_key: null
 caption_key: null
-instrument_key: assay
-other_bio_labels: [organ_tissue, cluster_label]
+instrument_key: null
+other_bio_labels: []
 
 # =============================================================================
 # DATASET-SPECIFIC OVERRIDES
 # =============================================================================
 # Download configuration
 download:
-  enabled: false
-  preserve_proportions: true
-  subset_size: 50000
+  enabled: true
+  subset_size: null
 
 # Preprocessing overrides (both dataset-specific and execution parameters)
 preprocessing:
   # Dataset-specific parameters
-  enabled: false
+  enabled: true
   chunk_size: 100000
   split_dataset: false # Important for training datasets. Set to false for test datasets. (Similar parameters in dataset_creation)
-  count_layer_key: "decontXcounts" # Key in adata.layers with raw counts. If not present, adata.raw.X is checked.
+  count_layer_key: "counts" # Key in adata.layers with raw counts. If not present, adata.raw.X is checked.
 
 # Embedding preparation overrides
 embedding_preparation:
   enabled: true # Set to false to skip embedding preparation
-  methods: ["geneformer-v1"] #run the prepare step on cpu to save gpu time
+  methods: ["geneformer-v1", "geneformer"] #run the prepare step on cpu to save gpu time
 
 # Embedding overrides (both dataset-specific and execution parameters)
 embedding_cpu:
-  enabled: false
+  enabled: true
   overwrite: true
   memory_gb: 120
-  methods: ["pca"] #, "scvi_fm", "gs", "gs10k"]
+  methods: ["pca", "scvi_fm", "gs10k"] #, "scvi_fm", "gs", "gs10k"]
 
 embedding_gpu:
   enabled: true
-  methods: ["geneformer-v1"]
+  methods: ["geneformer-v1", "geneformer"]
 
 # Dataset creation overrides
 dataset_creation:
@@ -62,7 +63,7 @@ dataset_creation:
   use_nextcloud: true
   # Dataset-specific parameters
   required_obsm_keys:
-    ["X_pca", "X_scvi_fm", "X_geneformer", "X_gs", "X_gs10k", "X_geneformer-v1"]
+    ["X_pca", "X_scvi_fm", "X_geneformer", "X_gs10k", "X_geneformer-v1"]
   cs_length: 4096
   negatives_per_sample: 2
   split_dataset: false # Important for training datasets. Set to false for test datasets.

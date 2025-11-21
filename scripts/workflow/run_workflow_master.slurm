@@ -27,19 +27,22 @@ cd "$PROJECT_DIR"
 VENV_PATH=${VENV_PATH:-.venv}
 source "$VENV_PATH"/bin/activate
 
-# Get output directory from config
+# Get output directory from config (using resolved config based on execution mode)
 OUTPUT_DIR=$(python -c "
 import sys
+import os
 from pathlib import Path
 sys.path.insert(0, str(Path.cwd() / 'src'))
 from hydra import compose, initialize_config_dir
+from adata_hf_datasets.workflow import resolve_workflow_config
 
 config_path = str(Path.cwd() / 'conf')
 with initialize_config_dir(config_dir=config_path, version_base=None):
     workflow_config = compose(config_name='workflow_orchestrator')
-    output_dir = workflow_config.workflow.get('output_directory', '/home/menger/git/adata_hf_datasets/outputs')
-    project_dir = workflow_config.workflow.get('project_directory', '/home/menger/git/adata_hf_datasets')
-    print(output_dir)
+    workflow_section = workflow_config.get('workflow', {})
+    execution_mode = os.environ.get('EXECUTION_MODE', workflow_section.get('execution_mode', 'slurm'))
+    resolved_config = resolve_workflow_config(workflow_section, execution_mode)
+    print(resolved_config['output_directory'])
 ")
 
 # ─────────────────────────────────────────────────────────────────────────────

@@ -20,7 +20,7 @@ import shutil
 
 def main():
     parser = argparse.ArgumentParser(description="Submit local workflow master")
-    parser.add_argument("--config-name", required=True, help="Dataset config name")
+    parser.add_argument("--config", required=True, help="Dataset config name or path")
     parser.add_argument(
         "--foreground",
         action="store_true",
@@ -55,7 +55,7 @@ def main():
     cmd = [
         sys.executable,
         "scripts/workflow/run_workflow_master.py",
-        args.config_name,
+        args.config,
     ]
 
     env = os.environ.copy()

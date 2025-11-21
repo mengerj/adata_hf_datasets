@@ -180,13 +180,13 @@ This will download a .h5ad, preprocess it, run several embedders and create a Hu
 source .venv/bin/activate
 
 # Run workflow in foreground (recommended for first runs)
-python scripts/workflow/submit_workflow_local.py \
-    --config-name dataset_config_example \
+python scripts/workflow/submit_workflow.py \
+    --config dataset_config_example \
     --foreground
 
 # Or run in background (detached)
-python scripts/workflow/submit_workflow_local.py \
-    --config-name dataset_config_example
+python scripts/workflow/submit_workflow.py \
+    --config dataset_config_example
 ```
 
 ### Monitor Progress
@@ -385,76 +385,60 @@ The workflow orchestrator configuration defines **where and how to run** the pip
 
 **Configuration file:** [`conf/workflow_orchestrator.yaml`](conf/workflow_orchestrator.yaml)
 
+#### Key Concept: Unified Configuration
+
+You can now configure **both local and SLURM paths simultaneously** in the same config file. Simply change the `execution_mode` to switch between them - no need to manually edit paths or use different scripts!
+
 #### Execution Mode
 
-Choose between local execution or SLURM cluster:
+Choose between local execution or SLURM cluster by setting `execution_mode`:
 
 ```yaml
 workflow:
   execution_mode: "local" # or "slurm"
 ```
 
-#### Local Execution Settings
+The submission script automatically uses the appropriate paths based on this setting.
 
-For running on your local machine (macOS/Linux):
+#### Complete Configuration Example
+
+Here's a complete configuration with both local and SLURM settings:
 
 ```yaml
 workflow:
+  # Switch between "local" and "slurm" to change execution mode
   execution_mode: "local"
 
-  # Output directory for logs and results
-  output_directory: "/Users/username/repos/adata_hf_datasets/outputs"
-
-  # Base directory for data files
-  local_base_file_path: "/Users/username/repos/adata_hf_datasets/data/RNA"
-
-  # Parallel processing settings
-  local_max_workers: 2 # Number of parallel workers
+  # Local execution settings
+  local_output_directory: "../outputs" # Output directory for local runs
+  local_project_directory: "." # Project directory for local runs (relative to script location)
+  local_base_file_path: "./data/RNA" # Base data directory for local runs
+  local_max_workers: 2 # Number of parallel workers for local execution
   local_enable_gpu: false # Enable GPU embedding locally (requires CUDA)
 
-  # Project directory
-  project_directory: "/Users/username/repos/adata_hf_datasets"
-
-  # Virtual environment path (relative to project_directory)
-  venv_path: ".venv"
-```
-
-#### SLURM Cluster Settings
-
-Before attempting to run on slurm, you have make sure that the repository is installed on the cluster. Follow the same steps as locally to install. UV can be installed without sudo rights.
-
-For running on SLURM clusters:
-
-```yaml
-workflow:
-  execution_mode: "slurm"
-
-  # SSH connection settings for CPU cluster
+  # SLURM execution settings
   cpu_login:
     host: "cpu_cluster" # SSH host (must be in ~/.ssh/config)
     user: "username"
-
-  # SSH connection settings for GPU cluster
   gpu_login:
     host: "gpu_cluster" # SSH host (must be in ~/.ssh/config)
     user: "username"
+  cpu_partition: "slurm" # CPU partition name (check with `sinfo`)
+  gpu_partition: "gpu" # GPU partition name (check with `sinfo`)
+  slurm_output_directory: "/home/username/outputs" # Output directory on cluster
+  slurm_project_directory: "/home/username/adata_hf_datasets" # Project directory on cluster
+  slurm_base_file_path: "/scratch/global/username/data/RNA" # Base data directory (must be accessible by both clusters!)
 
-  # SLURM partition names (cluster-specific)
-  cpu_partition: "slurm" # CPU partition name
-  gpu_partition: "gpu" # GPU partition name
-
-  # Output directory (on cluster, accessible by both CPU and GPU nodes)
-  output_directory: "/home/username/outputs"
-
-  # Base data directory (must be accessible by both CPU and GPU nodes)
-  slurm_base_file_path: "/scratch/global/username/data/RNA"
-
-  # Project directory on cluster
-  project_directory: "/home/username/adata_hf_datasets"
-
-  # Virtual environment path (relative to project_directory)
-  venv_path: ".venv"
+  # Shared settings
+  venv_path: ".venv" # Virtual environment path (relative to project_directory)
+  enable_transfers: false # Use shared filesystem (recommended)
 ```
+
+**Benefits:**
+
+- ✅ Configure both environments once, switch with one line
+- ✅ No need to manually edit paths when switching modes
+- ✅ Use the same submission script for both modes
 
 #### Important Notes for SLURM
 
@@ -488,13 +472,16 @@ For running the complete pipeline on your local machine:
 
 1. **Configure for local execution:**
 
-Edit `conf/workflow_orchestrator.yaml`:
+Edit `conf/workflow_orchestrator.yaml` and set `execution_mode: "local"`:
 
 ```yaml
 workflow:
-  execution_mode: "local"
-  output_directory: "/Users/username/repos/adata_hf_datasets/outputs"
-  local_base_file_path: "/Users/username/repos/adata_hf_datasets/data/RNA"
+  execution_mode: "local" # Switch to local mode
+
+  # Local paths (already configured above)
+  local_output_directory: "../outputs"
+  local_project_directory: "."
+  local_base_file_path: "./data/RNA"
   local_max_workers: 2
   local_enable_gpu: false # Set to true if you have CUDA-capable GPU
 ```
@@ -530,20 +517,37 @@ embedding_cpu:
 source .venv/bin/activate
 
 # Run workflow in foreground (recommended for first runs)
-python scripts/workflow/submit_workflow_local.py \
-    --config-name my_dataset \
+# You can use either a config name or a path:
+python scripts/workflow/submit_workflow.py \
+    --config my_dataset \
+    --foreground
+
+# Or use a relative path:
+python scripts/workflow/submit_workflow.py \
+    --config conf/my_dataset.yaml \
+    --foreground
+
+# Or use an absolute path:
+python scripts/workflow/submit_workflow.py \
+    --config /absolute/path/to/my_dataset.yaml \
     --foreground
 
 # Or run in background (detached)
-python scripts/workflow/submit_workflow_local.py \
-    --config-name my_dataset
+python scripts/workflow/submit_workflow.py \
+    --config my_dataset
 ```
+
+**Note:** The `--config` argument accepts either:
+
+- A config name (e.g., `my_dataset`) - looks for `conf/my_dataset.yaml`
+- A relative path (e.g., `conf/my_dataset.yaml`) - relative to project root
+- An absolute path (e.g., `/path/to/config.yaml`) - full file path
 
 **What happens:**
 
 - The workflow runs each step sequentially
 - Steps are executed based on the `enabled` flags in your dataset config
-- Logs are written to `outputs/{date}/workflow_{timestamp}/`
+- Logs are written to `{local_output_directory}/{date}/workflow_{timestamp}/`
 - Data files are written to the `local_base_file_path` directory
 
 ### SLURM Cluster Execution
@@ -567,27 +571,27 @@ ssh gpu_cluster "hostname"
 
 2. **Configure for SLURM:**
 
-Edit `conf/workflow_orchestrator.yaml`:
+Edit `conf/workflow_orchestrator.yaml` and set `execution_mode: "slurm"`:
 
 ```yaml
 workflow:
-  execution_mode: "slurm"
+  execution_mode: "slurm" # Switch to SLURM mode
 
+  # SLURM paths (already configured above)
   cpu_login:
     host: "cpu_cluster" # Your CPU cluster SSH alias
     user: "username"
-
   gpu_login:
     host: "gpu_cluster" # Your GPU cluster SSH alias
     user: "username"
-
   cpu_partition: "slurm" # Check with `sinfo` on your cluster
   gpu_partition: "gpu" # Check with `sinfo` on your cluster
-
-  output_directory: "/home/username/outputs"
+  slurm_output_directory: "/home/username/outputs"
+  slurm_project_directory: "/home/username/adata_hf_datasets"
   slurm_base_file_path: "/scratch/global/username/data/RNA" # Must be accessible by both clusters!
-  project_directory: "/home/username/adata_hf_datasets"
 ```
+
+**Note:** Before attempting to run on SLURM, make sure that the repository is installed on the cluster. Follow the same steps as locally to install. UV can be installed without sudo rights.
 
 3. **Ensure the repository is synced on the cluster:**
 
@@ -607,10 +611,17 @@ exit
 4. **Submit the workflow:**
 
 ```bash
-# From your local machine
+# From your local machine (same script as local mode!)
+# You can use either a config name or a path:
 python scripts/workflow/submit_workflow.py \
-    --config-name my_dataset
+    --config my_dataset
+
+# Or use a path:
+python scripts/workflow/submit_workflow.py \
+    --config conf/my_dataset.yaml
 ```
+
+**Note:** The `--config` argument accepts either a config name or a file path (relative or absolute), just like in local mode.
 
 **What happens:**
 
@@ -622,7 +633,7 @@ python scripts/workflow/submit_workflow.py \
 
 **Output location:**
 
-- Logs: `{output_directory}/{date}/workflow_{job_id}/`
+- Logs: `{slurm_output_directory}/{date}/workflow_{job_id}/`
 - Data: `{slurm_base_file_path}/` (organized into `raw/`, `processed/`, `processed_with_emb/`)
 
 ---
@@ -879,7 +890,7 @@ python scripts/preprocessing/preprocess.py --config-name my_dataset
 
 # Run CPU embedding only
 python scripts/embed/embed_core.py \
-    --config-name my_dataset \
+    --config my_dataset \
     ++embedding_config_section=embedding_cpu
 
 # Run dataset creation only
@@ -893,8 +904,8 @@ See individual step documentation for more details.
 Override any configuration parameter via command line:
 
 ```bash
-python scripts/workflow/submit_workflow_local.py \
-    --config-name my_dataset \
+python scripts/workflow/submit_workflow.py \
+    --config my_dataset \
     ++preprocessing.chunk_size=50000 \
     ++embedding_cpu.methods='["pca"]' \
     ++dataset_creation.push_to_hub=false
@@ -941,8 +952,8 @@ embedding_preparation:
 Or via command line:
 
 ```bash
-python scripts/workflow/submit_workflow_local.py \
-    --config-name my_dataset \
+python scripts/workflow/submit_workflow.py \
+    --config my_dataset \
     ++preprocessing.enabled=false \
     ++embedding_preparation.enabled=false
 ```
@@ -1281,7 +1292,7 @@ cd /path/to/adata_hf_datasets
 ls conf/my_dataset.yaml
 
 # Use config name without .yaml extension
-python scripts/workflow/submit_workflow_local.py --config-name my_dataset
+python scripts/workflow/submit_workflow_local.py --config my_dataset
 ```
 
 **Problem:** "base_file_path is not set"
