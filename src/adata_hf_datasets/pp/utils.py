@@ -333,8 +333,8 @@ def deduplicate_samples_by_id(adata: AnnData, sample_id_key: str) -> AnnData:
 def ensure_raw_counts_layer(
     adata: AnnData,
     raw_layer_key: str | None = None,
-    raise_on_missing: bool = False,
-) -> None:
+    raise_on_missing: bool = True,
+) -> AnnData:
     """
     Guarantee that `adata.X` and `adata.layers['counts']` contain the raw count matrix.
 
@@ -355,12 +355,18 @@ def ensure_raw_counts_layer(
     Parameters
     ----------
     adata
-        AnnData to check/modify in place.
+        AnnData to process.
     raw_layer_key
         Optional key in `adata.layers` from which to source raw counts.
     raise_on_missing
         If True, raises ValueError when no valid raw counts are found;
-        otherwise just logs an error and leaves `adata` unchanged.
+        otherwise just logs an error and returns the original adata unchanged.
+
+    Returns
+    -------
+    AnnData
+        AnnData object with raw counts in X and layers['counts'].
+        If raw.raw has more genes than adata, returns a new object with all raw genes.
 
     Raises
     ------
@@ -375,40 +381,59 @@ def ensure_raw_counts_layer(
         )
         # Handle case where adata.raw might have more variables than adata
         if adata.raw.n_vars > adata.n_vars:
-            # Find intersection of variable names between raw and current adata
-            common_vars = adata.var_names.intersection(adata.raw.var_names)
-            if len(common_vars) == 0:
-                logger.warning(
-                    "No common variables found between adata.var_names and adata.raw.var_names. "
-                    "Cannot use adata.raw.X for raw counts."
-                )
-            elif len(common_vars) < adata.n_vars:
-                logger.warning(
-                    f"Only {len(common_vars)} out of {adata.n_vars} variables found in adata.raw. "
-                    "Cannot use adata.raw.X for raw counts due to incomplete overlap."
-                )
-                # Skip using raw data if we don't have all variables
-                # This prevents dimension mismatch errors
-            else:
-                # All current variables are present in raw, subset accordingly
-                raw_var_to_idx = {
-                    var: idx for idx, var in enumerate(adata.raw.var_names)
-                }
-                var_indices = [raw_var_to_idx[var] for var in adata.var_names]
-                raw_counts = adata.raw.X[:, var_indices].copy()
-                adata.X = raw_counts
-                adata.layers["counts"] = raw_counts
-                raw_counts_set = True
+            logger.info(
+                f"adata.raw has {adata.raw.n_vars} genes vs {adata.n_vars} in adata. "
+                "Restoring full raw data (X and var) from adata.raw."
+            )
+            # Store original metadata before creating new AnnData
+            original_obs = adata.obs.copy()
+            original_obsm = adata.obsm.copy() if adata.obsm else {}
+            original_uns = adata.uns.copy() if adata.uns else {}
+
+            # Create new AnnData with raw data (X and var), keeping original obs
+            raw_counts = adata.raw.X.copy()
+            adata = AnnData(
+                X=raw_counts,
+                var=adata.raw.var.copy(),
+                obs=original_obs,  # Keep original obs (same cells)
+            )
+
+            # Copy over obsm (cell-level embeddings) - these are cell-level so shape[0] should match
+            for key, value in original_obsm.items():
+                if hasattr(value, "shape") and value.shape[0] == adata.n_obs:
+                    adata.obsm[key] = value.copy()
+
+            # Copy uns (unstructured metadata)
+            adata.uns = original_uns
+
+            # Set counts layer
+            adata.layers["counts"] = raw_counts.copy()
+
+            raw_counts_set = True
+            logger.info(
+                f"Successfully restored raw data: {adata.n_obs} cells x {adata.n_vars} genes"
+            )
         else:
             # Standard case: raw has same or fewer variables
             raw_counts = adata.raw.X.copy()
+            adata = adata.copy()  # Create a copy to avoid modifying original
             adata.X = raw_counts
             adata.layers["counts"] = raw_counts
+            # If raw.var exists and has useful information, update var
+            if adata.raw.var is not None and len(adata.raw.var.columns) > 0:
+                # Only update var if it has more/different information
+                # Check if we should update var (e.g., if raw.var has more columns)
+                if len(adata.raw.var.columns) > len(adata.var.columns):
+                    logger.info(
+                        "Updating adata.var with additional columns from adata.raw.var"
+                    )
+                    adata.var = adata.raw.var.copy()
             raw_counts_set = True
 
     # 2) Prefer the user‐specified layer (if raw wasn't used)
     if not raw_counts_set and raw_layer_key and raw_layer_key in adata.layers:
         logger.info("Using layer '%s' for raw counts", raw_layer_key)
+        adata = adata.copy()  # Create a copy to avoid modifying original
         adata.X = adata.layers[raw_layer_key]
         adata.layers["counts"] = adata.layers[raw_layer_key]
         raw_counts_set = True
@@ -416,6 +441,7 @@ def ensure_raw_counts_layer(
     # 3) Detect if X is raw counts (if raw wasn't used and layer wasn't used)
     if not raw_counts_set and is_raw_counts(adata.X):
         logger.info("Detected raw counts in adata.X; saving to layer 'counts'")
+        adata = adata.copy()  # Create a copy to avoid modifying original
         adata.layers["counts"] = adata.X.copy()
         raw_counts_set = True
 
@@ -426,6 +452,7 @@ def ensure_raw_counts_layer(
         and is_raw_counts(adata.layers["counts"])
     ):
         logger.info("Using existing 'counts' layer for raw counts")
+        adata = adata.copy()  # Create a copy to avoid modifying original
         adata.X = adata.layers["counts"]
         raw_counts_set = True
 
@@ -438,7 +465,7 @@ def ensure_raw_counts_layer(
         logger.error(msg)
         if raise_on_missing:
             raise ValueError(msg)
-        return
+        return adata  # Return original adata unchanged
 
     # Convert to int32 if not already in that format
     if "counts" in adata.layers and adata.layers["counts"].dtype != np.int32:
@@ -448,12 +475,14 @@ def ensure_raw_counts_layer(
         )
         adata.layers["counts"] = adata.layers["counts"].astype(np.int32)
 
-    # 4) Re‑validate that 'counts' really contains integer counts
+    # Re‑validate that 'counts' really contains integer counts
     if "counts" in adata.layers and not is_raw_counts(adata.layers["counts"]):
         logger.error(
             "Layer 'counts' does not appear to contain integer raw counts; "
             "downstream steps may fail."
         )
+
+    return adata
 
 
 def is_log_transformed(X: np.ndarray, tol: float = 1e-3) -> bool:

@@ -126,7 +126,7 @@ def preprocess_adata(
     processed AnnData object.
     """
     # Make sure X contains raw counts, and "counts" layer is set
-    ensure_raw_counts_layer(adata, raw_layer_key=count_layer_key)
+    adata = ensure_raw_counts_layer(adata, raw_layer_key=count_layer_key)
 
     # Delete specified layers early in the process
     adata = delete_layers(adata, layers_to_delete)
