@@ -88,8 +88,38 @@ def main(cfg: DictConfig):
     preprocess_cfg = cfg.preprocessing
 
     # 1) Prepare paths & logger
+    # Check if the dataset file exists, if not try the full dataset
     infile = Path(preprocess_cfg.input_file)
-    logger.info("Input file: %s", infile)
+    dataset_name = cfg.dataset.name
+    full_name = cfg.dataset.get("full_name", None)
+
+    # Determine expected file format from extension
+    file_ext = infile.suffix
+
+    if not infile.exists():
+        logger.info(f"Dataset file not found: {infile}")
+        if full_name and full_name != dataset_name:
+            # Try to find the full dataset file (same directory, different filename)
+            # Preserve the file extension (h5ad or zarr)
+            full_file_path = infile.parent / f"{full_name}{file_ext}"
+            if full_file_path.exists():
+                logger.info(
+                    f"Using full dataset file instead: {full_file_path} "
+                    f"(will write output with dataset name: {dataset_name})"
+                )
+                infile = full_file_path
+            else:
+                logger.warning(
+                    f"Neither dataset file ({infile}) nor full dataset file "
+                    f"({full_file_path}) exists. Proceeding with configured path."
+                )
+        else:
+            logger.warning(
+                f"Dataset file not found: {infile} and no full_name specified. "
+                "Proceeding with configured path."
+            )
+    else:
+        logger.info(f"Using dataset file: {infile}")
     # Get the stem of the input file (filename without extension)
     # input_stem = infile.stem
     out_dir = Path(preprocess_cfg.output_dir)
