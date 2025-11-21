@@ -61,7 +61,7 @@ def import_callable(ref: str):
 @hydra.main(
     version_base=None,
     config_path="../../conf",
-    config_name="dataset_cellxgene_pseudo_bulk_3_5k",
+    config_name="tabula_sapiens_100k",
 )
 def main(cfg: DictConfig):
     """
@@ -156,11 +156,18 @@ def main(cfg: DictConfig):
 
     # Create BatchChunkLoader - this is the first step
     logger.info("Creating BatchChunkLoader for chunked processing")
+
+    # Get chunking parameters from config
+    random_chunking = preprocess_cfg.get("random_chunking", None)
+    chunk_random_seed = preprocess_cfg.get("chunk_random_seed", None)
+
     loader = BatchChunkLoader(
         path=infile,
         chunk_size=int(preprocess_cfg.chunk_size),
         batch_key=batch_key,
         file_format=file_format,
+        random_chunking=random_chunking,
+        random_seed=chunk_random_seed,
     )
 
     # Track chunk indices for each split

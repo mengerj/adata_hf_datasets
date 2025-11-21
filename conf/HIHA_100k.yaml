@@ -40,6 +40,8 @@ preprocessing:
   enabled: true
   split_dataset: false # Important for training datasets. Set to false for test datasets. (Similar parameters in dataset_creation)
   count_layer_key: "counts" # Key in adata.layers with raw counts. If not present, adata.raw.X is checked.
+  random_chunking: true
+  chunk_random_seed: 42
 
 embedding_preparation:
   enabled: true

@@ -87,6 +87,10 @@ preprocessing:
   split_dataset: ${split_dataset} # Reference dataset-level split configuration
   train_split: 0.9 # Train/validation split ratio (only used if split_dataset=true)
   random_seed: 42 # Random seed for splits
+
+  # Chunking parameters
+  random_chunking: null # If true, use random chunking (even if batch_key provided); if false, use batch-based (requires batch_key); if null, auto-detect (random if no batch_key, batch-based if batch_key provided)
+  chunk_random_seed: null # Random seed for random chunking (if null, uses system random)
   metrics_of_interest: # Quality control metrics
     - "n_genes_by_counts"
     - "total_counts"

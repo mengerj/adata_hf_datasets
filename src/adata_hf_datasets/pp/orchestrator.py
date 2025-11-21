@@ -240,6 +240,8 @@ def preprocess_h5ad(
     output_format: str = "zarr",
     layers_to_delete: list[str] | None = None,
     n_chunks: int | None = None,
+    random_chunking: bool | None = None,
+    chunk_random_seed: int | None = None,
 ) -> None:
     """
     Preprocess a large AnnData file in chunks and writes each chunk to disk.
@@ -359,12 +361,22 @@ def preprocess_h5ad(
     if infile.suffix == ".zarr":
         logger.info("Using zarr format for input file")
         loader = BatchChunkLoader(
-            infile, chunk_size, batch_key=batch_key, file_format="zarr"
+            infile,
+            chunk_size,
+            batch_key=batch_key,
+            file_format="zarr",
+            random_chunking=random_chunking,
+            random_seed=chunk_random_seed,
         )
     else:
         logger.info("Using h5ad format for input file")
         loader = BatchChunkLoader(
-            infile, chunk_size, batch_key=batch_key, file_format="h5ad"
+            infile,
+            chunk_size,
+            batch_key=batch_key,
+            file_format="h5ad",
+            random_chunking=random_chunking,
+            random_seed=chunk_random_seed,
         )
 
     chunks_processed = 0
