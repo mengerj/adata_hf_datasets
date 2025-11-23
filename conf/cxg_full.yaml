@@ -58,7 +58,7 @@ embedding_cpu:
 
 embedding_gpu:
   enabled: true
-  venv: "cw-geneformer"
+  venv_path: "cw-geneformer"
   methods: ["cw-geneformer"]
 
 # Dataset creation overrides
