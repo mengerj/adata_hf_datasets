@@ -34,7 +34,7 @@ download:
 # Preprocessing overrides (both dataset-specific and execution parameters)
 preprocessing:
   # Dataset-specific parameters
-  enabled: true
+  enabled: false
   n_chunks: 5
   chunk_size: 80000
   split_dataset: true # Important for training datasets. Set to false for test datasets. (Similar parameters in dataset_creation)
@@ -52,17 +52,18 @@ preprocessing:
 
 # Embedding preparation overrides
 embedding_preparation:
-  enabled: true # Set to false to skip embedding preparation
+  enabled: false # Set to false to skip embedding preparation
   methods: ["geneformer-v1", "geneformer"] #run the prepare step on cpu to save gpu time
 
 # Embedding overrides (both dataset-specific and execution parameters)
 embedding_cpu:
-  enabled: true
+  enabled: false
   methods: ["pca", "gs10k", "scvi_fm"] #, "scvi_fm", "gs"]
 
 embedding_gpu:
   enabled: true
-  methods: ["geneformer-v1", "geneformer"]
+  venv_path: "cw-geneformer"
+  methods: ["cw-geneformer"]
 
 # Dataset creation overrides
 dataset_creation:
@@ -72,7 +73,14 @@ dataset_creation:
   use_zenodo: true
   # Dataset-specific parameters
   required_obsm_keys:
-    ["X_pca", "X_scvi_fm", "X_gs10k", "X_geneformer", "X_geneformer-v1"]
+    [
+      "X_pca",
+      "X_scvi_fm",
+      "X_gs10k",
+      "X_geneformer",
+      "X_geneformer-v1",
+      "X_cw-geneformer",
+    ]
   cs_length: 4096
   negatives_per_sample: 2
   split_dataset: true # Important for training datasets. Set to false for test datasets.
