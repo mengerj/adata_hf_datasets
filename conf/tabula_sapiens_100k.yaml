@@ -4,6 +4,7 @@ defaults:
   - dataset_default.yaml
   - _self_
 
+#base_file_path: "/Users/mengerj/repos/adata_hf_datasets/data/RNA"
 # =============================================================================
 # DATASET METADATA
 # =============================================================================
