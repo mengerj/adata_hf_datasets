@@ -64,8 +64,8 @@ embedding_gpu:
 # Dataset creation overrides
 dataset_creation:
   enabled: true
-  use_nextcloud: false
-  use_zenodo: true
+  use_nextcloud: true
+  use_zenodo: false
   force_reupload: true
   private: false
   attributes_to_remove:
