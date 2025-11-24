@@ -57,20 +57,30 @@ embedding_cpu:
   methods: ["gs10k", "scvi_fm", "pca"] #, "scvi_fm", "gs", "gs10k"]
 
 embedding_gpu:
-  enabled: true
+  enabled: false
   venv_path: "cw-geneformer"
   methods: ["cw-geneformer"]
 
 # Dataset creation overrides
 dataset_creation:
-  enabled: false
+  enabled: true
   use_nextcloud: false
   use_zenodo: true
   force_reupload: true
   private: false
+  attributes_to_remove:
+    - "raw"
+    - "uns/log1p/base"
   # Dataset-specific parameters
   required_obsm_keys:
-    ["X_pca", "X_scvi_fm", "X_geneformer", "X_gs10k", "X_geneformer-v1"]
+    [
+      "X_pca",
+      "X_scvi_fm",
+      "X_geneformer",
+      "X_gs10k",
+      "X_geneformer-v1",
+      "cw-geneformer",
+    ]
   cs_length: 4096
   caption_keys: "caption_key"
   negatives_per_sample: 2
