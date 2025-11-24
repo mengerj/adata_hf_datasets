@@ -30,40 +30,49 @@ other_bio_labels: []
 # =============================================================================
 # Download configuration
 download:
-  enabled: true
+  enabled: false
   subset_size: null
 
 # Preprocessing overrides (both dataset-specific and execution parameters)
 preprocessing:
   # Dataset-specific parameters
-  enabled: true
+  enabled: false
   chunk_size: 100000
   split_dataset: false # Important for training datasets. Set to false for test datasets. (Similar parameters in dataset_creation)
   count_layer_key: "counts" # Key in adata.layers with raw counts. If not present, adata.raw.X is checked.
 
 # Embedding preparation overrides
 embedding_preparation:
-  enabled: true # Set to false to skip embedding preparation
+  enabled: false # Set to false to skip embedding preparation
   methods: ["geneformer-v1", "geneformer"] #run the prepare step on cpu to save gpu time
 
 # Embedding overrides (both dataset-specific and execution parameters)
 embedding_cpu:
-  enabled: true
+  enabled: false
   overwrite: true
   memory_gb: 120
   methods: ["pca", "scvi_fm", "gs10k"] #, "scvi_fm", "gs", "gs10k"]
 
 embedding_gpu:
   enabled: true
-  methods: ["geneformer-v1", "geneformer"]
+  methods: ["cw-geneformer"]
+  venv_path: "cw-geneformer"
 
 # Dataset creation overrides
 dataset_creation:
   enabled: true
-  use_nextcloud: true
+  use_nextcloud: false
+  use_zenodo: true
   # Dataset-specific parameters
   required_obsm_keys:
-    ["X_pca", "X_scvi_fm", "X_geneformer", "X_gs10k", "X_geneformer-v1"]
+    [
+      "X_pca",
+      "X_scvi_fm",
+      "X_geneformer",
+      "X_gs10k",
+      "X_geneformer-v1",
+      "X_cw-geneformer",
+    ]
   cs_length: 4096
   negatives_per_sample: 2
   split_dataset: false # Important for training datasets. Set to false for test datasets.
