@@ -54,7 +54,7 @@ embedding_cpu:
   methods: ["pca", "scvi_fm", "gs10k"] #, "scvi_fm", "gs", "gs10k"]
 
 embedding_gpu:
-  enabled: true
+  enabled: false
   methods: ["cw-geneformer"]
   venv_path: "cw-geneformer"
 
