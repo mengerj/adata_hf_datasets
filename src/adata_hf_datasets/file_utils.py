@@ -2202,9 +2202,8 @@ def _remove_attributes_from_zarr(
     """Remove attributes from zarr store directly on disk."""
     logger.info(f"Removing attributes from zarr store: {zarr_path}")
 
-    ZarrStore = get_zarr_store_class()
-    store = ZarrStore(str(zarr_path))
-    root = zarr.group(store=store, mode="r+")
+    # Use zarr.open_group which supports mode parameter consistently across versions
+    root = zarr.open_group(str(zarr_path), mode="r+")
 
     removed_count = 0
     for attr_path in attributes_to_remove:
@@ -2256,7 +2255,7 @@ def _remove_attributes_from_zarr(
 
     # Consolidate metadata after deletions to update .zmetadata
     zarr.consolidate_metadata(zarr_path)
-    store.close()
+    root.store.close()
     logger.info(
         f"Removed {removed_count} out of {len(attributes_to_remove)} attributes"
     )
