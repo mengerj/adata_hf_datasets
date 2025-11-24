@@ -55,7 +55,7 @@ embedding_cpu:
   methods: ["pca", "scvi_fm", "gs10k"] #, "scvi_fm", "gs", "gs10k"]
 
 embedding_gpu:
-  enabled: true
+  enabled: false
   methods: ["cw-geneformer"]
   venv_path: "cw-geneformer"
 
@@ -65,6 +65,9 @@ dataset_creation:
   enabled: true
   use_nextcloud: false
   use_zenodo: true
+  attributes_to_remove:
+    - "raw"
+    - "uns/log1p/base"
   required_obsm_keys:
     [
       "X_pca",
