@@ -41,6 +41,7 @@ preprocessing:
   n_chunks: 1
   split_dataset: false # Important for training datasets. Set to false for test datasets. (Similar parameters in dataset_creation)
   count_layer_key: "decontXcounts" # Key in adata.layers with raw counts. If not present, adata.raw.X is checked.
+  random_chunking: true
 
 # Embedding overrides (both dataset-specific and execution parameters)
 embedding_preparation:

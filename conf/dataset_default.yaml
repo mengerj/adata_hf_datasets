@@ -90,7 +90,7 @@ preprocessing:
 
   # Chunking parameters
   random_chunking: null # If true, use random chunking (even if batch_key provided); if false, use batch-based (requires batch_key); if null, auto-detect (random if no batch_key, batch-based if batch_key provided)
-  chunk_random_seed: null # Random seed for random chunking (if null, uses system random)
+  chunk_random_seed: 42 # Random seed for random chunking (if null, uses system random)
   metrics_of_interest: # Quality control metrics
     - "n_genes_by_counts"
     - "total_counts"
@@ -263,6 +263,13 @@ dataset_creation:
   push_to_hub: true
   base_repo_id: "jo-mengr"
   private: true # Whether to make the HuggingFace Hub dataset private (true) or public (false)
+
+  # Attribute removal (before upload)
+  # Remove specified attributes from zarr/h5ad files to reduce file size
+  # For zarr: attributes are deleted directly from disk (efficient, no loading)
+  # For h5ad: files are loaded, modified, and saved back
+  # Use "/" to separate nested keys (e.g., "uns/log1p/base")
+  attributes_to_remove: null # List of attributes to remove, e.g., ["raw", "uns/log1p/base"]
 
   # Nextcloud upload (dataset-specific)
   use_nextcloud: false
