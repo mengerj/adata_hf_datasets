@@ -1160,34 +1160,155 @@ def upload_folder_to_zenodo(
 
     # Upload files sequentially to avoid API rate limits and connection issues
     for zip_path, rel_key, zenodo_filename in uploads:
+        # Validate that the zip file exists and is readable
+        if not zip_path.exists():
+            logger.error(f"Zip file does not exist: {zip_path}")
+            failed_uploads.append(rel_key)
+            continue
+
         file_size = zip_path.stat().st_size
+        upload_target_url = f"{upload_url}/{zenodo_filename}"
 
-        try:
-            logger.info(
-                f"Uploading {zip_path.name} as {zenodo_filename} ({file_size / 1024 / 1024:.1f} MB)..."
-            )
+        # Determine chunk size and retry settings based on file size
+        # For files > 100 MB, use larger chunks and more retries
+        if file_size > 100 * 1024 * 1024:  # > 100 MB
+            chunk_size = 10 * 1024 * 1024  # 10 MB chunks
+            max_retries = 5  # More retries for large files
+            # Longer timeout for large files: 5 minutes per 100 MB, minimum 10 minutes
+            timeout_minutes = max(10, int(file_size / (100 * 1024 * 1024) * 5))
+            timeout = (30, timeout_minutes * 60)
+        else:
+            chunk_size = 5 * 1024 * 1024  # 5 MB chunks for smaller files
+            max_retries = 3
+            timeout = (30, 600)  # 10 minutes for smaller files
 
-            # Upload file to Zenodo bucket with the prefixed filename
-            with open(zip_path, "rb") as f:
-                upload_response = requests.put(
-                    f"{upload_url}/{zenodo_filename}",
-                    data=f,
-                    params={"access_token": zenodo_token},
-                    timeout=(30, 1800),  # 30s connect, 30min read
+        logger.info(
+            f"Uploading {zip_path.name} as {zenodo_filename} ({file_size / 1024 / 1024:.1f} MB)..."
+        )
+        logger.debug(
+            f"Chunk size: {chunk_size / 1024 / 1024:.1f} MB, Max retries: {max_retries}, Timeout: {timeout[1] / 60:.1f} min"
+        )
+
+        # Retry logic for large file uploads
+        upload_success = False
+        last_error = None
+
+        for attempt in range(max_retries):
+            try:
+                # Create a fresh session for each attempt to avoid connection issues
+                with requests.Session() as session:
+                    # Configure session with retry adapter
+                    adapter = requests.adapters.HTTPAdapter(
+                        max_retries=requests.packages.urllib3.util.retry.Retry(
+                            total=0,  # We handle retries manually
+                            backoff_factor=1,
+                            status_forcelist=[500, 502, 503, 504],
+                        ),
+                        pool_connections=1,
+                        pool_maxsize=1,
+                    )
+                    session.mount("https://", adapter)
+                    session.mount("http://", adapter)
+
+                    # Use streaming upload with progress tracking
+                    with open(zip_path, "rb") as f:
+                        # Use ReadWithProgress for streaming with progress bar
+                        reader = ReadWithProgress(
+                            f,
+                            file_size,
+                            chunk_size=chunk_size,
+                            desc=f"Uploading {zenodo_filename} (attempt {attempt + 1})",
+                        )
+
+                        # Set Content-Length header explicitly
+                        headers = {"Content-Length": str(file_size)}
+
+                        upload_response = session.put(
+                            upload_target_url,
+                            data=reader,
+                            params={"access_token": zenodo_token},
+                            headers=headers,
+                            timeout=timeout,
+                        )
+
+                if upload_response.status_code in (200, 201):
+                    upload_success = True
+                    logger.info(
+                        f"File {zenodo_filename} uploaded successfully (status {upload_response.status_code})"
+                    )
+                    break  # Success, exit retry loop
+                else:
+                    error_msg = f"Upload failed: {upload_response.status_code} {upload_response.text[:200]}"
+                    if upload_response.status_code == 401:
+                        error_msg += "\nAuthentication failed. Please check your ZENODO_TOKEN in .env file."
+                    logger.warning(
+                        f"Attempt {attempt + 1}/{max_retries} failed: {error_msg}"
+                    )
+                    last_error = error_msg
+                    if attempt < max_retries - 1:
+                        # Exponential backoff: 2^attempt seconds, with jitter
+                        backoff_time = (2**attempt) + random.uniform(0, 1)
+                        logger.info(f"Retrying in {backoff_time:.1f} seconds...")
+                        time.sleep(backoff_time)
+
+            except requests.exceptions.Timeout as e:
+                last_error = f"Upload timeout: {e}"
+                logger.warning(
+                    f"Attempt {attempt + 1}/{max_retries} timed out for {zenodo_filename}"
                 )
+                if attempt < max_retries - 1:
+                    backoff_time = (2**attempt) + random.uniform(0, 1)
+                    logger.info(f"Retrying in {backoff_time:.1f} seconds...")
+                    time.sleep(backoff_time)
+                else:
+                    logger.error(
+                        f"Upload timeout for {zenodo_filename} after {max_retries} attempts. "
+                        f"This may indicate a network issue or the file is too large."
+                    )
 
-            if upload_response.status_code not in (200, 201):
-                error_msg = f"Upload failed for {zenodo_filename}: {upload_response.status_code} {upload_response.text}"
-                if upload_response.status_code == 401:
-                    error_msg += "\nAuthentication failed. Please check your ZENODO_TOKEN in .env file."
-                logger.error(error_msg)
-                failed_uploads.append(rel_key)
-                continue
+            except requests.exceptions.ConnectionError as e:
+                last_error = f"Connection error: {e}"
+                logger.warning(
+                    f"Attempt {attempt + 1}/{max_retries} connection error for {zenodo_filename}: {e}"
+                )
+                if attempt < max_retries - 1:
+                    backoff_time = (2**attempt) + random.uniform(0, 1)
+                    logger.info(f"Retrying in {backoff_time:.1f} seconds...")
+                    time.sleep(backoff_time)
+                else:
+                    logger.error(
+                        f"Connection error while uploading {zenodo_filename} after {max_retries} attempts: {e}. "
+                        "Please check your network connection."
+                    )
 
-            logger.info(
-                f"File {zenodo_filename} uploaded successfully (status {upload_response.status_code})"
-            )
+            except requests.exceptions.RequestException as e:
+                last_error = f"Request error: {e}"
+                logger.warning(
+                    f"Attempt {attempt + 1}/{max_retries} request error for {zenodo_filename}: {e}"
+                )
+                if attempt < max_retries - 1:
+                    backoff_time = (2**attempt) + random.uniform(0, 1)
+                    logger.info(f"Retrying in {backoff_time:.1f} seconds...")
+                    time.sleep(backoff_time)
+                else:
+                    logger.error(
+                        f"Request error while uploading {zenodo_filename} after {max_retries} attempts: {e}",
+                        exc_info=True,
+                    )
 
+            except Exception as e:
+                last_error = f"Unexpected error: {e}"
+                logger.error(
+                    f"Unexpected error on attempt {attempt + 1}/{max_retries} for {zenodo_filename}: {e}",
+                    exc_info=True,
+                )
+                if attempt < max_retries - 1:
+                    backoff_time = (2**attempt) + random.uniform(0, 1)
+                    logger.info(f"Retrying in {backoff_time:.1f} seconds...")
+                    time.sleep(backoff_time)
+
+        # Handle final result
+        if upload_success:
             # Construct download URL directly from deposit_id and filename
             # Format: https://zenodo.org/api/records/{deposit_id}/draft/files/{filename}/content
             # For sandbox: https://sandbox.zenodo.org/api/records/{deposit_id}/draft/files/{filename}/content
@@ -1200,9 +1321,10 @@ def upload_folder_to_zenodo(
             # Save progress incrementally
             mapping_path.write_text(json.dumps(share_map, indent=2))
             logger.info(f"✅ Uploaded {zenodo_filename} - Download URL: {download_url}")
-
-        except Exception as e:
-            logger.error(f"Error uploading {zenodo_filename}: {e}", exc_info=True)
+        else:
+            logger.error(
+                f"Failed to upload {zenodo_filename} after {max_retries} attempts. Last error: {last_error}"
+            )
             failed_uploads.append(rel_key)
 
     # Final save of share_map
