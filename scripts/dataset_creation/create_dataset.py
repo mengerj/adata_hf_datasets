@@ -38,6 +38,7 @@ from adata_hf_datasets.dataset import create_cell_sentences
 from adata_hf_datasets.file_utils import (
     upload_folder_to_nextcloud,
     upload_folder_to_zenodo,
+    remove_attributes_from_file,
 )
 from adata_hf_datasets.workflow import apply_all_transformations
 from hydra.utils import to_absolute_path
@@ -444,6 +445,28 @@ def main(cfg: DictConfig):
             adata_tmp = _read_adata(f)
             _validate_obsm_keys(adata_tmp, required_obsm_keys, f)
             del adata_tmp
+
+        # ------------------------------------------------------------------ #
+        # 1.5) Remove specified attributes from files (if configured)
+        # ------------------------------------------------------------------ #
+        attributes_to_remove = dataset_cfg.get("attributes_to_remove", None)
+        if attributes_to_remove:
+            logger.info(
+                f"Removing attributes from files in split '{split}': {attributes_to_remove}"
+            )
+            for f in sorted(split_dir.glob("*.h5ad")) + sorted(
+                split_dir.glob("*.zarr")
+            ):
+                try:
+                    remove_attributes_from_file(
+                        file_path=f,
+                        attributes_to_remove=attributes_to_remove,
+                        in_place=True,
+                    )
+                    logger.info(f"Cleaned attributes from {f.name}")
+                except Exception as e:
+                    logger.error(f"Failed to remove attributes from {f.name}: {e}")
+                    raise
 
         # ------------------------------------------------------------------ #
         # 2) upload folder or use local paths

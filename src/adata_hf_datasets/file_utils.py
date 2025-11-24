@@ -2146,6 +2146,192 @@ def _atomic_overwrite(src_dir: Path, dst_dir: Path) -> None:
         raise
 
 
+def remove_attributes_from_file(
+    file_path: Path,
+    attributes_to_remove: list[str],
+    in_place: bool = True,
+) -> Path:
+    """
+    Remove specified attributes from an AnnData file (zarr or h5ad).
+
+    For zarr stores, attributes are deleted directly from disk without loading
+    the full data into memory. For h5ad files, the file is loaded, modified,
+    and saved back.
+
+    Parameters
+    ----------
+    file_path : Path
+        Path to the AnnData file (.h5ad or .zarr).
+    attributes_to_remove : list[str]
+        List of attribute paths to remove. Can be top-level (e.g., "raw") or
+        nested (e.g., "uns/log1p/base"). Use "/" to separate nested keys.
+    in_place : bool, default=True
+        If True, modify the file in place. If False, create a new file with
+        "_cleaned" suffix (not implemented for zarr, always in-place).
+
+    Returns
+    -------
+    Path
+        Path to the cleaned file (same as input if in_place=True).
+
+    Examples
+    --------
+    >>> remove_attributes_from_file(
+    ...     Path("data.zarr"),
+    ...     attributes_to_remove=["raw", "uns/log1p/base"]
+    ... )
+    """
+    if not file_path.exists():
+        raise FileNotFoundError(f"File not found: {file_path}")
+
+    if not attributes_to_remove:
+        logger.info("No attributes to remove, skipping")
+        return file_path
+
+    if file_path.suffix == ".zarr":
+        return _remove_attributes_from_zarr(file_path, attributes_to_remove)
+    elif file_path.suffix == ".h5ad":
+        return _remove_attributes_from_h5ad(file_path, attributes_to_remove, in_place)
+    else:
+        raise ValueError(f"Unsupported file format: {file_path.suffix}")
+
+
+def _remove_attributes_from_zarr(
+    zarr_path: Path, attributes_to_remove: list[str]
+) -> Path:
+    """Remove attributes from zarr store directly on disk."""
+    logger.info(f"Removing attributes from zarr store: {zarr_path}")
+
+    ZarrStore = get_zarr_store_class()
+    store = ZarrStore(str(zarr_path))
+    root = zarr.group(store=store, mode="r+")
+
+    removed_count = 0
+    for attr_path in attributes_to_remove:
+        try:
+            parts = attr_path.split("/")
+
+            if parts[0] == "raw":
+                # Remove raw attribute (stored as "raw" group in zarr)
+                if "raw" in root:
+                    del root["raw"]
+                    removed_count += 1
+                    logger.info("Removed 'raw' from zarr store")
+                else:
+                    logger.warning("'raw' not found in zarr store, skipping")
+            elif parts[0] == "uns":
+                # Handle nested uns paths (e.g., "uns/log1p/base")
+                if "uns" not in root:
+                    logger.warning("'uns' not found in zarr store, skipping")
+                    continue
+
+                uns_group = root["uns"]
+
+                # Navigate through nested groups
+                current = uns_group
+                for part in parts[1:-1]:
+                    if part in current:
+                        current = current[part]
+                    else:
+                        logger.warning(
+                            f"Path '{attr_path}' not found (missing '{part}'), skipping"
+                        )
+                        break
+                else:
+                    # All parent parts exist, try to delete the final key
+                    final_key = parts[-1]
+                    if final_key in current:
+                        del current[final_key]
+                        removed_count += 1
+                        logger.info(f"Removed '{attr_path}' from zarr store")
+                    else:
+                        logger.warning(f"Attribute '{attr_path}' not found, skipping")
+            else:
+                logger.warning(
+                    f"Unsupported top-level attribute '{parts[0]}'. "
+                    "Only 'raw' and 'uns' are supported for zarr."
+                )
+        except Exception as e:
+            logger.warning(f"Failed to remove '{attr_path}': {e}")
+
+    # Consolidate metadata after deletions to update .zmetadata
+    zarr.consolidate_metadata(zarr_path)
+    store.close()
+    logger.info(
+        f"Removed {removed_count} out of {len(attributes_to_remove)} attributes"
+    )
+    return zarr_path
+
+
+def _remove_attributes_from_h5ad(
+    h5ad_path: Path, attributes_to_remove: list[str], in_place: bool
+) -> Path:
+    """Remove attributes from h5ad file by loading, modifying, and saving."""
+    logger.info(f"Removing attributes from h5ad file: {h5ad_path}")
+
+    # Load the file
+    adata = ad.read_h5ad(h5ad_path)
+
+    removed_count = 0
+    for attr_path in attributes_to_remove:
+        try:
+            parts = attr_path.split("/")
+
+            if parts[0] == "raw":
+                # Remove raw attribute
+                if adata.raw is not None:
+                    adata.raw = None
+                    removed_count += 1
+                    logger.info("Removed 'raw' from h5ad file")
+                else:
+                    logger.warning("'raw' not found, skipping")
+            elif parts[0] == "uns":
+                # Handle nested uns paths (e.g., "uns/log1p/base")
+                current = adata.uns
+                for part in parts[1:-1]:
+                    if isinstance(current, dict) and part in current:
+                        current = current[part]
+                    else:
+                        logger.warning(
+                            f"Path '{attr_path}' not found (missing '{part}'), skipping"
+                        )
+                        break
+                else:
+                    # Navigate to parent dict and delete final key
+                    final_key = parts[-1]
+                    if isinstance(current, dict) and final_key in current:
+                        del current[final_key]
+                        removed_count += 1
+                        logger.info(f"Removed '{attr_path}' from h5ad file")
+                    else:
+                        logger.warning(f"Attribute '{attr_path}' not found, skipping")
+            else:
+                logger.warning(
+                    f"Unsupported top-level attribute '{parts[0]}'. "
+                    "Only 'raw' and 'uns' are supported."
+                )
+        except Exception as e:
+            logger.warning(f"Failed to remove '{attr_path}': {e}")
+
+    # Save back
+    if in_place:
+        output_path = h5ad_path
+        # For in-place, we need to write to a temp file first, then replace
+        temp_path = h5ad_path.with_suffix(".h5ad.tmp")
+        adata.write_h5ad(temp_path)
+        shutil.move(temp_path, h5ad_path)
+    else:
+        output_path = h5ad_path.with_name(
+            h5ad_path.stem + "_cleaned" + h5ad_path.suffix
+        )
+        adata.write_h5ad(output_path)
+
+    logger.info(
+        f"Removed {removed_count} out of {len(attributes_to_remove)} attributes"
+    )
+    return output_path
+
+
 def safe_write_zarr(
     adata: ad.AnnData,
     target: Path,
