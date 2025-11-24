@@ -543,9 +543,41 @@ def upload_folder_to_nextcloud(
             return z
         return p  # ignore everything else
 
-    zip_paths = [
-        ensure_zip(p) for p in data_folder.iterdir() if p.name != "share_map.json"
-    ]
+    # Collect all paths first to avoid processing zip files that have source files
+    # This prevents duplicate processing when both source (.zarr/.h5ad) and zip exist
+    all_paths = [p for p in data_folder.iterdir() if p.name != "share_map.json"]
+
+    # Filter out .zip files that have a corresponding source file
+    # If both chunk_0.zarr (dir) and chunk_0.zarr.zip exist, only process the .zarr dir
+    paths_to_process = []
+    for p in all_paths:
+        if p.suffix == ".zip":
+            # Check if this zip corresponds to a source file that also exists
+            # For .zarr.zip, check if .zarr directory exists
+            if p.suffixes == [".zarr", ".zip"]:
+                source = p.with_suffix("")  # Remove .zip to get .zarr
+                if source.exists() and source.is_dir():
+                    # Source exists, skip the zip file (will be processed via source)
+                    continue
+            # For .h5ad.zip, check if .h5ad file exists
+            elif p.suffixes == [".h5ad", ".zip"]:
+                source = p.with_suffix("")  # Remove .zip to get .h5ad
+                if source.exists() and source.is_file():
+                    # Source exists, skip the zip file (will be processed via source)
+                    continue
+        # Process this path (either it's not a zip, or it's a zip without a source)
+        paths_to_process.append(p)
+
+    zip_paths = [ensure_zip(p) for p in paths_to_process]
+    # Deduplicate in case ensure_zip returns the same path for different inputs
+    original_count = len(zip_paths)
+    zip_paths = list(
+        dict.fromkeys(zip_paths)
+    )  # Preserves order while removing duplicates
+    if len(zip_paths) < original_count:
+        logger.info(
+            f"Removed {original_count - len(zip_paths)} duplicate zip file(s) from upload list"
+        )
 
     # ---------- 2) build remote paths & create dirs --------------------
     nc_url = os.getenv(nextcloud_config["url"]).rstrip("/")
@@ -912,9 +944,43 @@ def upload_folder_to_zenodo(
             return z
         return p  # ignore everything else
 
-    zip_paths = [
-        ensure_zip(p) for p in data_folder.iterdir() if p.name != "share_map.json"
-    ]
+    # Collect all paths first to avoid processing zip files that have source files
+    # This prevents duplicate processing when both source (.zarr/.h5ad) and zip exist
+    all_paths = [p for p in data_folder.iterdir() if p.name != "share_map.json"]
+
+    # Filter out .zip files that have a corresponding source file
+    # If both chunk_0.zarr (dir) and chunk_0.zarr.zip exist, only process the .zarr dir
+    paths_to_process = []
+    for p in all_paths:
+        if p.suffix == ".zip":
+            # Check if this zip corresponds to a source file that also exists
+            # For .zarr.zip, check if .zarr directory exists
+            if p.suffixes == [".zarr", ".zip"]:
+                source = p.with_suffix("")  # Remove .zip to get .zarr
+                if source.exists() and source.is_dir():
+                    # Source exists, skip the zip file (will be processed via source)
+                    continue
+            # For .h5ad.zip, check if .h5ad file exists
+            elif p.suffixes == [".h5ad", ".zip"]:
+                source = p.with_suffix("")  # Remove .zip to get .h5ad
+                if source.exists() and source.is_file():
+                    # Source exists, skip the zip file (will be processed via source)
+                    continue
+        # Process this path (either it's not a zip, or it's a zip without a source)
+        paths_to_process.append(p)
+
+    zip_paths = [ensure_zip(p) for p in paths_to_process]
+    # Deduplicate in case ensure_zip returns the same path for different inputs
+    # (shouldn't happen, but being safe)
+    original_count = len(zip_paths)
+    zip_paths = list(
+        dict.fromkeys(zip_paths)
+    )  # Preserves order while removing duplicates
+    if len(zip_paths) < original_count:
+        logger.info(
+            f"Removed {original_count - len(zip_paths)} duplicate zip file(s) from upload list"
+        )
+    logger.info(f"Prepared {len(zip_paths)} file(s) for upload to Zenodo")
 
     # ---------- 2) Get or create deposit --------------------
     deposit_id = share_map.get("_zenodo_deposit_id")
