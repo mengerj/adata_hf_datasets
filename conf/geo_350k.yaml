@@ -57,8 +57,9 @@ embedding_preparation:
 
 # Embedding overrides (both dataset-specific and execution parameters)
 embedding_cpu:
-  enabled: false
-  methods: ["pca", "gs10k", "scvi_fm"] #, "scvi_fm", "gs"]
+  enabled: true
+  overwrite: true
+  methods: ["pca"] #, "scvi_fm", "gs"]
 
 embedding_gpu:
   enabled: false

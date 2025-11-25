@@ -50,9 +50,10 @@ embedding_preparation:
 # Embedding overrides (both dataset-specific and execution parameters)
 embedding_cpu:
   # Dataset-specific parameters
-  enabled: false
+  enabled: true
+  overwrite: true
   memory_gb: 120
-  methods: ["pca", "scvi_fm", "gs10k"] #, "scvi_fm", "gs", "gs10k"]
+  methods: ["pca"] #, "scvi_fm", "gs", "gs10k"]
 
 embedding_gpu:
   enabled: false

@@ -49,18 +49,20 @@ embedding_preparation:
   methods: ["geneformer", "geneformer-v1"] #, "scvi_fm", "gs", "gs10k"]
 
 embedding_cpu:
-  enabled: false
-  methods: ["pca", "scvi_fm", "gs10k"] #, "scvi_fm", "gs", "gs10k"]
+  enabled: true
+  overwrite: true
+  methods: ["pca"] #, "scvi_fm", "gs", "gs10k"]
 
 embedding_gpu:
-  enabled: true
+  enabled: false
   methods: ["cw-geneformer"]
   venv_path: "cw-geneformer"
 
 # Dataset creation overrides
 dataset_creation:
-  enabled: false
-  use_nextcloud: true
+  enabled: true
+  use_nextcloud: false
+  use_zenodo: true
   # Dataset-specific parameters
   required_obsm_keys:
     [
