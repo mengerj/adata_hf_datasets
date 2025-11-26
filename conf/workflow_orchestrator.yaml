@@ -22,7 +22,7 @@ workflow:
     user: "menger" # Use the user from SSH config
 
   # SLURM partition names (from actual cluster configuration)
-  cpu_partition: "compute" # CPU partition on imbi13
+  cpu_partition: "compute" # CPU partition on imbi121-ukf
   gpu_partition: "gpu" # GPU partition on imbi_gpu_H100
 
   # Execution host: "cpu" or "gpu"
@@ -62,13 +62,13 @@ workflow:
   # Separate paths for local and SLURM execution modes
   # The actual workflow directory will be: {output_directory}/{date}/workflow_{job_id}/
   local_output_directory: "./outputs" # For local execution
-  slurm_output_directory: "/home/menger/git/adata_hf_datasets/outputs" # For SLURM execution
+  slurm_output_directory: "/home/menger/repos/adata_hf_datasets/outputs" # For SLURM execution
 
   # Project directory configuration
   # Separate paths for local and SLURM execution modes
   # All commands will `cd` into this directory before running
   local_project_directory: "." # For local execution (relative to where script is run)
-  slurm_project_directory: "/home/menger/git/adata_hf_datasets" # For SLURM execution
+  slurm_project_directory: "/home/menger/repos/adata_hf_datasets" # For SLURM execution
 
   # Local backend settings (effective only when execution_mode == "local")
   # Maximum number of parallel workers for local embedding array tasks
@@ -79,12 +79,12 @@ workflow:
   # Base data directories depending on backend
   # Used as default when dataset config doesn't set base_file_path explicitly
   local_base_file_path: "./data/RNA"
-  slurm_base_file_path: "/scratch/global/menger/data/RNA"
+  slurm_base_file_path: "/scratch/local/menger/data/RNA"
 
   # Virtual environment paths (relative to project_directory)
   # Separate paths for local and SLURM execution modes
   local_venv_path: ".venv" # For local execution
-  slurm_venv_path: ".venv" # For SLURM execution
+  slurm_venv_path: "/scratch/local/menger/venvs/adata_hf_datasets" # For SLURM execution
 
 # =============================================================================
 # ORCHESTRATOR SETTINGS
