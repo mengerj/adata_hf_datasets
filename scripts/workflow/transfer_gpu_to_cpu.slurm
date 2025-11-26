@@ -77,7 +77,7 @@ python3 -c "
 import sys
 sys.path.insert(0, '/home/menger/git/adata_hf_datasets/src')
 from omegaconf import OmegaConf
-from adata_hf_datasets.config_utils import apply_all_transformations
+from adata_hf_datasets.workflow import apply_all_transformations
 
 try:
     cfg = OmegaConf.load('/home/menger/git/adata_hf_datasets/conf/$DATASET_CONFIG.yaml')

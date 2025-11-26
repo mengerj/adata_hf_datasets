@@ -45,24 +45,38 @@ embedding_preparation:
 
 # Embedding overrides (both dataset-specific and execution parameters)
 embedding_cpu:
-  enabled: true
+  enabled: false
   overwrite: true
   venv_path: ".venv"
   methods: ["gs10k"]
 
 embedding_gpu:
-  enabled: true
+  enabled: false
   overwrite: true
   venv_path: "cw_gf"
   methods: ["cw-geneformer"]
+  # Init kwargs passed to all embedders (unused kwargs are ignored by other methods)
+  # For cw-geneformer, you can just pass cw_model_path - other embedders will ignore it
+  # Relative paths are resolved relative to PROJECT_DIR (set in workflow_orchestrator.yaml)
+  init_kwargs:
+    cw_model_path: "external/Geneformer_v1/geneformer-12L-30M" # Relative to project_directory
+    # Optional: override processor and model config defaults
+    # processor_kwargs:
+    #   nproc: 4
+    #   emb_label: ["sample_name"]
+    # model_config:
+    #   emb_mode: "cell"
+    #   emb_layer: -1
+    #   forward_batch_size: 16
 
 # Dataset creation overrides
 dataset_creation:
-  enabled: false
-  use_nextcloud: true
+  enabled: true
+  use_nextcloud: false
+  use_zenodo: true
   # Dataset-specific parameters
-  required_obsm_keys: ["X_pca", "X_scvi_fm", "X_gs", "X_geneformer-v1"] #, "X_geneformer"]
-  cs_length: [4096]
+  required_obsm_keys: ["X_pca", "X_scvi_fm", "X_gs10k"] #, "X_geneformer"]
+  cs_length: 4096
   caption_keys: ["caption_key"]
   negatives_per_sample: 2
   split_dataset: true # Important for training datasets. Set to false for test datasets.
