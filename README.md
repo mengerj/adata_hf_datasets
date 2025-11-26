@@ -35,6 +35,7 @@ This pipeline transforms raw single-cell RNA-seq data into ready-to-use HuggingF
   - [Local Execution](#local-execution-macos-linux)
   - [SLURM Cluster Execution](#slurm-cluster-execution)
 - [Nextcloud Integration](#nextcloud-integration)
+- [Zenodo Integration](#zenodo-integration)
 - [Pipeline Steps](#pipeline-steps)
 - [Advanced Usage](#advanced-usage)
 - [Adding a New Embedding Method](#adding-a-new-embedding-method)
@@ -387,7 +388,7 @@ The workflow orchestrator configuration defines **where and how to run** the pip
 
 #### Key Concept: Unified Configuration
 
-You can now configure **both local and SLURM paths simultaneously** in the same config file. Simply change the `execution_mode` to switch between them - no need to manually edit paths or use different scripts!
+You can configure **both local and SLURM paths simultaneously** in the same config file. Simply change the `execution_mode` to switch between them - no need to manually edit paths or use different scripts!
 
 #### Execution Mode
 
@@ -433,12 +434,6 @@ workflow:
   venv_path: ".venv" # Virtual environment path (relative to project_directory)
   enable_transfers: false # Use shared filesystem (recommended)
 ```
-
-**Benefits:**
-
-- ✅ Configure both environments once, switch with one line
-- ✅ No need to manually edit paths when switching modes
-- ✅ Use the same submission script for both modes
 
 #### Important Notes for SLURM
 
@@ -520,21 +515,14 @@ source .venv/bin/activate
 # You can use either a config name or a path:
 python scripts/workflow/submit_workflow.py \
     --config my_dataset \
-    --foreground
 
 # Or use a relative path:
 python scripts/workflow/submit_workflow.py \
     --config conf/my_dataset.yaml \
-    --foreground
 
 # Or use an absolute path:
 python scripts/workflow/submit_workflow.py \
     --config /absolute/path/to/my_dataset.yaml \
-    --foreground
-
-# Or run in background (detached)
-python scripts/workflow/submit_workflow.py \
-    --config my_dataset
 ```
 
 **Note:** The `--config` argument accepts either:
@@ -568,6 +556,8 @@ ssh-copy-id username@gpu_cluster
 ssh cpu_cluster "hostname"
 ssh gpu_cluster "hostname"
 ```
+
+**Note**: Depending on your cluster, you might need to setup a proxy-jump. Edit the .ssh/config file on your machine.
 
 2. **Configure for SLURM:**
 
@@ -716,11 +706,127 @@ Files are organized in Nextcloud as:
         └── chunk_0.zarr.zip
 ```
 
+---
+
+## Zenodo Integration
+
+Zenodo integration provides persistent, citable storage for your AnnData files with DOI assignment, making your datasets suitable for academic publication and long-term archival.
+
+### Why Zenodo?
+
+Zenodo is a research data repository hosted by CERN that provides:
+
+- 📚 **Academic publishing** - Get a DOI for your dataset
+- 🔒 **Long-term archival** - CERN-backed preservation guarantees
+- 🆓 **Free storage** - Up to 50GB per dataset
+- 🌍 **Public accessibility** - Open science friendly
+- 📝 **Versioning** - Built-in support for dataset versions
+- 🧪 **Sandbox testing** - Test your uploads before going to production
+
+### Setup
+
+1. **Get a Zenodo account:**
+   - Create an account at [zenodo.org](https://zenodo.org) (production) or [sandbox.zenodo.org](https://sandbox.zenodo.org) (testing)
+   - These are separate accounts - sandbox is recommended for testing first
+
+2. **Create an access token:**
+
+**For production:**
+
+- Go to [https://zenodo.org/account/settings/applications/](https://zenodo.org/account/settings/applications/)
+- Click "New token"
+- Select scopes: `deposit:write` and `deposit:actions`
+- Copy the generated token
+
+**For sandbox (testing):**
+
+- Go to [https://sandbox.zenodo.org/account/settings/applications/](https://sandbox.zenodo.org/account/settings/applications/)
+- Create a token with the same scopes as above
+- Copy the generated token (this is a different token from production)
+
+3. **Configure credentials:**
+
+Create or edit the `.env` file in the project root:
+
+```bash
+# For production Zenodo
+ZENODO_TOKEN=your-production-token-here
+
+# For sandbox Zenodo (separate token required)
+ZENODO_SANDBOX_TOKEN=your-sandbox-token-here
+```
+
+**Security note:** The `.env` file is in `.gitignore` and will not be committed to git.
+
+4. **Enable Zenodo in dataset config:**
+
+**For production:**
+
+```yaml
+dataset_creation:
+  enabled: true
+  use_zenodo: true # Enable Zenodo upload
+
+  zenodo_config:
+    sandbox: false # Use production Zenodo
+```
+
+**For sandbox (testing):**
+
+```yaml
+dataset_creation:
+  enabled: true
+  use_zenodo: true # Enable Zenodo upload
+
+  zenodo_config:
+    sandbox: true # Use sandbox Zenodo for testing
+```
+
+The appropriate environment variable (`ZENODO_TOKEN` or `ZENODO_SANDBOX_TOKEN`) will be automatically used based on the `sandbox` setting.
+
+### How It Works
+
+1. **During dataset creation:**
+   - Processed AnnData files are packaged as ZIP archives
+   - A single Zenodo deposit (draft) is created for the entire dataset
+   - All files (train/validation splits) are uploaded to this deposit
+   - Download URLs are generated and embedded in the HuggingFace dataset
+   - The deposit remains in draft state - you can publish it manually on Zenodo
+
+2. **When using the dataset:**
+   - The `adata_link` column contains Zenodo download URLs
+   - Files can be downloaded on-demand using the Zenodo API
+   - No authentication required for published deposits
+
+3. **Deposit management:**
+   - Deposit information is saved in `zenodo_share_map.json` in your data directory
+   - Re-running the pipeline reuses the same deposit (no duplicates)
+   - You can edit metadata and publish the deposit on the Zenodo website
+
+### Production vs Sandbox
+
+**Sandbox (sandbox.zenodo.org):**
+
+- ✅ Safe testing environment
+- ✅ Same API as production
+- ✅ Can be deleted/reset without consequences
+- ❌ Not persistent (may be wiped periodically)
+- ❌ No real DOIs
+
+**Production (zenodo.org):**
+
+- ✅ Permanent storage with real DOIs
+- ✅ Suitable for publication
+- ⚠️ Deposits cannot be deleted once published
+- ⚠️ Use with care
+
+**Workflow:** Always test with sandbox first, then switch to production when ready.
+
 ### Other Storage Backends
 
-**Currently supported:** Nextcloud only
+**Currently supported:** Nextcloud, Zenodo
 
-**Want other backends?** If you need support for other cloud storage providers (AWS S3, Google Drive, Figshare, Zenodo, etc.), please [open an issue](https://github.com/mengerj/adata_hf_datasets/issues) describing your use case. We're interested in adding compatibility for additional storage backends!
+**Want other backends?** If you need support for other cloud storage providers (AWS S3, Google Drive, Figshare, etc.), please [open an issue](https://github.com/mengerj/adata_hf_datasets/issues) describing your use case. We're interested in adding compatibility for additional storage backends!
 
 **For developers:** The storage interface is in `src/adata_hf_datasets/file_utils.py`. Contributions for new backends are welcome!
 
