@@ -39,18 +39,8 @@ dependencies = [
   "requests",
   "scanpy>=1.10.4",
   "torch>=2.6",                                 # Required for transformers; scvi-tools and geneformer are optional
-  "transformers>=4.43.1",
+  "transformers>=4.55",
   "zarr<3",                                     #had some compatibility issues with anndata and numcodecs and used 2.16.1
-]
-
-optional-dependencies.cw-geneformer = [
-  "cellwhisperer",
-  "loompy>=3.0.8",
-  "scikit-learn>=1.7.2",
-  "statsmodels>=0.14.5",
-  "tdigest>=0.5.2.2",
-  "transformers==4.43.1",
-  "wandb>=0.23",
 ]
 
 optional-dependencies.dev = [
@@ -58,10 +48,26 @@ optional-dependencies.dev = [
   "ruff",
   "twine",
 ]
+#optional-dependencies.cw-geneformer = [
+#  "cellwhisperer",
+#  "loompy>=3.0.8",
+#  "scikit-learn>=1.7.2",
+#  "statsmodels>=0.14.5",
+#  "tdigest>=0.5.2.2",
+#  "transformers==4.43.1",
+#  "wandb>=0.23",
+#]
+
+optional-dependencies.geneformer = [
+  "geneformer",
+]
 optional-dependencies.jupyter = [
   "ipykernel>=6.29.5",
   "ipywidgets>=8.1.5",
   "jupyter>=1.1.1",
+]
+optional-dependencies.scvi = [
+  "scvi-tools",
 ]
 optional-dependencies.test = [
   "coverage",
@@ -76,3 +82,4 @@ where = [ "src" ]
 
 [tool.uv.sources]
 cellwhisperer = { path = "external/CellWhisperer", editable = true }
+geneformer = { path = "external/Geneformer", editable = true }
