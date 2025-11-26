@@ -57,7 +57,7 @@ embedding_preparation:
 
 # Embedding overrides (both dataset-specific and execution parameters)
 embedding_cpu:
-  enabled: true
+  enabled: false
   overwrite: true
   methods: ["pca"] #, "scvi_fm", "gs"]
 
@@ -71,7 +71,7 @@ dataset_creation:
   memory_gb: 256
   enabled: true
   use_nextcloud: false
-  use_zenodo: true
+  use_zenodo: false
   # Dataset-specific parameters
   required_obsm_keys:
     [
