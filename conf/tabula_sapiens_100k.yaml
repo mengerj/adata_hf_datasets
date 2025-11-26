@@ -49,12 +49,12 @@ embedding_preparation:
   methods: ["geneformer", "geneformer-v1"] #, "scvi_fm", "gs", "gs10k"]
 
 embedding_cpu:
-  enabled: true
+  enabled: false
   overwrite: true
   methods: ["pca"] #, "scvi_fm", "gs", "gs10k"]
 
 embedding_gpu:
-  enabled: false
+  enabled: true
   methods: ["cw-geneformer"]
   venv_path: "cw-geneformer"
 
