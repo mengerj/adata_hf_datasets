@@ -738,23 +738,23 @@ The final repository ID is automatically generated from configuration:
 ```python
 def build_repo_id(
     base_repo_id: str,           # Your HF username/org
-    dataset_names: str,          # Dataset name
-    dataset_format: str,         # "multiplets", "pairs", or "single"
-    caption_key: str,            # Caption key or "no_caption"
+    dataset_name: str,           # Dataset name
 ) -> str:
-    return f"{base_repo_id}/{dataset_names}_{dataset_format}_{caption_key}"
+    return f"{base_repo_id}/{dataset_name}"
 ```
+
+The dataset format and caption key information is documented in the dataset card metadata rather than being included in the repository ID, keeping the repo name clean and simple.
 
 **Example:**
 
 ```yaml
 base_repo_id: "jo-mengr"
 dataset.name: "cellxgene_pseudo_bulk_35k"
-dataset_format: "multiplets"
-caption_key: "natural_language_annotation"
 ```
 
-**Result:** `jo-mengr/cellxgene_pseudo_bulk_35k_multiplets_natural_language_annotation`
+**Result:** `jo-mengr/cellxgene_pseudo_bulk_35k`
+
+The dataset format (e.g., "multiplets", "pairs", "single") and caption key are still documented in the dataset card for reference.
 
 ### Automatic Versioning
 
@@ -762,13 +762,13 @@ If a dataset with the same name already exists, the pipeline **automatically add
 
 ```python
 # First upload
-"jo-mengr/dataset_example_multiplets_cell_type"
+"jo-mengr/cellxgene_pseudo_bulk_35k"
 
 # Second upload (repo exists)
-"jo-mengr/dataset_example_multiplets_cell_type_v2"
+"jo-mengr/cellxgene_pseudo_bulk_35k_v2"
 
 # Third upload
-"jo-mengr/dataset_example_multiplets_cell_type_v3"
+"jo-mengr/cellxgene_pseudo_bulk_35k_v3"
 ```
 
 **Implementation:**

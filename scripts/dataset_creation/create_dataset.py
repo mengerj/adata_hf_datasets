@@ -176,18 +176,19 @@ def build_split_dataset(
 
 def build_repo_id(
     base_repo_id: str,
-    dataset_names: List[str],
-    dataset_format: str,
-    caption_key: str,
+    dataset_name: str,
 ) -> str:
     """
-    Compose the final HF repo-ID.
+    Compose the final HF repo-ID using only the base repo ID and dataset name.
+
+    The dataset format and caption key information is documented in the dataset card
+    rather than being included in the repo ID.
 
     Example:
-        >>> build_repo_id("jo-mengr", ["bulk_5k", "geo"], "pairs", "cell_type")
-        'jo-mengr/bulk_5k_geo_pairs_cell_type'
+        >>> build_repo_id("jo-mengr", "bulk_5k_geo")
+        'jo-mengr/bulk_5k_geo'
     """
-    return f"{base_repo_id.rstrip('/')}/{dataset_names}_{dataset_format}_{caption_key}"
+    return f"{base_repo_id.rstrip('/')}/{dataset_name}"
 
 
 def check_and_version_repo_id(base_repo_id: str) -> str:
@@ -490,9 +491,7 @@ def main(cfg: DictConfig):
                 # We'll build it here to pass to Zenodo, but it might get versioned later
                 temp_repo_id = build_repo_id(
                     base_repo_id=base_repo_id,
-                    dataset_names=data_name,
-                    dataset_format=dataset_format,
-                    caption_key=caption_key or "no_caption",
+                    dataset_name=data_name,
                 )
 
                 share_links = upload_folder_to_zenodo(
@@ -570,9 +569,7 @@ def main(cfg: DictConfig):
     # ------------------------------------------------------------------ #
     repo_id = build_repo_id(
         base_repo_id=base_repo_id,
-        dataset_names=data_name,
-        dataset_format=dataset_format,
-        caption_key=caption_key or "no_caption",
+        dataset_name=data_name,
     )
     logger.info("Final repo_id would be: %s", repo_id)
 

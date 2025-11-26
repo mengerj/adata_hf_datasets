@@ -290,10 +290,12 @@ dataset_creation:
 When the workflow completes, your dataset will be published to:
 
 ```
-https://huggingface.co/datasets/{your-username}/{dataset-name}_{format}_{caption-key}
+https://huggingface.co/datasets/{your-username}/{dataset-name}
 ```
 
-Example: `https://huggingface.co/datasets/jo-mengr/cellxgene_pseudo_bulk_10k_multiplets_natural_language_annotation`
+Example: `https://huggingface.co/datasets/jo-mengr/cellxgene_pseudo_bulk_10k`
+
+The dataset format and caption key information are documented in the dataset card metadata.
 
 The dataset will include:
 
