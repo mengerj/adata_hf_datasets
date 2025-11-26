@@ -23,18 +23,19 @@ is more efficient on the CPU and would otherwise block the precious GPU for a lo
 """
 
 import sys
+import os
 from pathlib import Path
 from typing import Union
 
 import hydra
-from omegaconf import DictConfig
+from omegaconf import DictConfig, OmegaConf
 from dotenv import load_dotenv
 import zarr
 import anndata as ad
 import numpy as np
 
 from adata_hf_datasets.utils import setup_logging
-from adata_hf_datasets.file_utils import safe_read_h5ad
+from adata_hf_datasets.file_utils import safe_read_h5ad, get_zarr_store_class
 from adata_hf_datasets.embed import InitialEmbedder
 
 # from adata_hf_datasets.sys_monitor import SystemMonitor
@@ -111,7 +112,8 @@ def check_existing_embeddings(file_path: Path, input_format: str = "auto") -> se
 
     if format_to_use == "zarr":
         # For zarr, we can check the obsm group directly
-        store = zarr.storage.LocalStore(file_path)
+        ZarrStore = get_zarr_store_class()
+        store = ZarrStore(file_path)
         root = zarr.group(store=store)
         if "obsm" in root:
             return set(root["obsm"].keys())
@@ -455,8 +457,76 @@ def main(cfg: DictConfig):
                         )
                     emb_dim = embedding_cfg.embedding_dim_map[method]
 
+                    # Extract init_kwargs for this method
+                    # General init_kwargs are passed to all embedders; unused kwargs are ignored
+                    # Optional: method-specific init_kwargs_<method> can override for specific methods
+                    init_kwargs = {}
+                    if (
+                        hasattr(embedding_cfg, "init_kwargs")
+                        and embedding_cfg.init_kwargs
+                    ):
+                        # Convert OmegaConf to dict if needed
+                        general_kwargs = OmegaConf.to_container(
+                            embedding_cfg.init_kwargs, resolve=True
+                        )
+                        if general_kwargs:
+                            init_kwargs.update(general_kwargs)
+
+                    # Method-specific kwargs override general ones (optional, for method-specific overrides)
+                    method_specific_key = f"init_kwargs_{method.replace('-', '_')}"
+                    if hasattr(embedding_cfg, method_specific_key):
+                        method_kwargs = getattr(embedding_cfg, method_specific_key)
+                        if method_kwargs:
+                            # Convert OmegaConf to dict if needed
+                            method_kwargs_dict = OmegaConf.to_container(
+                                method_kwargs, resolve=True
+                            )
+                            if method_kwargs_dict:
+                                init_kwargs.update(method_kwargs_dict)
+                                logger.info(
+                                    f"Using method-specific init_kwargs for '{method}' (overrides general init_kwargs)"
+                                )
+
+                    # Resolve relative paths in init_kwargs (e.g., cw_model_path) relative to PROJECT_DIR
+                    if init_kwargs and "cw_model_path" in init_kwargs:
+                        cw_model_path = Path(init_kwargs["cw_model_path"])
+                        # If path is relative, resolve it relative to PROJECT_DIR
+                        if not cw_model_path.is_absolute():
+                            project_dir = os.environ.get("PROJECT_DIR")
+                            if project_dir:
+                                project_dir = Path(project_dir)
+                                resolved_path = (project_dir / cw_model_path).resolve()
+                                init_kwargs["cw_model_path"] = str(resolved_path)
+                                logger.info(
+                                    f"Resolved relative cw_model_path to: {resolved_path} "
+                                    f"(relative to PROJECT_DIR: {project_dir})"
+                                )
+                            else:
+                                # Fallback: try to infer project root from current working directory
+                                # or use current working directory
+                                cwd = Path.cwd()
+                                # Try to find project root by looking for conf/ directory
+                                project_root = cwd
+                                for parent in [cwd] + list(cwd.parents):
+                                    if (parent / "conf").exists():
+                                        project_root = parent
+                                        break
+                                resolved_path = (project_root / cw_model_path).resolve()
+                                init_kwargs["cw_model_path"] = str(resolved_path)
+                                logger.warning(
+                                    f"PROJECT_DIR not set, resolved relative cw_model_path to: {resolved_path} "
+                                    f"(inferred project root: {project_root})"
+                                )
+
+                    if init_kwargs:
+                        logger.debug(
+                            f"Passing init_kwargs to {method}: {list(init_kwargs.keys())}"
+                        )
+
                     # monitor.log_event(f"Prepare {method}")
-                    embedder = InitialEmbedder(method=method, embedding_dim=emb_dim)
+                    embedder = InitialEmbedder(
+                        method=method, embedding_dim=emb_dim, **init_kwargs
+                    )
                     embedder.prepare(
                         adata_path=str(infile),
                         batch_key=embedding_cfg.batch_key,
@@ -521,8 +591,45 @@ def main(cfg: DictConfig):
                         )
                     emb_dim = embedding_cfg.embedding_dim_map[method]
 
+                    # Extract init_kwargs for this method
+                    # General init_kwargs are passed to all embedders; unused kwargs are ignored
+                    # Optional: method-specific init_kwargs_<method> can override for specific methods
+                    init_kwargs = {}
+                    if (
+                        hasattr(embedding_cfg, "init_kwargs")
+                        and embedding_cfg.init_kwargs
+                    ):
+                        # Convert OmegaConf to dict if needed
+                        general_kwargs = OmegaConf.to_container(
+                            embedding_cfg.init_kwargs, resolve=True
+                        )
+                        if general_kwargs:
+                            init_kwargs.update(general_kwargs)
+
+                    # Method-specific kwargs override general ones (optional, for method-specific overrides)
+                    method_specific_key = f"init_kwargs_{method.replace('-', '_')}"
+                    if hasattr(embedding_cfg, method_specific_key):
+                        method_kwargs = getattr(embedding_cfg, method_specific_key)
+                        if method_kwargs:
+                            # Convert OmegaConf to dict if needed
+                            method_kwargs_dict = OmegaConf.to_container(
+                                method_kwargs, resolve=True
+                            )
+                            if method_kwargs_dict:
+                                init_kwargs.update(method_kwargs_dict)
+                                logger.info(
+                                    f"Using method-specific init_kwargs for '{method}' (overrides general init_kwargs)"
+                                )
+
+                    if init_kwargs:
+                        logger.debug(
+                            f"Passing init_kwargs to {method}: {list(init_kwargs.keys())}"
+                        )
+
                     # monitor.log_event(f"Prepare {method}")
-                    embedder = InitialEmbedder(method=method, embedding_dim=emb_dim)
+                    embedder = InitialEmbedder(
+                        method=method, embedding_dim=emb_dim, **init_kwargs
+                    )
                     embedder.prepare(
                         adata_path=str(input_for_processing),
                         batch_key=embedding_cfg.batch_key,

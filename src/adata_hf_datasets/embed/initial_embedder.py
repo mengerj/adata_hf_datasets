@@ -11,6 +11,7 @@ from adata_hf_datasets.pp.utils import (
     consolidate_low_frequency_categories,
 )
 from adata_hf_datasets.pp.pybiomart_utils import add_ensembl_ids, ensure_ensembl_index
+from adata_hf_datasets.file_utils import get_zarr_store_class
 import shutil
 import tempfile
 import uuid
@@ -1022,7 +1023,8 @@ class GeneformerEmbedder(BaseEmbedder):
             import zarr
 
             logger.debug("Trying to open zarr store from %s", file_path)
-            store = zarr.storage.LocalStore(file_path)
+            ZarrStore = get_zarr_store_class()
+            store = ZarrStore(file_path)
             logger.debug("Opened zarr store from %s", file_path)
             root = zarr.group(store=store)
             logger.debug("Opened zarr group from %s", file_path)
@@ -1083,7 +1085,8 @@ class GeneformerEmbedder(BaseEmbedder):
             # For zarr, we can read groups directly
             import zarr
 
-            store = zarr.storage.LocalStore(file_path)
+            ZarrStore = get_zarr_store_class()
+            store = ZarrStore(file_path)
             root = zarr.group(store=store)
 
             # Check var columns
@@ -1174,7 +1177,8 @@ class GeneformerEmbedder(BaseEmbedder):
         if file_format == "zarr":
             import zarr
 
-            store = zarr.storage.LocalStore(file_path)
+            ZarrStore = get_zarr_store_class()
+            store = ZarrStore(file_path)
             root = zarr.group(store=store)
             return "layers" in root and "counts" in root["layers"]
         elif file_format == "h5ad":
@@ -1215,7 +1219,8 @@ class GeneformerEmbedder(BaseEmbedder):
             import zarr
 
             # Open zarr store in read-write mode
-            store = zarr.storage.LocalStore(file_path)
+            ZarrStore = get_zarr_store_class()
+            store = ZarrStore(file_path)
             root = zarr.group(store=store, mode="r+")
 
             # Get counts array
@@ -1337,7 +1342,7 @@ class GeneformerEmbedder(BaseEmbedder):
         # Patch transformers to make HybridCache available at top level
         self._patch_transformers_hybrid_cache()
 
-        from geneformer import TranscriptomeTokenizer
+        from geneformer.tokenizer import TranscriptomeTokenizer
 
         if adata is not None:
             # If adata object is provided, check if counts layer exists and set X to it
@@ -1527,7 +1532,7 @@ class GeneformerEmbedder(BaseEmbedder):
         # Patch transformers to make HybridCache available at top level
         self._patch_transformers_hybrid_cache()
 
-        from geneformer import EmbExtractor
+        from geneformer.emb_extractor import EmbExtractor
 
         dataset_path = self.out_dataset_dir / f"{self.dataset_name}.dataset"
         if not dataset_path.exists():
@@ -2452,11 +2457,16 @@ class CWGeneformerEmbedder(BaseEmbedder):
         self.device = device
         self._processor = None
         self._model = None
+        # create a "recources" dir in "external/Cellwhisperer"
+        external_dir = (
+            self.cw_model_path.parents[2] / "external" / "CellWhisperer" / "resources"
+        )
+        external_dir.mkdir(parents=True, exist_ok=True)
 
     def _import_cw(self):
         """Import CellWhisperer Geneformer classes dynamically."""
         from importlib.util import find_spec
-        import importlib
+        # import importlib
 
         if find_spec("cellwhisperer") is None:
             raise ImportError(
@@ -2464,6 +2474,13 @@ class CWGeneformerEmbedder(BaseEmbedder):
                 "Repo: https://github.com/mengerj/CellWhisperer.git"
             )
 
+        from cellwhisperer.jointemb.geneformer_model import (
+            GeneformerModel,
+            GeneformerTranscriptomeProcessor,
+        )
+
+        return GeneformerModel, GeneformerTranscriptomeProcessor
+        """
         # Try to locate classes regardless of exact module path by attribute lookup.
         # Primary expectation: classes are importable from `cellwhisperer`.
         cw_pkg = importlib.import_module("cellwhisperer")
@@ -2493,6 +2510,7 @@ class CWGeneformerEmbedder(BaseEmbedder):
                 "Please ensure the package is installed and exposes these classes."
             )
         return GeneformerModel, GeneformerTranscriptomeProcessor
+        """
 
     def prepare(
         self,
@@ -2605,6 +2623,12 @@ class CWGeneformerEmbedder(BaseEmbedder):
         import torch
 
         adata = _check_load_adata(adata, adata_path)
+        # set adata.X to adata.layers["counts"] if it exists
+        if "counts" in adata.layers:
+            adata.X = adata.layers["counts"].copy()
+        else:
+            raise ValueError("'counts' layer not found in adata.layers")
+
         if self._processor is None or self._model is None:
             raise ValueError("Embedder is not prepared. Call `prepare(...)` first.")
 

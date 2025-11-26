@@ -44,16 +44,16 @@ def pp_adata_geneformer(
         )  # user-provided function
 
     # 2. Add n_counts if not present
-    if "n_counts" not in adata.obs.columns:
-        logger.info("Calculating n_counts, which requires scanning the data once.")
-        n_genes = adata.n_vars
-        percent_top = []
-        for p in [50, 100, 200, 500]:
-            if p < n_genes:
-                percent_top.append(p)
+    # if "n_counts" not in adata.obs.columns:
+    logger.info("Calculating n_counts, which requires scanning the data once.")
+    n_genes = adata.n_vars
+    percent_top = []
+    for p in [50, 100, 200, 500]:
+        if p < n_genes:
+            percent_top.append(p)
 
-        sc.pp.calculate_qc_metrics(adata, inplace=True, percent_top=percent_top)
-        adata.obs["n_counts"] = adata.obs["total_counts"]
+    sc.pp.calculate_qc_metrics(adata, inplace=True, percent_top=percent_top)
+    adata.obs["n_counts"] = adata.obs["total_counts"]
 
     # sample_index should already be present
     # add a numeric sample index to obs, which is needed for geneformer

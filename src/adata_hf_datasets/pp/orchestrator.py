@@ -1,5 +1,6 @@
 # src/my_pipeline/preprocessing.py
 import logging
+import shutil
 from pathlib import Path
 from .qc import pp_quality_control
 from .general import pp_adata_general
@@ -8,10 +9,12 @@ from .utils import (
     ensure_raw_counts_layer,
     prepend_instrument_to_description,
     delete_layers,
+    remove_all_na_columns,
 )
 from .bimodal import split_if_bimodal
 from .sra import maybe_add_sra_metadata
 from .loader import BatchChunkLoader
+from ..file_utils import sanitize_zarr_keys
 import numpy as np
 from anndata import concat
 import pandas as pd
@@ -123,10 +126,12 @@ def preprocess_adata(
     processed AnnData object.
     """
     # Make sure X contains raw counts, and "counts" layer is set
-    ensure_raw_counts_layer(adata, raw_layer_key=count_layer_key)
+    adata = ensure_raw_counts_layer(adata, raw_layer_key=count_layer_key)
 
     # Delete specified layers early in the process
     adata = delete_layers(adata, layers_to_delete)
+    # Remove columns that contain only NAs
+    remove_all_na_columns(adata)
 
     processed_splits = []
     if split_bimodal and bimodal_col in adata.obs:
@@ -201,6 +206,8 @@ def preprocess_adata(
             adata_merged.var[attr_name] = pd.Series(
                 {gene: attr_dict.get(gene, None) for gene in adata_merged.var_names}
             )
+        # Remove all-NA columns that may have been created during merging
+        remove_all_na_columns(adata_merged)
     else:
         adata_merged = processed_splits[0]
 
@@ -232,6 +239,9 @@ def preprocess_h5ad(
     split_bimodal: bool = False,
     output_format: str = "zarr",
     layers_to_delete: list[str] | None = None,
+    n_chunks: int | None = None,
+    random_chunking: bool | None = None,
+    chunk_random_seed: int | None = None,
 ) -> None:
     """
     Preprocess a large AnnData file in chunks and writes each chunk to disk.
@@ -301,6 +311,9 @@ def preprocess_h5ad(
     layers_to_delete : list[str] | None, optional
         List of layer names to delete from adata.layers. If None, no layers are deleted.
         Passed to `preprocess_adata`.
+    n_chunks : int | None, optional
+        Maximum number of chunks to process. If None, all chunks are processed.
+        If set, processing stops after this many chunks have been processed and written to disk.
 
     Notes
     -----
@@ -322,19 +335,59 @@ def preprocess_h5ad(
     chunk_dir = outdir
     chunk_dir.mkdir(parents=True, exist_ok=True)
 
+    # Clean existing chunk files to ensure we start fresh
+    # This prevents old chunks from interfering with new preprocessing runs
+    logger.info(f"Cleaning existing chunk files in {chunk_dir}")
+    existing_chunks = list(chunk_dir.glob(f"chunk_*.{output_format}"))
+    if existing_chunks:
+        logger.info(
+            f"Found {len(existing_chunks)} existing chunk file(s), removing them..."
+        )
+        for chunk_file in existing_chunks:
+            try:
+                if chunk_file.is_dir():  # zarr format is a directory
+                    shutil.rmtree(chunk_file)
+                    logger.debug(f"Removed existing zarr chunk directory: {chunk_file}")
+                else:  # h5ad format is a file
+                    chunk_file.unlink()
+                    logger.debug(f"Removed existing h5ad chunk file: {chunk_file}")
+            except Exception as e:
+                logger.warning(f"Failed to remove existing chunk {chunk_file}: {e}")
+        logger.info("Finished cleaning existing chunk files")
+    else:
+        logger.debug("No existing chunk files found, starting fresh")
+
     # Initialize loader based on input file format
     if infile.suffix == ".zarr":
         logger.info("Using zarr format for input file")
         loader = BatchChunkLoader(
-            infile, chunk_size, batch_key=batch_key, file_format="zarr"
+            infile,
+            chunk_size,
+            batch_key=batch_key,
+            file_format="zarr",
+            random_chunking=random_chunking,
+            random_seed=chunk_random_seed,
         )
     else:
         logger.info("Using h5ad format for input file")
         loader = BatchChunkLoader(
-            infile, chunk_size, batch_key=batch_key, file_format="h5ad"
+            infile,
+            chunk_size,
+            batch_key=batch_key,
+            file_format="h5ad",
+            random_chunking=random_chunking,
+            random_seed=chunk_random_seed,
         )
 
+    chunks_processed = 0
     for i, adata in enumerate(loader):
+        # Check if we've reached the chunk limit
+        if n_chunks is not None and chunks_processed >= n_chunks:
+            logger.info(
+                f"Reached chunk limit ({n_chunks}). Stopping processing after {chunks_processed} chunks."
+            )
+            break
+
         try:
             logger.info("Preprocessing chunk %d", i)
             # Process the chunk using the main preprocessing function
@@ -365,12 +418,21 @@ def preprocess_h5ad(
             chunk_path = chunk_dir / f"chunk_{i}.{output_format}"
             logger.info("Writing chunk %d to %s", i, chunk_path)
             if output_format == "zarr":
+                # Sanitize column names to remove forward slashes (not allowed in Zarr keys)
+                sanitize_zarr_keys(adata_merged)
                 adata_merged.write_zarr(chunk_path)
             else:
                 adata_merged.write_h5ad(chunk_path)
+
+            chunks_processed += 1
 
         except Exception as e:
             logger.error(f"Error processing chunk {i}: {e}")
             continue
 
-    logger.info("Finished processing all chunks")
+    if n_chunks is not None:
+        logger.info(
+            f"Finished processing {chunks_processed} chunk(s) (limit: {n_chunks})"
+        )
+    else:
+        logger.info(f"Finished processing all chunks ({chunks_processed} total)")

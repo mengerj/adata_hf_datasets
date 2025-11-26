@@ -25,6 +25,86 @@ import zarr
 logger = logging.getLogger(__name__)
 
 
+def get_zarr_store_class():
+    """
+    Get the appropriate zarr store class based on the installed zarr version.
+
+    In zarr <3, DirectoryStore is used from zarr directly.
+    In zarr >=3, LocalStore is used from zarr.storage.
+
+    Returns
+    -------
+    class
+        The appropriate zarr store class (DirectoryStore for zarr<3, LocalStore for zarr>=3)
+
+    Examples
+    --------
+    >>> StoreClass = get_zarr_store_class()
+    >>> store = StoreClass('/path/to/store')
+    """
+    try:
+        zarr_version = tuple(map(int, zarr.__version__.split(".")))
+    except (AttributeError, ValueError):
+        # Fallback: try to detect by checking if LocalStore exists
+        try:
+            from zarr.storage import LocalStore
+
+            return LocalStore
+        except ImportError:
+            from zarr import DirectoryStore
+
+            return DirectoryStore
+
+    if zarr_version < (3, 0, 0):
+        # zarr <3: use DirectoryStore from zarr
+        from zarr import DirectoryStore
+
+        return DirectoryStore
+    else:
+        # zarr >=3: use LocalStore from zarr.storage
+        from zarr.storage import LocalStore
+
+        return LocalStore
+
+
+def sanitize_zarr_keys(adata: ad.AnnData) -> None:
+    """
+    Sanitize column names in .obs and .var to be compatible with Zarr.
+
+    Zarr does not allow forward slashes in keys. This function removes
+    columns and layers with forward slashes from the AnnData object.
+
+    Parameters
+    ----------
+    adata : AnnData
+        The AnnData object to sanitize (modified in-place).
+    """
+    # Remove .obs columns with forward slashes
+    obs_columns_to_remove = [col for col in adata.obs.columns if "/" in col]
+    if obs_columns_to_remove:
+        logger.warning(
+            f"Removing .obs columns with forward slashes for Zarr compatibility: {obs_columns_to_remove}"
+        )
+        adata.obs = adata.obs.drop(columns=obs_columns_to_remove)
+
+    # Remove .var columns with forward slashes
+    var_columns_to_remove = [col for col in adata.var.columns if "/" in col]
+    if var_columns_to_remove:
+        logger.warning(
+            f"Removing .var columns with forward slashes for Zarr compatibility: {var_columns_to_remove}"
+        )
+        adata.var = adata.var.drop(columns=var_columns_to_remove)
+
+    # Remove layers with forward slashes
+    layers_to_remove = [layer for layer in adata.layers.keys() if "/" in layer]
+    if layers_to_remove:
+        logger.warning(
+            f"Removing layers with forward slashes for Zarr compatibility: {layers_to_remove}"
+        )
+        for layer_name in layers_to_remove:
+            del adata.layers[layer_name]
+
+
 def add_obs_column_to_h5ad(
     infile: Union[str, Path],
     temp_out: Union[str, Path],
@@ -463,9 +543,41 @@ def upload_folder_to_nextcloud(
             return z
         return p  # ignore everything else
 
-    zip_paths = [
-        ensure_zip(p) for p in data_folder.iterdir() if p.name != "share_map.json"
-    ]
+    # Collect all paths first to avoid processing zip files that have source files
+    # This prevents duplicate processing when both source (.zarr/.h5ad) and zip exist
+    all_paths = [p for p in data_folder.iterdir() if p.name != "share_map.json"]
+
+    # Filter out .zip files that have a corresponding source file
+    # If both chunk_0.zarr (dir) and chunk_0.zarr.zip exist, only process the .zarr dir
+    paths_to_process = []
+    for p in all_paths:
+        if p.suffix == ".zip":
+            # Check if this zip corresponds to a source file that also exists
+            # For .zarr.zip, check if .zarr directory exists
+            if p.suffixes == [".zarr", ".zip"]:
+                source = p.with_suffix("")  # Remove .zip to get .zarr
+                if source.exists() and source.is_dir():
+                    # Source exists, skip the zip file (will be processed via source)
+                    continue
+            # For .h5ad.zip, check if .h5ad file exists
+            elif p.suffixes == [".h5ad", ".zip"]:
+                source = p.with_suffix("")  # Remove .zip to get .h5ad
+                if source.exists() and source.is_file():
+                    # Source exists, skip the zip file (will be processed via source)
+                    continue
+        # Process this path (either it's not a zip, or it's a zip without a source)
+        paths_to_process.append(p)
+
+    zip_paths = [ensure_zip(p) for p in paths_to_process]
+    # Deduplicate in case ensure_zip returns the same path for different inputs
+    original_count = len(zip_paths)
+    zip_paths = list(
+        dict.fromkeys(zip_paths)
+    )  # Preserves order while removing duplicates
+    if len(zip_paths) < original_count:
+        logger.info(
+            f"Removed {original_count - len(zip_paths)} duplicate zip file(s) from upload list"
+        )
 
     # ---------- 2) build remote paths & create dirs --------------------
     nc_url = os.getenv(nextcloud_config["url"]).rstrip("/")
@@ -832,9 +944,43 @@ def upload_folder_to_zenodo(
             return z
         return p  # ignore everything else
 
-    zip_paths = [
-        ensure_zip(p) for p in data_folder.iterdir() if p.name != "share_map.json"
-    ]
+    # Collect all paths first to avoid processing zip files that have source files
+    # This prevents duplicate processing when both source (.zarr/.h5ad) and zip exist
+    all_paths = [p for p in data_folder.iterdir() if p.name != "share_map.json"]
+
+    # Filter out .zip files that have a corresponding source file
+    # If both chunk_0.zarr (dir) and chunk_0.zarr.zip exist, only process the .zarr dir
+    paths_to_process = []
+    for p in all_paths:
+        if p.suffix == ".zip":
+            # Check if this zip corresponds to a source file that also exists
+            # For .zarr.zip, check if .zarr directory exists
+            if p.suffixes == [".zarr", ".zip"]:
+                source = p.with_suffix("")  # Remove .zip to get .zarr
+                if source.exists() and source.is_dir():
+                    # Source exists, skip the zip file (will be processed via source)
+                    continue
+            # For .h5ad.zip, check if .h5ad file exists
+            elif p.suffixes == [".h5ad", ".zip"]:
+                source = p.with_suffix("")  # Remove .zip to get .h5ad
+                if source.exists() and source.is_file():
+                    # Source exists, skip the zip file (will be processed via source)
+                    continue
+        # Process this path (either it's not a zip, or it's a zip without a source)
+        paths_to_process.append(p)
+
+    zip_paths = [ensure_zip(p) for p in paths_to_process]
+    # Deduplicate in case ensure_zip returns the same path for different inputs
+    # (shouldn't happen, but being safe)
+    original_count = len(zip_paths)
+    zip_paths = list(
+        dict.fromkeys(zip_paths)
+    )  # Preserves order while removing duplicates
+    if len(zip_paths) < original_count:
+        logger.info(
+            f"Removed {original_count - len(zip_paths)} duplicate zip file(s) from upload list"
+        )
+    logger.info(f"Prepared {len(zip_paths)} file(s) for upload to Zenodo")
 
     # ---------- 2) Get or create deposit --------------------
     deposit_id = share_map.get("_zenodo_deposit_id")
@@ -1014,34 +1160,155 @@ def upload_folder_to_zenodo(
 
     # Upload files sequentially to avoid API rate limits and connection issues
     for zip_path, rel_key, zenodo_filename in uploads:
+        # Validate that the zip file exists and is readable
+        if not zip_path.exists():
+            logger.error(f"Zip file does not exist: {zip_path}")
+            failed_uploads.append(rel_key)
+            continue
+
         file_size = zip_path.stat().st_size
+        upload_target_url = f"{upload_url}/{zenodo_filename}"
 
-        try:
-            logger.info(
-                f"Uploading {zip_path.name} as {zenodo_filename} ({file_size / 1024 / 1024:.1f} MB)..."
-            )
+        # Determine chunk size and retry settings based on file size
+        # For files > 100 MB, use larger chunks and more retries
+        if file_size > 100 * 1024 * 1024:  # > 100 MB
+            chunk_size = 10 * 1024 * 1024  # 10 MB chunks
+            max_retries = 5  # More retries for large files
+            # Longer timeout for large files: 5 minutes per 100 MB, minimum 10 minutes
+            timeout_minutes = max(10, int(file_size / (100 * 1024 * 1024) * 5))
+            timeout = (30, timeout_minutes * 60)
+        else:
+            chunk_size = 5 * 1024 * 1024  # 5 MB chunks for smaller files
+            max_retries = 3
+            timeout = (30, 600)  # 10 minutes for smaller files
 
-            # Upload file to Zenodo bucket with the prefixed filename
-            with open(zip_path, "rb") as f:
-                upload_response = requests.put(
-                    f"{upload_url}/{zenodo_filename}",
-                    data=f,
-                    params={"access_token": zenodo_token},
-                    timeout=(30, 1800),  # 30s connect, 30min read
+        logger.info(
+            f"Uploading {zip_path.name} as {zenodo_filename} ({file_size / 1024 / 1024:.1f} MB)..."
+        )
+        logger.debug(
+            f"Chunk size: {chunk_size / 1024 / 1024:.1f} MB, Max retries: {max_retries}, Timeout: {timeout[1] / 60:.1f} min"
+        )
+
+        # Retry logic for large file uploads
+        upload_success = False
+        last_error = None
+
+        for attempt in range(max_retries):
+            try:
+                # Create a fresh session for each attempt to avoid connection issues
+                with requests.Session() as session:
+                    # Configure session with retry adapter
+                    adapter = requests.adapters.HTTPAdapter(
+                        max_retries=requests.packages.urllib3.util.retry.Retry(
+                            total=0,  # We handle retries manually
+                            backoff_factor=1,
+                            status_forcelist=[500, 502, 503, 504],
+                        ),
+                        pool_connections=1,
+                        pool_maxsize=1,
+                    )
+                    session.mount("https://", adapter)
+                    session.mount("http://", adapter)
+
+                    # Use streaming upload with progress tracking
+                    with open(zip_path, "rb") as f:
+                        # Use ReadWithProgress for streaming with progress bar
+                        reader = ReadWithProgress(
+                            f,
+                            file_size,
+                            chunk_size=chunk_size,
+                            desc=f"Uploading {zenodo_filename} (attempt {attempt + 1})",
+                        )
+
+                        # Set Content-Length header explicitly
+                        headers = {"Content-Length": str(file_size)}
+
+                        upload_response = session.put(
+                            upload_target_url,
+                            data=reader,
+                            params={"access_token": zenodo_token},
+                            headers=headers,
+                            timeout=timeout,
+                        )
+
+                if upload_response.status_code in (200, 201):
+                    upload_success = True
+                    logger.info(
+                        f"File {zenodo_filename} uploaded successfully (status {upload_response.status_code})"
+                    )
+                    break  # Success, exit retry loop
+                else:
+                    error_msg = f"Upload failed: {upload_response.status_code} {upload_response.text[:200]}"
+                    if upload_response.status_code == 401:
+                        error_msg += "\nAuthentication failed. Please check your ZENODO_TOKEN in .env file."
+                    logger.warning(
+                        f"Attempt {attempt + 1}/{max_retries} failed: {error_msg}"
+                    )
+                    last_error = error_msg
+                    if attempt < max_retries - 1:
+                        # Exponential backoff: 2^attempt seconds, with jitter
+                        backoff_time = (2**attempt) + random.uniform(0, 1)
+                        logger.info(f"Retrying in {backoff_time:.1f} seconds...")
+                        time.sleep(backoff_time)
+
+            except requests.exceptions.Timeout as e:
+                last_error = f"Upload timeout: {e}"
+                logger.warning(
+                    f"Attempt {attempt + 1}/{max_retries} timed out for {zenodo_filename}"
                 )
+                if attempt < max_retries - 1:
+                    backoff_time = (2**attempt) + random.uniform(0, 1)
+                    logger.info(f"Retrying in {backoff_time:.1f} seconds...")
+                    time.sleep(backoff_time)
+                else:
+                    logger.error(
+                        f"Upload timeout for {zenodo_filename} after {max_retries} attempts. "
+                        f"This may indicate a network issue or the file is too large."
+                    )
 
-            if upload_response.status_code not in (200, 201):
-                error_msg = f"Upload failed for {zenodo_filename}: {upload_response.status_code} {upload_response.text}"
-                if upload_response.status_code == 401:
-                    error_msg += "\nAuthentication failed. Please check your ZENODO_TOKEN in .env file."
-                logger.error(error_msg)
-                failed_uploads.append(rel_key)
-                continue
+            except requests.exceptions.ConnectionError as e:
+                last_error = f"Connection error: {e}"
+                logger.warning(
+                    f"Attempt {attempt + 1}/{max_retries} connection error for {zenodo_filename}: {e}"
+                )
+                if attempt < max_retries - 1:
+                    backoff_time = (2**attempt) + random.uniform(0, 1)
+                    logger.info(f"Retrying in {backoff_time:.1f} seconds...")
+                    time.sleep(backoff_time)
+                else:
+                    logger.error(
+                        f"Connection error while uploading {zenodo_filename} after {max_retries} attempts: {e}. "
+                        "Please check your network connection."
+                    )
 
-            logger.info(
-                f"File {zenodo_filename} uploaded successfully (status {upload_response.status_code})"
-            )
+            except requests.exceptions.RequestException as e:
+                last_error = f"Request error: {e}"
+                logger.warning(
+                    f"Attempt {attempt + 1}/{max_retries} request error for {zenodo_filename}: {e}"
+                )
+                if attempt < max_retries - 1:
+                    backoff_time = (2**attempt) + random.uniform(0, 1)
+                    logger.info(f"Retrying in {backoff_time:.1f} seconds...")
+                    time.sleep(backoff_time)
+                else:
+                    logger.error(
+                        f"Request error while uploading {zenodo_filename} after {max_retries} attempts: {e}",
+                        exc_info=True,
+                    )
 
+            except Exception as e:
+                last_error = f"Unexpected error: {e}"
+                logger.error(
+                    f"Unexpected error on attempt {attempt + 1}/{max_retries} for {zenodo_filename}: {e}",
+                    exc_info=True,
+                )
+                if attempt < max_retries - 1:
+                    backoff_time = (2**attempt) + random.uniform(0, 1)
+                    logger.info(f"Retrying in {backoff_time:.1f} seconds...")
+                    time.sleep(backoff_time)
+
+        # Handle final result
+        if upload_success:
             # Construct download URL directly from deposit_id and filename
             # Format: https://zenodo.org/api/records/{deposit_id}/draft/files/{filename}/content
             # For sandbox: https://sandbox.zenodo.org/api/records/{deposit_id}/draft/files/{filename}/content
@@ -1054,9 +1321,10 @@ def upload_folder_to_zenodo(
             # Save progress incrementally
             mapping_path.write_text(json.dumps(share_map, indent=2))
             logger.info(f"✅ Uploaded {zenodo_filename} - Download URL: {download_url}")
-
-        except Exception as e:
-            logger.error(f"Error uploading {zenodo_filename}: {e}", exc_info=True)
+        else:
+            logger.error(
+                f"Failed to upload {zenodo_filename} after {max_retries} attempts. Last error: {last_error}"
+            )
             failed_uploads.append(rel_key)
 
     # Final save of share_map
@@ -2066,6 +2334,191 @@ def _atomic_overwrite(src_dir: Path, dst_dir: Path) -> None:
         raise
 
 
+def remove_attributes_from_file(
+    file_path: Path,
+    attributes_to_remove: list[str],
+    in_place: bool = True,
+) -> Path:
+    """
+    Remove specified attributes from an AnnData file (zarr or h5ad).
+
+    For zarr stores, attributes are deleted directly from disk without loading
+    the full data into memory. For h5ad files, the file is loaded, modified,
+    and saved back.
+
+    Parameters
+    ----------
+    file_path : Path
+        Path to the AnnData file (.h5ad or .zarr).
+    attributes_to_remove : list[str]
+        List of attribute paths to remove. Can be top-level (e.g., "raw") or
+        nested (e.g., "uns/log1p/base"). Use "/" to separate nested keys.
+    in_place : bool, default=True
+        If True, modify the file in place. If False, create a new file with
+        "_cleaned" suffix (not implemented for zarr, always in-place).
+
+    Returns
+    -------
+    Path
+        Path to the cleaned file (same as input if in_place=True).
+
+    Examples
+    --------
+    >>> remove_attributes_from_file(
+    ...     Path("data.zarr"),
+    ...     attributes_to_remove=["raw", "uns/log1p/base"]
+    ... )
+    """
+    if not file_path.exists():
+        raise FileNotFoundError(f"File not found: {file_path}")
+
+    if not attributes_to_remove:
+        logger.info("No attributes to remove, skipping")
+        return file_path
+
+    if file_path.suffix == ".zarr":
+        return _remove_attributes_from_zarr(file_path, attributes_to_remove)
+    elif file_path.suffix == ".h5ad":
+        return _remove_attributes_from_h5ad(file_path, attributes_to_remove, in_place)
+    else:
+        raise ValueError(f"Unsupported file format: {file_path.suffix}")
+
+
+def _remove_attributes_from_zarr(
+    zarr_path: Path, attributes_to_remove: list[str]
+) -> Path:
+    """Remove attributes from zarr store directly on disk."""
+    logger.info(f"Removing attributes from zarr store: {zarr_path}")
+
+    # Use zarr.open_group which supports mode parameter consistently across versions
+    root = zarr.open_group(str(zarr_path), mode="r+")
+
+    removed_count = 0
+    for attr_path in attributes_to_remove:
+        try:
+            parts = attr_path.split("/")
+
+            if parts[0] == "raw":
+                # Remove raw attribute (stored as "raw" group in zarr)
+                if "raw" in root:
+                    del root["raw"]
+                    removed_count += 1
+                    logger.info("Removed 'raw' from zarr store")
+                else:
+                    logger.warning("'raw' not found in zarr store, skipping")
+            elif parts[0] == "uns":
+                # Handle nested uns paths (e.g., "uns/log1p/base")
+                if "uns" not in root:
+                    logger.warning("'uns' not found in zarr store, skipping")
+                    continue
+
+                uns_group = root["uns"]
+
+                # Navigate through nested groups
+                current = uns_group
+                for part in parts[1:-1]:
+                    if part in current:
+                        current = current[part]
+                    else:
+                        logger.warning(
+                            f"Path '{attr_path}' not found (missing '{part}'), skipping"
+                        )
+                        break
+                else:
+                    # All parent parts exist, try to delete the final key
+                    final_key = parts[-1]
+                    if final_key in current:
+                        del current[final_key]
+                        removed_count += 1
+                        logger.info(f"Removed '{attr_path}' from zarr store")
+                    else:
+                        logger.warning(f"Attribute '{attr_path}' not found, skipping")
+            else:
+                logger.warning(
+                    f"Unsupported top-level attribute '{parts[0]}'. "
+                    "Only 'raw' and 'uns' are supported for zarr."
+                )
+        except Exception as e:
+            logger.warning(f"Failed to remove '{attr_path}': {e}")
+
+    # Consolidate metadata after deletions to update .zmetadata
+    zarr.consolidate_metadata(zarr_path)
+    root.store.close()
+    logger.info(
+        f"Removed {removed_count} out of {len(attributes_to_remove)} attributes"
+    )
+    return zarr_path
+
+
+def _remove_attributes_from_h5ad(
+    h5ad_path: Path, attributes_to_remove: list[str], in_place: bool
+) -> Path:
+    """Remove attributes from h5ad file by loading, modifying, and saving."""
+    logger.info(f"Removing attributes from h5ad file: {h5ad_path}")
+
+    # Load the file
+    adata = ad.read_h5ad(h5ad_path)
+
+    removed_count = 0
+    for attr_path in attributes_to_remove:
+        try:
+            parts = attr_path.split("/")
+
+            if parts[0] == "raw":
+                # Remove raw attribute
+                if adata.raw is not None:
+                    adata.raw = None
+                    removed_count += 1
+                    logger.info("Removed 'raw' from h5ad file")
+                else:
+                    logger.warning("'raw' not found, skipping")
+            elif parts[0] == "uns":
+                # Handle nested uns paths (e.g., "uns/log1p/base")
+                current = adata.uns
+                for part in parts[1:-1]:
+                    if isinstance(current, dict) and part in current:
+                        current = current[part]
+                    else:
+                        logger.warning(
+                            f"Path '{attr_path}' not found (missing '{part}'), skipping"
+                        )
+                        break
+                else:
+                    # Navigate to parent dict and delete final key
+                    final_key = parts[-1]
+                    if isinstance(current, dict) and final_key in current:
+                        del current[final_key]
+                        removed_count += 1
+                        logger.info(f"Removed '{attr_path}' from h5ad file")
+                    else:
+                        logger.warning(f"Attribute '{attr_path}' not found, skipping")
+            else:
+                logger.warning(
+                    f"Unsupported top-level attribute '{parts[0]}'. "
+                    "Only 'raw' and 'uns' are supported."
+                )
+        except Exception as e:
+            logger.warning(f"Failed to remove '{attr_path}': {e}")
+
+    # Save back
+    if in_place:
+        output_path = h5ad_path
+        # For in-place, we need to write to a temp file first, then replace
+        temp_path = h5ad_path.with_suffix(".h5ad.tmp")
+        adata.write_h5ad(temp_path)
+        shutil.move(temp_path, h5ad_path)
+    else:
+        output_path = h5ad_path.with_name(
+            h5ad_path.stem + "_cleaned" + h5ad_path.suffix
+        )
+        adata.write_h5ad(output_path)
+
+    logger.info(
+        f"Removed {removed_count} out of {len(attributes_to_remove)} attributes"
+    )
+    return output_path
+
+
 def safe_write_zarr(
     adata: ad.AnnData,
     target: Path,
@@ -2076,6 +2529,10 @@ def safe_write_zarr(
     Atomically write *adata* to *target* (a directory-Zarr store),
     **overwriting** any existing store at the same path.
     """
+    # Sanitize column names to remove forward slashes (not allowed in Zarr keys)
+    # Create a copy to avoid modifying the original
+    adata = adata.copy()
+    sanitize_zarr_keys(adata)
 
     for attempt in range(1, max_retry + 1):
         tmp_dir = Path(tempfile.mkdtemp(dir=target.parent, suffix=".zarr.tmp"))

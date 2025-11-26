@@ -46,12 +46,17 @@ download:
   preserve_proportions: false # Whether to preserve proportions when stratifying
   validate: true # Validate downloaded file format
   keep_full_file: true # Keep the full downloaded file for future subsetting
+  venv_path: null # Virtual environment path (relative to project_directory). If null, uses workflow.venv_path or ".venv"
+  memory_gb: 60
 
 # =============================================================================
 # PREPROCESSING CONFIGURATION (dataset-specific overrides)
 # =============================================================================
 preprocessing:
   # Dataset-specific processing parameters
+  memory_gb: 60
+  n_chunks: null
+  enable_plotting: false
   min_cells: 20 # Minimum number of cells a gene should be expressed in
   min_genes: 200 # Minimum number of genes a cell should express
   n_top_genes: 5000 # Number of top genes to select
@@ -82,10 +87,17 @@ preprocessing:
   split_dataset: ${split_dataset} # Reference dataset-level split configuration
   train_split: 0.9 # Train/validation split ratio (only used if split_dataset=true)
   random_seed: 42 # Random seed for splits
+
+  # Chunking parameters
+  random_chunking: null # If true, use random chunking (even if batch_key provided); if false, use batch-based (requires batch_key); if null, auto-detect (random if no batch_key, batch-based if batch_key provided)
+  chunk_random_seed: 42 # Random seed for random chunking (if null, uses system random)
   metrics_of_interest: # Quality control metrics
     - "n_genes_by_counts"
     - "total_counts"
     - "pct_counts_mt"
+
+  # Virtual environment configuration
+  venv_path: null # Virtual environment path (relative to project_directory). If null, uses workflow.venv_path or ".venv"
 
 # =============================================================================
 # EMBEDDING PREPARATION CONFIGURATION (dataset-specific overrides)
@@ -109,6 +121,8 @@ embedding_preparation:
   # Method-specific parameters
   batch_size: 128 # Used by geneformer
 
+  init_kwargs: null
+
   # Embedding dimensions (dataset-specific)
   embedding_dim_map:
     scvi_fm: 50 # Can't be changed as the pretrained scvi model is fixed.
@@ -119,6 +133,9 @@ embedding_preparation:
     gs10k: 10000
     geneformer-v1: 512
     cw-geneformer: 512
+
+  # Virtual environment configuration
+  venv_path: null # Virtual environment path (relative to project_directory). If null, uses workflow.venv_path or ".venv"
 
 # =============================================================================
 # CPU EMBEDDING CONFIGURATION (dataset-specific overrides)
@@ -136,6 +153,10 @@ embedding_cpu:
   # Method-specific parameters
   batch_size: 128 # Used by geneformer
 
+  # Initialization kwargs for embedders (optional)
+  # These kwargs are passed to all embedders; unused kwargs are ignored by embedders that don't need them
+  init_kwargs: null
+
   # Embedding dimensions (dataset-specific)
   embedding_dim_map:
     scvi_fm: 50 # Can't be changed as the pretrained scvi model is fixed.
@@ -152,6 +173,9 @@ embedding_cpu:
   output_format: "zarr" # Output format preference
   overwrite: false # Whether to overwrite existing embeddings
   chunk_rows: 16384 # Number of cells written per chunk when streaming into Zarr
+
+  # Virtual environment configuration
+  venv_path: null # Virtual environment path (relative to project_directory). If null, uses workflow.venv_path or ".venv"
 
 # =============================================================================
 # GPU EMBEDDING CONFIGURATION (dataset-specific overrides)
@@ -169,6 +193,20 @@ embedding_gpu:
   # Method-specific parameters
   batch_size: 128 # Used by geneformer
 
+  # Initialization kwargs for embedders (optional)
+  # These kwargs are passed to all embedders; unused kwargs are ignored by embedders that don't need them
+  # Example for cw-geneformer:
+  init_kwargs:
+    cw_model_path: "external/Geneformer_v1/geneformer-12L-30M" # Relative paths are resolved relative to PROJECT_DIR
+  #   # Or use absolute path: "/absolute/path/to/geneformer-12L-30M"
+  #   processor_kwargs:
+  #     nproc: 4
+  #     emb_label: ["sample_name"]
+  #   model_config:
+  #     emb_mode: "cell"
+  #     emb_layer: -1
+  #     forward_batch_size: 16
+
   # Embedding dimensions (dataset-specific)
   embedding_dim_map:
     scvi_fm: 50 # Can't be changed as the pretrained scvi model is fixed.
@@ -185,6 +223,9 @@ embedding_gpu:
   output_format: "zarr" # Output format preference
   overwrite: false # Whether to overwrite existing embeddings
   chunk_rows: 16384 # Number of cells written per chunk when streaming into Zarr
+
+  # Virtual environment configuration
+  venv_path: null # Virtual environment path (relative to project_directory). If null, uses workflow.venv_path or ".venv"
 
 # =============================================================================
 # DATASET CREATION CONFIGURATION (dataset-specific overrides)
@@ -223,6 +264,13 @@ dataset_creation:
   base_repo_id: "jo-mengr"
   private: true # Whether to make the HuggingFace Hub dataset private (true) or public (false)
 
+  # Attribute removal (before upload)
+  # Remove specified attributes from zarr/h5ad files to reduce file size
+  # For zarr: attributes are deleted directly from disk (efficient, no loading)
+  # For h5ad: files are loaded, modified, and saved back
+  # Use "/" to separate nested keys (e.g., "uns/log1p/base")
+  attributes_to_remove: null # List of attributes to remove, e.g., ["raw", "uns/log1p/base"]
+
   # Nextcloud upload (dataset-specific)
   use_nextcloud: false
   nextcloud_config:
@@ -240,3 +288,6 @@ dataset_creation:
     # - ZENODO_SANDBOX_TOKEN: Sandbox Zenodo access token (when sandbox: true)
     # Create tokens at: https://zenodo.org/account/settings/applications/ (production)
     #                  https://sandbox.zenodo.org/account/settings/applications/ (sandbox)
+
+  # Virtual environment configuration
+  venv_path: null # Virtual environment path (relative to project_directory). If null, uses workflow.venv_path or ".venv"
