@@ -20,7 +20,7 @@ import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
-from adata_hf_datasets.initial_embedder import PCAEmbedder
+from adata_hf_datasets.embed.initial_embedder import PCAEmbedder
 
 
 class TestNewPCAEmbedder:
@@ -76,19 +76,40 @@ class TestNewPCAEmbedder:
         # Test with default paths
         embedder = PCAEmbedder(embedding_dim=50)
         assert embedder.embedding_dim == 50
-        assert "cellxgene_geo_pca_3936_to_50.pkl" in embedder.model_path
-        assert "gene_selection_ENSG_8k.txt" in embedder.gene_list_path
+        assert "cellxgene_geo_pca_10000_to_50.pkl" in embedder.model_path
+        assert "gene_selection_10k.txt" in embedder.gene_list_path
 
-        # Test with custom paths
-        custom_model_path = "custom_model.pkl"
-        custom_gene_list_path = "custom_genes.txt"
+        # Test with custom resources_dir
+        custom_resources_dir = "custom_resources"
         embedder = PCAEmbedder(
             embedding_dim=50,
-            model_path=custom_model_path,
-            gene_list_path=custom_gene_list_path,
+            resources_dir=custom_resources_dir,
         )
-        assert embedder.model_path == custom_model_path
-        assert embedder.gene_list_path == custom_gene_list_path
+        assert custom_resources_dir in embedder.model_path
+        assert custom_resources_dir in embedder.gene_list_path
+
+        # Test with custom file names
+        custom_model_file = "custom_model.pkl"
+        custom_gene_list_file = "custom_genes.txt"
+        embedder = PCAEmbedder(
+            embedding_dim=50,
+            model_file=custom_model_file,
+            gene_list_file=custom_gene_list_file,
+        )
+        assert custom_model_file in embedder.model_path
+        assert custom_gene_list_file in embedder.gene_list_path
+
+        # Test with both resources_dir and file names
+        embedder = PCAEmbedder(
+            embedding_dim=50,
+            resources_dir=custom_resources_dir,
+            model_file=custom_model_file,
+            gene_list_file=custom_gene_list_file,
+        )
+        assert embedder.model_path == f"{custom_resources_dir}/{custom_model_file}"
+        assert (
+            embedder.gene_list_path == f"{custom_resources_dir}/{custom_gene_list_file}"
+        )
 
     def test_model_loading(self):
         """Test that the model loads correctly."""

@@ -1,50 +1,51 @@
 #!/usr/bin/env python3
 """
-Dataset Download Script with Optional Subsetting
+Dataset Download Script with Dataset-Centric Configuration
 
-This script downloads datasets (primarily h5ad files for single-cell genomics)
-with optional random subsetting capabilities. It supports various data formats
-and provides comprehensive logging and error handling.
+This script downloads datasets using the unified dataset configuration system.
+It supports automatic path generation, stratification, and comprehensive logging.
 
 Usage:
-    python download_dataset.py --url URL --output OUTPUT_PATH [OPTIONS]
+    python download_dataset.py --config-name=dataset_name [OPTIONS]
 
 Examples:
-    # Basic download
-    python download_dataset.py \
-        --url "https://datasets.cellxgene.cziscience.com/f886c7d9-1392-4f09-9e10-31b953afa2da.h5ad" \
-        --output "data/my_dataset.h5ad"
+    # Download using dataset config
+    python download_dataset.py --config-name=dataset_cellxgene_pseudo_bulk_3_5k
 
-    # Download with subsetting
-    python download_dataset.py \
-        --url "https://allenimmunology.org/public/publication/download/84792154-cdfb-42d0-8e42-39e210e980b4/filesets/3a6afb68-0379-4afa-838a-c0b7f222b517/immune_health_atlas_full.h5ad" \
-        --output "data/immune_health_atlas_subset.h5ad" \
-        --subset-size 10000 \
-        --seed 42
+    # Override subset size
+    python download_dataset.py --config-name=dataset_cellxgene_pseudo_bulk_3_5k \
+        ++download.subset_size=10000
 """
 
-import argparse
 import logging
-import os
 import sys
-import tempfile
+import os
 from pathlib import Path
-from typing import Optional
+from typing import Optional, List
 
+import hydra
 import anndata as ad
 import numpy as np
-from adata_hf_datasets.file_utils import download_from_link
+from omegaconf import DictConfig
+from hydra.core.hydra_config import HydraConfig
 
-# Setup logging
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - %(levelname)s - %(message)s",
-    handlers=[
-        logging.StreamHandler(sys.stdout),
-        logging.FileHandler("download_dataset.log"),
-    ],
-)
+from adata_hf_datasets.file_utils import download_from_link
+from adata_hf_datasets.workflow import apply_all_transformations
+from adata_hf_datasets.utils import setup_logging
+
 logger = logging.getLogger(__name__)
+
+# Add error handler for central error log if WORKFLOW_DIR is set
+WORKFLOW_DIR = os.environ.get("WORKFLOW_DIR")
+if WORKFLOW_DIR:
+    error_log_path = os.path.join(WORKFLOW_DIR, "logs", "errors_consolidated.log")
+    error_handler = logging.FileHandler(error_log_path, mode="a")
+    error_handler.setLevel(logging.ERROR)
+    formatter = logging.Formatter(
+        "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+    )
+    error_handler.setFormatter(formatter)
+    logging.getLogger().addHandler(error_handler)
 
 
 def ensure_directory_exists(file_path: str) -> None:
@@ -52,6 +53,25 @@ def ensure_directory_exists(file_path: str) -> None:
     parent_dir = Path(file_path).parent
     parent_dir.mkdir(parents=True, exist_ok=True)
     logger.info(f"Ensured directory exists: {parent_dir}")
+
+
+def check_file_exists(file_path: str) -> bool:
+    """Check if the target file already exists and has reasonable size."""
+    file_path_obj = Path(file_path)
+
+    if not file_path_obj.exists():
+        return False
+
+    # Check if file has reasonable size (at least 1KB to avoid empty files)
+    file_size = file_path_obj.stat().st_size
+    if file_size < 1024:
+        logger.warning(f"File exists but is too small ({file_size} bytes): {file_path}")
+        return False
+
+    logger.info(
+        f"File already exists: {file_path} (size: {file_size / (1024 * 1024):.1f} MB)"
+    )
+    return True
 
 
 def download_dataset(url: str, output_path: str) -> bool:
@@ -88,13 +108,71 @@ def download_dataset(url: str, output_path: str) -> bool:
         return False
 
 
+def create_stratified_subset(
+    adata: ad.AnnData, subset_size: int, stratify_keys: List[str]
+) -> np.ndarray:
+    """
+    Create a stratified random subset preserving proportions of multiple categorical variables.
+
+    This function creates a subset that preserves the joint distribution of the stratify keys.
+    For example, if stratifying by both batch_key and annotation_key, it will preserve
+    the proportions of each batch-annotation combination.
+
+    Parameters
+    ----------
+    adata : anndata.AnnData
+        The AnnData object
+    subset_size : int
+        Target subset size
+    stratify_keys : List[str]
+        List of column names in adata.obs to stratify by
+
+    Returns
+    -------
+    np.ndarray
+        Array of indices for the subset
+    """
+    # Create a combined stratification key
+    combined_key = "_".join(stratify_keys)
+    adata.obs[combined_key] = adata.obs[stratify_keys].apply(
+        lambda x: "_".join(x.astype(str)), axis=1
+    )
+
+    category_counts = adata.obs[combined_key].value_counts()
+    category_proportions = category_counts / adata.n_obs
+
+    subset_indices = []
+    for category, proportion in category_proportions.items():
+        category_mask = adata.obs[combined_key] == category
+        category_indices = np.where(category_mask)[0]
+
+        # Calculate how many from this category to include
+        target_count = max(1, int(np.round(proportion * subset_size)))
+        actual_count = min(target_count, len(category_indices))
+
+        # Randomly sample from this category
+        selected = np.random.choice(category_indices, size=actual_count, replace=False)
+        subset_indices.extend(selected)
+
+    # If we have too many, randomly remove some
+    if len(subset_indices) > subset_size:
+        subset_indices = np.random.choice(
+            subset_indices, size=subset_size, replace=False
+        )
+
+    # Clean up temporary column
+    adata.obs.drop(columns=[combined_key], inplace=True)
+
+    return np.array(subset_indices)
+
+
 def create_random_subset(
     input_path: str,
     output_path: str,
     subset_size: int,
     seed: Optional[int] = None,
-    obs_subset_key: Optional[str] = None,
-    preserve_proportions: bool = False,
+    stratify_keys: Optional[List[str]] = None,
+    preserve_proportions: bool = True,
 ) -> bool:
     """
     Create a random subset of an AnnData object.
@@ -109,10 +187,10 @@ def create_random_subset(
         Number of observations (cells) to include in subset
     seed : int, optional
         Random seed for reproducibility
-    obs_subset_key : str, optional
-        If provided, subset will preserve proportions of this categorical variable
-    preserve_proportions : bool, default False
-        Whether to preserve proportions when using obs_subset_key
+    stratify_keys : List[str], optional
+        List of column names in obs to stratify by
+    preserve_proportions : bool, default True
+        Whether to preserve proportions when using stratify_keys
 
     Returns
     -------
@@ -138,17 +216,25 @@ def create_random_subset(
             subset_size = adata.n_obs
 
         # Create subset indices
-        if (
-            obs_subset_key
-            and preserve_proportions
-            and obs_subset_key in adata.obs.columns
-        ):
-            logger.info(
-                f"Creating stratified subset preserving proportions of '{obs_subset_key}'"
-            )
-            subset_indices = create_stratified_subset(
-                adata, subset_size, obs_subset_key
-            )
+        if stratify_keys and preserve_proportions:
+            # Check if all stratify keys exist
+            missing_keys = [
+                key for key in stratify_keys if key not in adata.obs.columns
+            ]
+            if missing_keys:
+                logger.warning(
+                    f"Missing stratify keys: {missing_keys}. Using random subset instead."
+                )
+                subset_indices = np.random.choice(
+                    adata.n_obs, size=subset_size, replace=False
+                )
+            else:
+                logger.info(
+                    f"Creating stratified subset preserving proportions of: {stratify_keys}"
+                )
+                subset_indices = create_stratified_subset(
+                    adata, subset_size, stratify_keys
+                )
         else:
             logger.info("Creating random subset")
             subset_indices = np.random.choice(
@@ -165,7 +251,7 @@ def create_random_subset(
         logger.info(f"Saved subset to: {output_path}")
 
         # Log some statistics
-        log_subset_stats(adata, adata_subset, obs_subset_key)
+        log_subset_stats(adata, adata_subset, stratify_keys)
 
         return True
 
@@ -174,53 +260,8 @@ def create_random_subset(
         return False
 
 
-def create_stratified_subset(
-    adata: ad.AnnData, subset_size: int, stratify_key: str
-) -> np.ndarray:
-    """
-    Create a stratified random subset preserving proportions of a categorical variable.
-
-    Parameters
-    ----------
-    adata : anndata.AnnData
-        The AnnData object
-    subset_size : int
-        Target subset size
-    stratify_key : str
-        Column in adata.obs to stratify by
-
-    Returns
-    -------
-    np.ndarray
-        Array of indices for the subset
-    """
-    category_counts = adata.obs[stratify_key].value_counts()
-    category_proportions = category_counts / adata.n_obs
-
-    subset_indices = []
-    for category, proportion in category_proportions.items():
-        category_mask = adata.obs[stratify_key] == category
-        category_indices = np.where(category_mask)[0]
-
-        # Calculate how many from this category to include
-        target_count = max(1, int(np.round(proportion * subset_size)))
-        actual_count = min(target_count, len(category_indices))
-
-        # Randomly sample from this category
-        selected = np.random.choice(category_indices, size=actual_count, replace=False)
-        subset_indices.extend(selected)
-
-    # If we have too many, randomly remove some
-    if len(subset_indices) > subset_size:
-        subset_indices = np.random.choice(
-            subset_indices, size=subset_size, replace=False
-        )
-
-    return np.array(subset_indices)
-
-
 def log_subset_stats(
-    original: ad.AnnData, subset: ad.AnnData, obs_key: Optional[str] = None
+    original: ad.AnnData, subset: ad.AnnData, stratify_keys: Optional[List[str]] = None
 ) -> None:
     """Log statistics about the original and subset data."""
     logger.info("=== Subset Statistics ===")
@@ -228,29 +269,50 @@ def log_subset_stats(
     logger.info(f"Subset shape: {subset.shape}")
     logger.info(f"Subset ratio: {subset.n_obs / original.n_obs:.2%}")
 
-    if obs_key and obs_key in original.obs.columns and obs_key in subset.obs.columns:
-        logger.info(f"\nProportions for '{obs_key}':")
-        orig_props = original.obs[obs_key].value_counts(normalize=True).sort_index()
-        subset_props = subset.obs[obs_key].value_counts(normalize=True).sort_index()
+    if stratify_keys:
+        for key in stratify_keys:
+            if key in original.obs.columns and key in subset.obs.columns:
+                logger.info(f"\nProportions for '{key}':")
+                orig_props = original.obs[key].value_counts(normalize=True).sort_index()
+                subset_props = subset.obs[key].value_counts(normalize=True).sort_index()
 
-        for category in orig_props.index:
-            orig_prop = orig_props.get(category, 0)
-            subset_prop = subset_props.get(category, 0)
-            logger.info(f"  {category}: {orig_prop:.2%} -> {subset_prop:.2%}")
+                for category in orig_props.index:
+                    orig_prop = orig_props.get(category, 0)
+                    subset_prop = subset_props.get(category, 0)
+                    logger.info(f"  {category}: {orig_prop:.2%} -> {subset_prop:.2%}")
 
 
 def validate_file_format(file_path: str) -> bool:
     """Validate that the downloaded file has the expected format."""
     try:
         if file_path.endswith(".h5ad"):
-            # Try to read metadata without loading full data
-            adata = ad.read_h5ad(file_path, backed="r")
-            logger.info(f"Validated h5ad file with shape: {adata.shape}")
-            return True
+            # Use a lighter validation approach - just check if we can open the file
+            # without loading all data into memory
+            import h5py
+
+            with h5py.File(file_path, "r") as f:
+                # Check if it has the basic AnnData structure
+                if "obs" in f and "var" in f and "X" in f:
+                    # Get basic info without loading data
+                    obs_shape = f["obs"].shape if hasattr(f["obs"], "shape") else None
+                    var_shape = f["var"].shape if hasattr(f["var"], "shape") else None
+                    x_shape = f["X"].shape if hasattr(f["X"], "shape") else None
+                    logger.info(
+                        f"Validated h5ad file structure - obs: {obs_shape}, var: {var_shape}, X: {x_shape}"
+                    )
+                    return True
+                else:
+                    logger.error("File does not have expected AnnData structure")
+                    return False
         elif file_path.endswith(".zarr"):
-            adata = ad.read_zarr(file_path)
-            logger.info(f"Validated zarr file with shape: {adata.shape}")
-            return True
+            # For zarr, we can check if the directory exists and has basic structure
+            zarr_path = Path(file_path)
+            if zarr_path.exists() and (zarr_path / ".zarray").exists():
+                logger.info(f"Validated zarr directory: {file_path}")
+                return True
+            else:
+                logger.error("Zarr directory does not have expected structure")
+                return False
         else:
             logger.warning(f"Unknown file format: {file_path}")
             return True  # Assume it's valid
@@ -259,134 +321,155 @@ def validate_file_format(file_path: str) -> bool:
         return False
 
 
-def main():
-    parser = argparse.ArgumentParser(
-        description="Download datasets with optional subsetting",
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog=__doc__,
-    )
+@hydra.main(
+    version_base=None,
+    config_path="../../conf",
+    config_name="dataset_human_disease",
+)
+def main(cfg: DictConfig):
+    """
+    Download a dataset using the dataset-centric configuration system.
+    """
+    # Get Hydra run directory for logging
+    hydra_run_dir = HydraConfig.get().run.dir
+    setup_logging(log_dir=hydra_run_dir)
 
-    # Required arguments
-    parser.add_argument(
-        "--url", type=str, required=True, help="URL to download the dataset from"
-    )
-    parser.add_argument(
-        "--output",
-        type=str,
-        required=True,
-        help="Local path to save the downloaded file",
-    )
+    # Apply all transformations to the config (paths, common keys, etc.)
+    cfg = apply_all_transformations(cfg)
 
-    # Optional subsetting arguments
-    parser.add_argument(
-        "--subset-size",
-        type=int,
-        help="Number of observations to include in random subset (optional)",
-    )
-    parser.add_argument(
-        "--seed",
-        type=int,
-        default=42,
-        help="Random seed for reproducible subsetting (default: 42)",
-    )
-    parser.add_argument(
-        "--stratify-by",
-        type=str,
-        help="Column name in obs to stratify subset by (preserves proportions)",
-    )
-    parser.add_argument(
-        "--preserve-proportions",
-        action="store_true",
-        help="When using --stratify-by, preserve original proportions",
-    )
+    # Extract download-specific config
+    download_cfg = cfg.download
+    dataset_cfg = cfg.dataset
 
-    # Other options
-    parser.add_argument(
-        "--temp-dir",
-        type=str,
-        help="Directory for temporary files (default: system temp)",
-    )
-    parser.add_argument(
-        "--validate", action="store_true", help="Validate downloaded file format"
-    )
-    parser.add_argument(
-        "--keep-temp",
-        action="store_true",
-        help="Keep temporary downloaded file when subsetting",
-    )
+    logger.info(f"Processing dataset: {dataset_cfg.name}")
 
-    args = parser.parse_args()
+    # Check if download is enabled
+    if not download_cfg.enabled:
+        logger.info("Download is disabled. Skipping download step.")
+        return
 
-    # Validate arguments
-    if args.subset_size is not None and args.subset_size <= 0:
-        logger.error("Subset size must be positive")
-        sys.exit(1)
+    # Get paths
+    full_file_path = download_cfg.full_file_path
+    output_path = download_cfg.output_path
+    url = dataset_cfg.download_url
 
-    # Determine paths
-    if args.subset_size is not None:
-        # We need to download to a temporary location first
-        if args.temp_dir:
-            temp_dir = Path(args.temp_dir)
-            temp_dir.mkdir(parents=True, exist_ok=True)
-        else:
-            temp_dir = Path(tempfile.gettempdir())
+    logger.info(f"Download URL: {url if url else 'None (using existing file)'}")
+    logger.info(f"Full file path: {full_file_path}")
+    logger.info(f"Output path: {output_path}")
 
-        # Create temporary file with same extension as output
-        output_suffix = Path(args.output).suffix
-        temp_file = temp_dir / f"temp_download{output_suffix}"
-        download_path = str(temp_file)
-        final_path = args.output
+    # Determine if we need subsetting
+    subset_size = download_cfg.subset_size
+    stratify_keys = download_cfg.stratify_keys
+    preserve_proportions = download_cfg.preserve_proportions
+    seed = download_cfg.seed
+    validate = download_cfg.validate
+    keep_full_file = download_cfg.keep_full_file
+
+    logger.info(f"Subset size: {subset_size}")
+    logger.info(f"Stratify keys: {stratify_keys}")
+    logger.info(f"Preserve proportions: {preserve_proportions}")
+    logger.info(f"Random seed: {seed}")
+    logger.info(f"Keep full file: {keep_full_file}")
+
+    # Step 1: Check if full file already exists
+    if check_file_exists(full_file_path):
+        logger.info(f"Full file already exists: {full_file_path}")
+        full_file_available = True
     else:
-        # Direct download to final location
-        download_path = args.output
-        final_path = args.output
+        logger.info(f"Full file does not exist: {full_file_path}")
+        full_file_available = False
 
-    try:
-        # Step 1: Download the dataset
-        success = download_dataset(args.url, download_path)
+    # Step 2: Check if final output already exists
+    if check_file_exists(output_path):
+        logger.info(f"Final output already exists: {output_path}")
+        logger.info("Skipping download and subsetting.")
+        return
+
+    # Step 3: Download full file if needed
+    if not full_file_available:
+        # Check if we have a URL to download from
+        if not url:
+            logger.error(
+                "No download URL provided and full file does not exist. "
+                f"Cannot proceed. Expected file at: {full_file_path}"
+            )
+            sys.exit(1)
+
+        logger.info("Downloading full file...")
+        success = download_dataset(url, full_file_path)
         if not success:
             logger.error("Download failed")
             sys.exit(1)
 
-        # Step 2: Validate if requested
-        if args.validate:
-            if not validate_file_format(download_path):
+        # Validate if requested
+        if validate:
+            if not validate_file_format(full_file_path):
                 logger.error("File validation failed")
                 sys.exit(1)
+    else:
+        logger.info("Using existing full file for subsetting")
 
-        # Step 3: Create subset if requested
-        if args.subset_size is not None:
-            success = create_random_subset(
-                input_path=download_path,
-                output_path=final_path,
-                subset_size=args.subset_size,
-                seed=args.seed,
-                obs_subset_key=args.stratify_by,
-                preserve_proportions=args.preserve_proportions,
+    # Step 4: Create subset if requested
+    if subset_size is not None:
+        logger.info("Creating subset from full file...")
+        success = create_random_subset(
+            input_path=full_file_path,
+            output_path=output_path,
+            subset_size=subset_size,
+            seed=seed,
+            stratify_keys=stratify_keys,
+            preserve_proportions=preserve_proportions,
+        )
+
+        if not success:
+            logger.error("Subsetting failed")
+            sys.exit(1)
+
+        # Clean up full file if not requested to keep
+        if not keep_full_file:
+            try:
+                Path(full_file_path).unlink()
+                logger.info(f"Removed full file: {full_file_path}")
+            except Exception as e:
+                logger.warning(f"Could not remove full file: {e}")
+    else:
+        # No subsetting requested, copy full file to output path
+        logger.info("No subsetting requested, copying full file to output path...")
+
+        # Check if paths are the same (avoid copying to itself)
+        full_file_path_resolved = Path(full_file_path).resolve()
+        output_path_resolved = Path(output_path).resolve()
+
+        if full_file_path_resolved == output_path_resolved:
+            logger.info(
+                "Full file path and output path are the same. No copying needed."
             )
+            logger.info(f"File already at target location: {output_path}")
+        else:
+            try:
+                import shutil
 
-            if not success:
-                logger.error("Subsetting failed")
+                shutil.copy2(full_file_path, output_path)
+                logger.info(f"Copied full file to: {output_path}")
+            except Exception as e:
+                logger.error(f"Failed to copy file: {e}")
                 sys.exit(1)
 
-            # Clean up temporary file unless requested to keep
-            if not args.keep_temp and download_path != final_path:
-                try:
-                    os.remove(download_path)
-                    logger.info(f"Removed temporary file: {download_path}")
-                except Exception as e:
-                    logger.warning(f"Could not remove temporary file: {e}")
+        # Clean up full file if not requested to keep
+        if not keep_full_file:
+            try:
+                Path(full_file_path).unlink()
+                logger.info(f"Removed full file: {full_file_path}")
+            except Exception as e:
+                logger.warning(f"Could not remove full file: {e}")
 
-        logger.info("=== SUCCESS ===")
-        logger.info(f"Final output saved to: {final_path}")
-
-    except KeyboardInterrupt:
-        logger.info("Download interrupted by user")
-        sys.exit(1)
-    except Exception as e:
-        logger.error(f"Unexpected error: {e}")
-        sys.exit(1)
+    logger.info("=== SUCCESS ===")
+    logger.info(f"Final output saved to: {output_path}")
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except Exception:
+        logger.exception("Download failed.")
+        sys.exit(1)

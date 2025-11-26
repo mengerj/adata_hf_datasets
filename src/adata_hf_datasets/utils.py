@@ -6,7 +6,7 @@ import numpy as np
 from anndata import AnnData
 
 from adata_hf_datasets.pp import maybe_add_sra_metadata
-from adata_hf_datasets.plotting import qc_evaluation_plots  # adjust import as needed
+from adata_hf_datasets.pp.plotting import qc_evaluation_plots  # adjust import as needed
 from datetime import datetime
 import os
 from pathlib import Path
@@ -168,26 +168,42 @@ def annotate_and_push_dataset(
 
     Parameters
     ----------
-    repo_id (str, optional):
+    dataset : datasets.DatasetDict
+        The dataset to push. Used to extract example data for the README.
+    repo_id : str, optional
         Repository ID for Hugging Face. If provided, the dataset will be pushed to Hugging Face.
-    private (bool, optional):
+    private : bool, optional
         If True, the dataset will be private on Hugging Face. Default is False.
-    readme_template_name (str, optional):
+    readme_template_name : str, optional
         The name of the README template to use. Has to be stored in the package resources.
-    embedding_generation (str, optional):
+    embedding_generation : str, optional
         A description of how the embeddings stored in .obsm of the adata files were generated.
-    dataset_type_explanation (str, optional):
+    dataset_type_explanation : str, optional
         A description of the dataset type. E.g. "pairs" or "multiplets".
+    metadata : dict, optional
+        Additional metadata. Can contain:
+        - cs_length: Length of cell sentences (optional)
+        - example_share_link: Example link to an adata file (optional)
     """
+    # Extract example data from the first row of the dataset
+    example_data = {}
+    first_split = list(dataset.keys())[0]
+    if len(dataset[first_split]) > 0:
+        first_row = dataset[first_split][0]
+        for key, value in first_row.items():
+            str_value = str(value)
+            if len(str_value) > 150:
+                str_value = str_value[:150] + "..."
+            example_data[key] = str_value
+
+    # Add example data to metadata
+    if metadata is None:
+        metadata = {}
+    metadata["example_data"] = example_data
 
     # Create a temporary directory
     with tempfile.TemporaryDirectory() as temp_dir:
         readme_path = Path(temp_dir) / "README.md"
-
-        # Extract share_info from metadata if available
-        share_info = None
-        if metadata and "adata_links" in metadata:
-            share_info = metadata["adata_links"]
 
         # Write the dynamically generated README file
         with open(readme_path, "w", encoding="utf-8") as f:
@@ -197,13 +213,11 @@ def annotate_and_push_dataset(
                     repo_id=repo_id,
                     embedding_generation=embedding_generation,
                     dataset_type_explanation=dataset_type_explanation,
-                    share_info=share_info,
                     metadata=metadata,
                 )
             )
 
         # Push dataset with README
-        # Step 3: Define metadata with custom share_link
         dataset.push_to_hub(repo_id, private=private)
 
         # Upload README file
@@ -221,42 +235,48 @@ def _generate_readme(
     repo_id,
     embedding_generation,
     dataset_type_explanation=None,
-    share_info=None,
     metadata=None,
 ) -> str:
     """
     Fills the README template with dataset-specific details.
 
+    Parameters
+    ----------
+    readme_template_name : str
+        The name of the template file to use. E.g cellwhisperer
+    repo_id : str
+        Repository ID for Hugging Face
+    embedding_generation : str
+        A description of how the embeddings stored in .obsm of the adata files were generated.
+    dataset_type_explanation : str, optional
+        A description of the dataset type. E.g. "pairs" or "multiplets".
+    metadata : dict, optional
+        Additional metadata dictionary that can contain:
+        - cs_length: Length of cell sentences (optional, omitted from README if not provided)
+        - example_data: Dictionary of example row data
+        - example_share_link: Example link to an adata file
+
     Returns
     -------
     str
         The formatted README content.
-    readme_template_name
-        The name of the template file to use. E.g cellwhisperer
-    embedding_generation
-        A description of how the embeddings stored in .obsm of the adata files were generated.
-    metadata
-        Additional metadata dictionary that can contain cs_length, example_data, example_share_link, etc.
     """
-
     # Format example data if provided
     example_data_formatted = ""
-    cs_length = ""
+    cs_length_section = ""
     example_share_link = ""
 
     if metadata:
         if "example_data" in metadata and metadata["example_data"]:
             example_lines = []
             for key, value in metadata["example_data"].items():
-                # Format each field with proper indentation and truncation
-                formatted_value = _format_example_value(value, max_length=80)
-
-                # Format with proper indentation for readability
-                example_lines.append(f"  {key}: {formatted_value}")
+                # Format each field with proper indentation
+                example_lines.append(f"  {key}: {value}")
             example_data_formatted = "\n".join(example_lines)
 
-        if "cs_length" in metadata:
-            cs_length = str(metadata["cs_length"])
+        if "cs_length" in metadata and metadata["cs_length"]:
+            # Only include cs_length section if it's provided
+            cs_length_section = f"**Cell Sentence Length:** {metadata['cs_length']}"
 
         if "example_share_link" in metadata and metadata["example_share_link"]:
             example_share_link = metadata["example_share_link"]
@@ -266,8 +286,7 @@ def _generate_readme(
         repo_id=repo_id,
         embedding_generation=embedding_generation,
         dataset_type_explanation=dataset_type_explanation,
-        share_info=share_info,
-        cs_length=cs_length,
+        cs_length_section=cs_length_section,
         example_data_formatted=example_data_formatted,
         example_share_link=example_share_link,
     )
@@ -355,53 +374,3 @@ def subset_sra_and_plot(
         metrics_of_interest=list(cfg.metrics_of_interest),
         categories_of_interest=list(cfg.categories_of_interest),
     )
-
-
-def _format_example_value(value, max_length: int = 80) -> str:
-    """
-    Format a value for display in example data, handling different data types
-    and truncating if necessary.
-
-    Parameters
-    ----------
-    value : any
-        The value to format
-    max_length : int
-        Maximum length before truncation
-
-    Returns
-    -------
-    str
-        Formatted string representation of the value
-    """
-    if value is None:
-        return "None"
-    elif isinstance(value, (list, tuple)):
-        # For lists/tuples, show the type and length
-        if len(value) == 0:
-            return f"{type(value).__name__}([])"
-        elif len(value) <= 3:
-            # Show all elements if 3 or fewer
-            str_repr = str(value)
-        else:
-            # Show first few elements for longer lists
-            preview = str(value[:3])[:-1] + f", ... ({len(value)} total)]"
-            str_repr = preview
-    elif isinstance(value, dict):
-        # For dicts, show type and key count
-        if len(value) == 0:
-            return "dict({})"
-        else:
-            keys_preview = list(value.keys())[:3]
-            if len(value) <= 3:
-                str_repr = str(value)
-            else:
-                str_repr = f"dict with {len(value)} keys: {keys_preview}..."
-    else:
-        str_repr = str(value)
-
-    # Truncate if too long
-    if len(str_repr) > max_length:
-        return str_repr[:max_length] + "..."
-
-    return str_repr

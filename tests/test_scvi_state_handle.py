@@ -5,19 +5,27 @@ import scanpy as sc
 from anndata import AnnData
 from pathlib import Path
 import pytest
-import scvi
-from scvi.model import SCVI
-from scvi.hub import HubModel
-from scvi.hub._metadata import HubMetadata
-from huggingface_hub import ModelCard
+from importlib.util import find_spec
 import sys
 import traceback
 import pathlib
-from adata_hf_datasets.initial_embedder import SCVIEmbedder
+from adata_hf_datasets.embed.initial_embedder import SCVIEmbedder
+
+# Check if scvi is available for conditional imports
+SCVI_AVAILABLE = find_spec("scvi") is not None
+
+if SCVI_AVAILABLE:
+    import scvi
+    from scvi.model import SCVI
+    from scvi.hub import HubModel
+    from scvi.hub._metadata import HubMetadata
+    from huggingface_hub import ModelCard
 
 
 def _train_tiny_scvi(model_dir: Path) -> None:
     """Train a 1-epoch tiny SCVI, save weights + adata."""
+    if not SCVI_AVAILABLE:
+        pytest.skip("scvi-tools is required for this test")
     adata = AnnData(X=np.random.poisson(1.0, size=(20, 10)))
     adata.obs["batch"] = "b0"
     SCVI.setup_anndata(adata, batch_key="batch")
@@ -26,7 +34,10 @@ def _train_tiny_scvi(model_dir: Path) -> None:
     m.save(model_dir, overwrite=True, save_anndata=True)
 
 
-def _build_local_hub(model_dir: Path) -> HubModel:
+def _build_local_hub(model_dir: Path):
+    """Build a local HubModel for testing."""
+    if not SCVI_AVAILABLE:
+        pytest.skip("scvi-tools is required for this test")
     meta = HubMetadata(
         scvi_version=scvi.__version__,
         anndata_version=sc.__version__,
@@ -77,6 +88,7 @@ def _worker(model_dir, shared_pt, q):
         shutil.copyfile = orig_copyfile
 
 
+@pytest.mark.skipif(not SCVI_AVAILABLE, reason="scvi-tools is required for this test")
 def test_stale_handle_queue(tmp_path):
     model_dir = tmp_path / "tiny_scvi"
     _train_tiny_scvi(model_dir)
@@ -101,7 +113,7 @@ def test_stale_handle_queue(tmp_path):
 def test_robust_copy_file_with_retries(tmp_path):
     """Test the robust file copying mechanism with simulated NFS errors."""
     import shutil
-    from adata_hf_datasets.initial_embedder import SCVIEmbedder
+    from adata_hf_datasets.embed.initial_embedder import SCVIEmbedder
 
     # Create a test file
     src_file = tmp_path / "test_source.txt"
@@ -159,7 +171,7 @@ def test_robust_copy_file_with_retries(tmp_path):
 def test_robust_copy_file_max_retries_exceeded(tmp_path):
     """Test that robust copying fails after max retries are exceeded."""
     import shutil
-    from adata_hf_datasets.initial_embedder import SCVIEmbedder
+    from adata_hf_datasets.embed.initial_embedder import SCVIEmbedder
 
     # Create a test file
     src_file = tmp_path / "test_source.txt"
@@ -207,7 +219,7 @@ def test_robust_copy_file_max_retries_exceeded(tmp_path):
 
 def test_chunked_copy(tmp_path):
     """Test the chunked copy mechanism."""
-    from adata_hf_datasets.initial_embedder import SCVIEmbedder
+    from adata_hf_datasets.embed.initial_embedder import SCVIEmbedder
 
     # Create a test file with some content
     src_file = tmp_path / "test_source.txt"

@@ -11,41 +11,36 @@ readme = "README.md"
 authors = [
   { name = "Jonatan Menger", email = "jonatan.menger@gmail.com" },
 ]
-requires-python = ">=3.11,<3.13"
+requires-python = ">=3.11,<3.14"
 classifiers = [
   "Programming Language :: Python :: 3 :: Only",
   "Programming Language :: Python :: 3.11",
   "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
 ]
 dependencies = [
-  "anndata",
+  "anndata>=0.12",
   "appdirs>=1.4.4",
-  "biopython>=1.85",
   "boto3>=1.37.15",
   "botocore>=1.37.15",
-  "bs4",
-  "dask>=2025.3",
-  "datasets",
-#  "geneformer",
+  "datasets>=3.2",
   "huggingface-hub>=0.28.1",
   "hydra-core>=1.3.2",
-  "ipykernel>=6.29.5",
-  "ipywidgets>=8.1.5",
-  "jupyter>=1.1.1",
   "mygene>=3.2.2",
-  "numcodecs==0.14.1",
+  #  "numcodecs==0.14.1",
   "numpy",
   "pandas",
+  "psutil>=7.1",
+  "pyarrow>=14.0.1,<18; python_version<'3.13'",
+  "pyarrow>=18; python_version>='3.13'",
   "pybiomart>=0.2",
-  "pynvml>=12",
   "pysradb>=2.2.2",
   "python-dotenv>=1.0.1",
   "requests",
   "scanpy>=1.10.4",
-  "scvi-tools>=1.2.2.post2",
-  "torch>=2.6",
-  "transformers==4.43.4",    # due to issues with importing AdamW used in Geneformer
-  "zarr==2.16.1",            #had some compatibility issues with anndata and numcodecs
+  "torch>=2.6",                                 # Required for transformers; scvi-tools and geneformer are optional
+  "transformers>=4.55",
+  "zarr<3",                                     #had some compatibility issues with anndata and numcodecs and used 2.16.1
 ]
 
 optional-dependencies.dev = [
@@ -53,16 +48,38 @@ optional-dependencies.dev = [
   "ruff",
   "twine",
 ]
-optional-dependencies.doc = [
-  "myst-nb",
-  "sphinx",
-  "sphinx-autodoc-typehints",
-  "sphinx-book-theme",
+#optional-dependencies.cw-geneformer = [
+#  "cellwhisperer",
+#  "loompy>=3.0.8",
+#  "scikit-learn>=1.7.2",
+#  "statsmodels>=0.14.5",
+#  "tdigest>=0.5.2.2",
+#  "transformers==4.43.1",
+#  "wandb>=0.23",
+#]
+
+optional-dependencies.geneformer = [
+  "geneformer",
+]
+optional-dependencies.jupyter = [
+  "ipykernel>=6.29.5",
+  "ipywidgets>=8.1.5",
+  "jupyter>=1.1.1",
+]
+optional-dependencies.scvi = [
+  "scvi-tools",
 ]
 optional-dependencies.test = [
   "coverage",
   "pytest",
 ]
 
+[tool.setuptools.packages.find]
+where = [ "src" ]
+
+[tool.setuptools.package-data]
+"adata_hf_datasets.resources" = [ "*.txt", "*.pkl" ]
+
 [tool.uv.sources]
-#geneformer = { path = "external/Geneformer" }
+cellwhisperer = { path = "external/CellWhisperer", editable = true }
+geneformer = { path = "external/Geneformer", editable = true }

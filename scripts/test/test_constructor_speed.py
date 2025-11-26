@@ -6,7 +6,7 @@ from pathlib import Path
 import anndata as ad
 import pandas as pd
 
-from adata_hf_datasets.ds_constructor import AnnDataSetConstructor
+from adata_hf_datasets.dataset import AnnDataSetConstructor
 
 
 def main() -> None:

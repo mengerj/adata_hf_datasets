@@ -6,7 +6,7 @@ from anndata import AnnData
 from tqdm import tqdm
 import time
 import random
-from adata_hf_datasets.pp.utils import deduplicate_samples_by_id
+from .utils import deduplicate_samples_by_id
 
 logger = logging.getLogger(__name__)
 

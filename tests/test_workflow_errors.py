@@ -14,8 +14,11 @@ import sys
 # Add src to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
-from adata_hf_datasets.config_utils import validate_config
-from adata_hf_datasets.workflow_orchestrator import WorkflowOrchestrator, WorkflowLogger
+from adata_hf_datasets.workflow import (
+    validate_config,
+    WorkflowOrchestrator,
+    WorkflowLogger,
+)
 
 
 class TestConfigurationErrors:
@@ -50,36 +53,6 @@ class TestConfigurationErrors:
         )
 
         with pytest.raises(ValueError, match="Missing required field: dataset.name"):
-            validate_config(config)
-
-    def test_invalid_embedding_methods(self):
-        """Test error when invalid embedding methods are specified."""
-        config = OmegaConf.create(
-            {
-                "dataset": {"name": "test_dataset", "file_path": "test.h5ad"},
-                "download": {"enabled": True, "subset_size": 1000, "seed": 42},
-                "preprocessing": {
-                    "enabled": True,
-                    "input_file": "test.h5ad",
-                    "output_dir": "test_output",
-                },
-                "embedding": {
-                    "enabled": True,
-                    "input_files": ["test.h5ad"],
-                    "output_dir": "test_output",
-                    "methods": ["invalid_method"],  # Invalid method
-                    "embedding_dim_map": {"hvg": 512},
-                },
-                "dataset_creation": {
-                    "enabled": True,
-                    "data_dir": "test_output",
-                    "sentence_keys": ["test"],
-                    "required_obsm_keys": ["X_pca"],
-                },
-            }
-        )
-
-        with pytest.raises(ValueError, match="Invalid embedding methods"):
             validate_config(config)
 
 

@@ -20,7 +20,7 @@ import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
-from adata_hf_datasets.initial_embedder import GeneSelectEmbedder
+from adata_hf_datasets.embed.initial_embedder import GeneSelectEmbedder
 
 
 class TestGeneSelectEmbedder:
@@ -77,10 +77,24 @@ class TestGeneSelectEmbedder:
         embedder = GeneSelectEmbedder()
         assert "gene_selection_common_genes.txt" in embedder.gene_list_path
 
-        # Test with custom path
-        custom_gene_list_path = "custom_genes.txt"
-        embedder = GeneSelectEmbedder(gene_list_path=custom_gene_list_path)
-        assert embedder.gene_list_path == custom_gene_list_path
+        # Test with custom resources_dir
+        custom_resources_dir = "custom_resources"
+        embedder = GeneSelectEmbedder(resources_dir=custom_resources_dir)
+        assert custom_resources_dir in embedder.gene_list_path
+
+        # Test with custom file name
+        custom_gene_list_file = "custom_genes.txt"
+        embedder = GeneSelectEmbedder(gene_list_file=custom_gene_list_file)
+        assert custom_gene_list_file in embedder.gene_list_path
+
+        # Test with both resources_dir and file name
+        embedder = GeneSelectEmbedder(
+            resources_dir=custom_resources_dir,
+            gene_list_file=custom_gene_list_file,
+        )
+        assert (
+            embedder.gene_list_path == f"{custom_resources_dir}/{custom_gene_list_file}"
+        )
 
     def test_gene_list_loading(self):
         """Test that the gene list loads correctly."""

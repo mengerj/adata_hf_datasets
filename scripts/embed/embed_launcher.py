@@ -17,7 +17,7 @@ from typing import List, Optional, Tuple
 
 from omegaconf import DictConfig
 
-from adata_hf_datasets.config_utils import apply_all_transformations
+from adata_hf_datasets.workflow import apply_all_transformations
 
 # Add src directory to Python path for imports
 project_root = Path(__file__).parent.parent.parent
@@ -224,7 +224,7 @@ class EmbeddingLauncher:
         sbatch_cmd = [
             "sbatch",
             f"--job-name=embed_{label}",
-            f"--array=0-{file_count - 1}%1",
+            f"--array=0-{file_count - 1}%{file_count}",
             "--time=24:00:00",
         ]
 
@@ -241,6 +241,11 @@ class EmbeddingLauncher:
                     "--cpus-per-task=4",
                 ]
             )
+            # Add node constraint for CPU jobs if CPU_NODE is set
+            cpu_node = os.environ.get("CPU_NODE")
+            if cpu_node:
+                sbatch_cmd.extend(["--nodelist", cpu_node])
+                logger.info(f"🔍 DEBUG: CPU node constraint: {cpu_node}")
         elif self.mode == "gpu":
             sbatch_cmd.extend(
                 [
@@ -249,6 +254,7 @@ class EmbeddingLauncher:
                     "--gres=gpu:1",
                 ]
             )
+            # GPU jobs are not constrained by cpu_node
 
         # Add partition if specified
         if partition:

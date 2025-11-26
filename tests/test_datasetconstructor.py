@@ -24,9 +24,7 @@ import pandas as pd
 import pytest
 from datasets import Dataset
 
-from adata_hf_datasets.ds_constructor import (
-    AnnDataSetConstructor,
-)  # ← adjust to your package
+from adata_hf_datasets.dataset import AnnDataSetConstructor
 
 logger = logging.getLogger(__name__)  # predefined logger per guidelines
 
@@ -117,17 +115,17 @@ def test_full_pipeline(dataset_format, negatives, make_obs_df):
 
     # add AnnData + DataFrame
     builder.add_anndata(
-        adata,
+        adata=adata,
         sentence_keys=["sentence_short", "sentence_long"],
         caption_key="cell_type" if dataset_format != "single" else None,
-        share_link="link_A",
+        adata_link="link_A",
     )
     builder.add_df(
-        df2,
+        df=df2,
         sentence_keys=["sentence_short", "sentence_long"],
         caption_key="cell_type" if dataset_format != "single" else None,
         batch_key="batch",
-        share_link="link_B",
+        adata_link="link_B",
     )
 
     ds = builder.get_dataset()
@@ -144,10 +142,10 @@ def test_full_pipeline(dataset_format, negatives, make_obs_df):
 
     # check share_link column behaviour
     if dataset_format != "single":
-        assert set(df_hf.query("share_link == 'link_A'")["sample_idx"]).issubset(
+        assert set(df_hf.query("adata_link == 'link_A'")["sample_idx"]).issubset(
             set(df1.index)
         )
-        assert set(df_hf.query("share_link == 'link_B'")["sample_idx"]).issubset(
+        assert set(df_hf.query("adata_link == 'link_B'")["sample_idx"]).issubset(
             set(df2.index)
         )
 
@@ -186,8 +184,9 @@ def test_missing_caption_key_raises(make_obs_df):
 
     with pytest.raises(ValueError):
         builder.add_df(
-            df,
+            df=df,
             sentence_keys=["sentence_short", "sentence_long"],
+            adata_link="link_C",
             # caption_key intentionally omitted
         )
 
@@ -199,6 +198,7 @@ def test_sentence_key_missing_raises(make_obs_df):
 
     with pytest.raises(ValueError):
         builder.add_df(
-            df,
+            df=df,
             sentence_keys=["sentence_short", "sentence_long"],  # 'sentence_long' absent
+            adata_link="link_D",
         )

@@ -4,6 +4,7 @@ import scipy.sparse as sp
 import pandas as pd
 from pathlib import Path
 from anndata import AnnData
+import anndata as ad
 
 from adata_hf_datasets.pp.loader import BatchChunkLoader
 from adata_hf_datasets.pp.utils import ensure_raw_counts_layer
@@ -41,7 +42,7 @@ def test_ensure_raw_counts_from_layer(toy_adata_dense):
     ad.layers["my_counts"] = ad.X.copy()
     # erase X to something non-raw
     ad.X = ad.X.astype(float) / 10.0
-    ensure_raw_counts_layer(ad, raw_layer_key="my_counts", raise_on_missing=True)
+    ad = ensure_raw_counts_layer(ad, raw_layer_key="my_counts", raise_on_missing=True)
     # after call, 'counts' must be present, X equals that layer, and dtype integer
     assert "counts" in ad.layers
     np.testing.assert_array_equal(
@@ -56,7 +57,7 @@ def test_ensure_raw_counts_from_layer(toy_adata_dense):
 def test_ensure_raw_counts_detects_X(tmp_path):
     """If no layer but X is raw, we copy X into 'counts'."""
     ad = AnnData(X=np.array([[2, 3], [0, 1]], dtype=int), obs={"batch": ["x", "y"]})
-    ensure_raw_counts_layer(ad, raw_layer_key=None, raise_on_missing=True)
+    ad = ensure_raw_counts_layer(ad, raw_layer_key=None, raise_on_missing=True)
     assert "counts" in ad.layers
     np.testing.assert_array_equal(
         ad.layers["counts"].toarray()
@@ -100,7 +101,7 @@ def realistic_adata_general() -> AnnData:
 def test_pp_adata_general_filters_and_hvg_realistic(realistic_adata_general):
     ad = realistic_adata_general.copy()
     # 1) Ensure raw counts layer is created
-    ensure_raw_counts_layer(ad, raw_layer_key=None, raise_on_missing=True)
+    ad = ensure_raw_counts_layer(ad, raw_layer_key=None, raise_on_missing=True)
     # 1) Remove genes expressed in < 10 cells
     filtered = pp_adata_general(
         ad.copy(),
@@ -176,6 +177,194 @@ def test_returned_adata_is_copy_realistic(realistic_adata_general):
     # ensure .X buffers differ
     assert id(qc.X) != original_X_id
     assert id(general.X) != original_X_id
+
+
+@pytest.fixture
+def adata_with_metadata(tmp_path) -> Path:
+    """
+    Create an on-disk .h5ad with cells that have unique identifiers and metadata.
+    Each cell has:
+    - A unique cell_id in obs.index
+    - cell_type metadata
+    - batch metadata
+    - Other metadata columns
+
+    This allows us to verify that random chunking preserves the correspondence
+    between obs.index and obs columns.
+    """
+    n_cells = 50
+    n_genes = 30
+
+    # Create count matrix
+    X = sp.random(n_cells, n_genes, density=0.3, format="csr", random_state=42)
+
+    # Create unique cell IDs
+    cell_ids = [f"cell_{i:03d}" for i in range(n_cells)]
+
+    # Create metadata with known patterns
+    cell_types = np.array(["T_cell", "B_cell", "NK_cell", "Monocyte", "DC"])[
+        np.arange(n_cells) % 5
+    ]
+    batches = np.array(["batch_A", "batch_B", "batch_C"])[np.arange(n_cells) % 3]
+
+    # Create obs DataFrame with unique index and metadata
+    obs = pd.DataFrame(
+        {
+            "cell_type": cell_types,
+            "batch": batches,
+            "patient_id": [f"patient_{i % 10:02d}" for i in range(n_cells)],
+            "quality_score": np.random.uniform(0.5, 1.0, size=n_cells),
+            "original_index": np.arange(n_cells),  # Track original position
+        },
+        index=cell_ids,  # Set unique cell IDs as index
+    )
+
+    # Create var DataFrame
+    var = pd.DataFrame(
+        index=[f"gene_{i}" for i in range(n_genes)],
+        data={"gene_symbol": [f"GENE_{i}" for i in range(n_genes)]},
+    )
+
+    adata = AnnData(X=X, obs=obs, var=var)
+
+    # Write to disk
+    out = tmp_path / "adata_with_metadata.h5ad"
+    adata.write_h5ad(out)
+    return out
+
+
+def test_random_chunk_loader_preserves_obs_alignment(adata_with_metadata):
+    """
+    Test that random chunking preserves the correspondence between obs.index
+    and obs columns (e.g., cell_type, batch, etc.).
+
+    This is critical because if indices are shuffled incorrectly, the metadata
+    would become misaligned with the expression data.
+    """
+    # Load original data to get reference
+    original = ad.read_h5ad(adata_with_metadata)
+
+    # Create a mapping from cell_id to metadata for verification
+    original_mapping = {}
+    for cell_id in original.obs.index:
+        original_mapping[cell_id] = {
+            "cell_type": original.obs.loc[cell_id, "cell_type"],
+            "batch": original.obs.loc[cell_id, "batch"],
+            "patient_id": original.obs.loc[cell_id, "patient_id"],
+            "original_index": original.obs.loc[cell_id, "original_index"],
+        }
+
+    # Test random chunking with a fixed seed for reproducibility
+    loader = BatchChunkLoader(
+        adata_with_metadata,
+        chunk_size=15,
+        batch_key=None,  # No batch key, should use random chunking
+        random_chunking=True,
+        random_seed=42,
+    )
+
+    # Collect all chunks
+    chunks = list(loader)
+
+    # Verify we got chunks
+    assert len(chunks) > 0, "Loader should produce at least one chunk"
+
+    # Collect all cells from all chunks
+    all_cell_ids = []
+    for chunk in chunks:
+        all_cell_ids.extend(chunk.obs.index.tolist())
+
+    # Verify we have all cells (no duplicates, no missing)
+    assert len(all_cell_ids) == len(original.obs.index), (
+        f"Expected {len(original.obs.index)} cells, got {len(all_cell_ids)}"
+    )
+    assert len(set(all_cell_ids)) == len(all_cell_ids), "Duplicate cell IDs found!"
+    assert set(all_cell_ids) == set(original.obs.index), "Cell IDs don't match!"
+
+    # Verify metadata alignment for each chunk
+    for chunk_idx, chunk in enumerate(chunks):
+        for cell_id in chunk.obs.index:
+            # Verify cell_id exists in original
+            assert cell_id in original_mapping, f"Cell {cell_id} not in original data"
+
+            # Get expected metadata
+            expected = original_mapping[cell_id]
+
+            # Verify each metadata column matches
+            assert chunk.obs.loc[cell_id, "cell_type"] == expected["cell_type"], (
+                f"Chunk {chunk_idx}: cell_type mismatch for {cell_id}. "
+                f"Expected {expected['cell_type']}, got {chunk.obs.loc[cell_id, 'cell_type']}"
+            )
+            assert chunk.obs.loc[cell_id, "batch"] == expected["batch"], (
+                f"Chunk {chunk_idx}: batch mismatch for {cell_id}. "
+                f"Expected {expected['batch']}, got {chunk.obs.loc[cell_id, 'batch']}"
+            )
+            assert chunk.obs.loc[cell_id, "patient_id"] == expected["patient_id"], (
+                f"Chunk {chunk_idx}: patient_id mismatch for {cell_id}. "
+                f"Expected {expected['patient_id']}, got {chunk.obs.loc[cell_id, 'patient_id']}"
+            )
+            assert (
+                chunk.obs.loc[cell_id, "original_index"] == expected["original_index"]
+            ), (
+                f"Chunk {chunk_idx}: original_index mismatch for {cell_id}. "
+                f"Expected {expected['original_index']}, got {chunk.obs.loc[cell_id, 'original_index']}"
+            )
+
+            # Verify expression data matches (check a few genes)
+            original_idx = original.obs.index.get_loc(cell_id)
+            chunk_idx_pos = chunk.obs.index.get_loc(cell_id)
+
+            # Compare expression for first gene
+            original_expr = original.X[original_idx, 0]
+            chunk_expr = chunk.X[chunk_idx_pos, 0]
+
+            if sp.issparse(original_expr):
+                original_expr = original_expr.toarray()[0, 0]
+            if sp.issparse(chunk_expr):
+                chunk_expr = chunk_expr.toarray()[0, 0]
+
+            assert original_expr == chunk_expr, (
+                f"Chunk {chunk_idx}: Expression mismatch for {cell_id}, gene 0. "
+                f"Expected {original_expr}, got {chunk_expr}"
+            )
+
+
+def test_random_chunk_loader_with_batch_key_force_random(adata_with_metadata):
+    """
+    Test that random chunking works even when batch_key is provided
+    (force random mode).
+    """
+    original = ad.read_h5ad(adata_with_metadata)
+
+    # Create loader with batch_key but force random chunking
+    loader = BatchChunkLoader(
+        adata_with_metadata,
+        chunk_size=15,
+        batch_key="batch",  # Provide batch key
+        random_chunking=True,  # But force random chunking
+        random_seed=123,
+    )
+
+    chunks = list(loader)
+    assert len(chunks) > 0
+
+    # Verify all cells are present
+    all_cell_ids = []
+    for chunk in chunks:
+        all_cell_ids.extend(chunk.obs.index.tolist())
+
+    assert len(all_cell_ids) == len(original.obs.index)
+    assert set(all_cell_ids) == set(original.obs.index)
+
+    # Verify metadata alignment (same as above)
+    for chunk in chunks:
+        for cell_id in chunk.obs.index:
+            original_cell_type = original.obs.loc[cell_id, "cell_type"]
+            chunk_cell_type = chunk.obs.loc[cell_id, "cell_type"]
+            assert original_cell_type == chunk_cell_type, (
+                f"Metadata mismatch for {cell_id}: "
+                f"expected {original_cell_type}, got {chunk_cell_type}"
+            )
 
 
 def test_add_ensembl_ids_with_versioned_ensembl_index():

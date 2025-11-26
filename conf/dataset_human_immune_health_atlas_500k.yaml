@@ -1,0 +1,70 @@
+# Example dataset configuration demonstrating simplified structure
+# Inherits directly from dataset_default.yaml
+defaults:
+  - dataset_default.yaml
+  - _self_
+
+# =============================================================================
+# DATASET METADATA
+# =============================================================================
+dataset:
+  name: "human_immune_health_atlas_500k"
+  description: |
+    A dataset of 500k human immune health atlas samples from the Human Cell Atlas.
+    Originally published in Gong Q, Sharma M, Kuan EL, Glass MC, Chander A, Singh M, et al.
+    Longitudinal Multi-omic Immune Profiling Reveals Age-Related Immune Cell Dynamics in Healthy Adults.
+    bioRxiv. 2024. p. 2024.09.10.612119. doi:10.1101/2024.09.10.612119
+  download_url: null #https://explore.allenimmunology.org/publication/workspace/download?redirectURI=https://allenimmunology.org/public/publication/download/84792154-cdfb-42d0-8e42-39e210e980b4/filesets/207ce6a9-dfcd-4f04-95a0-dbac1be4a267/human_immune_health_atlas_full.h5ad&assetId=cd100a30-5a2e-4ce6-8c73-840311c62b97&assetType=FileSet&assetTitle=Human%20Immune%20Health%20Atlas%20.h5ad%20Files&releaseId=9f661dfc-1a24-4ce2-b205-f9c3fcb1ec3c&releaseTitle=AIFI%20Immune%20Health%20Atlas&releaseType=DataApp
+  full_name: "human_immune_health_atlas_full2"
+
+# =============================================================================
+# COMMON KEYS (dataset-specific)
+# =============================================================================
+batch_key: "batch_id"
+annotation_key: "cell_name"
+caption_key: null
+instrument_key: null
+other_bio_labels: ["AIFI_L1", "AIFI_L2", "AIFI_L3"]
+
+# =============================================================================
+# DATASET-SPECIFIC OVERRIDES
+# =============================================================================
+# Download configuration
+download:
+  enabled: false
+  subset_size: 500000
+
+# Preprocessing overrides (both dataset-specific and execution parameters)
+preprocessing:
+  # Dataset-specific parameters
+  enabled: false
+  split_dataset: false # Important for training datasets. Set to false for test datasets. (Similar parameters in dataset_creation)
+  count_layer_key: "counts" # Key in adata.layers with raw counts. If not present, adata.raw.X is checked.
+
+embedding_preparation:
+  enabled: false
+  methods: ["geneformer", "geneformer-v1"]
+
+# Embedding overrides (both dataset-specific and execution parameters)
+embedding_cpu:
+  # Dataset-specific parameters
+  enabled: false
+  overwrite: true
+  memory_gb: 120
+  methods: ["pca", "scvi_fm", "gs10k"] #, "scvi_fm", "gs", "gs10k"]
+
+embedding_gpu:
+  enabled: false
+  methods: ["geneformer-v1", "geneformer"]
+
+# Dataset creation overrides
+dataset_creation:
+  # Dataset-specific parameters
+  enabled: true
+  use_nextcloud: true
+  required_obsm_keys:
+    ["X_pca", "X_scvi_fm", "X_geneformer", "X_gs10k", "X_geneformer-v1"]
+  cs_length: 4096
+  negatives_per_sample: 2
+  split_dataset: false # Important for training datasets. Set to false for test datasets.
+  dataset_format: single # Important for training datasets. Set to "single" for test datasets.

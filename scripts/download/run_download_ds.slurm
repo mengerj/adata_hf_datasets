@@ -61,7 +61,7 @@ echo "venv activated"
 echo "Starting download with config: $DATASET_CONFIG"
 
 # Build command and include base_file_path override if provided via env
-CMD="python3 scripts/download/download_dataset_config.py --config-name=$DATASET_CONFIG ++hydra.run.dir=\"$BASE_OUT\""
+CMD="python3 scripts/download/download_dataset.py --config-name=$DATASET_CONFIG ++hydra.run.dir=\"$BASE_OUT\""
 if [[ -n "${BASE_FILE_PATH:-}" ]]; then
   echo "Using base_file_path override: $BASE_FILE_PATH"
   CMD="$CMD ++base_file_path=\"$BASE_FILE_PATH\""

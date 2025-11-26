@@ -21,6 +21,7 @@ For each split folder we
 from __future__ import annotations
 
 import logging
+import os
 import sys
 from pathlib import Path
 from typing import Dict, List
@@ -31,11 +32,15 @@ from omegaconf import DictConfig
 from datasets import Dataset, DatasetDict
 from hydra.core.hydra_config import HydraConfig
 
-from adata_hf_datasets.ds_constructor import AnnDataSetConstructor
+from adata_hf_datasets.dataset import AnnDataSetConstructor
 from adata_hf_datasets.utils import annotate_and_push_dataset, setup_logging
-from adata_hf_datasets.cell_sentences import create_cell_sentences
-from adata_hf_datasets.file_utils import upload_folder_to_nextcloud
-from adata_hf_datasets.config_utils import apply_all_transformations
+from adata_hf_datasets.dataset import create_cell_sentences
+from adata_hf_datasets.file_utils import (
+    upload_folder_to_nextcloud,
+    upload_folder_to_zenodo,
+    remove_attributes_from_file,
+)
+from adata_hf_datasets.workflow import apply_all_transformations
 from hydra.utils import to_absolute_path
 
 logger = logging.getLogger(__name__)
@@ -77,6 +82,8 @@ def build_split_dataset(
     gene_name_column: str,
     annotation_key: str | None,
     cs_length: int,
+    resolve_negatives: bool = False,
+    split_name: str | None = None,
 ) -> Dataset:
     """
     Build a Hugging Face dataset for **one split** (train / val / all).
@@ -87,7 +94,11 @@ def build_split_dataset(
         Folder with *.h5ad / *.zarr files.
     share_links
         Mapping *filename → Nextcloud share link or local path* returned by
-        ``upload_folder_to_nextcloud`` or created locally.
+        ``upload_folder_to_nextcloud`` or created locally. For Zenodo with shared
+        mapping, keys may be in format "split_name/filename.zip".
+    split_name
+        Name of the split (e.g., "train", "val"). Used for finding correct keys
+        in shared mapping scenarios.
     sentence_keys, caption_key, batch_key
         Column names to feed into `AnnDataSetConstructor`.
     negatives_per_sample, dataset_format
@@ -99,6 +110,9 @@ def build_split_dataset(
         If None, semantic sentences will be skipped.
     cs_length
         Length of the cell sentence to create.
+    resolve_negatives
+        If True, resolve negative indices to their content (only works with single sentence_key).
+        If False (default), store negatives as indices for flexibility.
 
     Returns
     -------
@@ -106,7 +120,9 @@ def build_split_dataset(
         All samples from *split_dir* pooled together.
     """
     constructor = AnnDataSetConstructor(
-        dataset_format=dataset_format, negatives_per_sample=negatives_per_sample
+        dataset_format=dataset_format,
+        negatives_per_sample=negatives_per_sample,
+        resolve_negatives=resolve_negatives,
     )
 
     # iterate over every file in this split
@@ -126,18 +142,33 @@ def build_split_dataset(
         )
 
         # Get the share link or local path for this file
-        # The key might be f.name + ".zip" (for Nextcloud) or just the path (for local)
-        file_reference = share_links.get(f.name + ".zip")
+        # For Zenodo with shared mapping, keys are "split_name/filename.zip"
+        # For Nextcloud/local, keys are "filename.zip" or relative paths
+        file_reference = None
+
+        # Try different key formats
+        possible_keys = [
+            f.name + ".zip",  # Standard format (Nextcloud, local Zenodo)
+            f.name,  # Without .zip suffix
+            f"{split_dir.name}/{f.name}.zip",  # Zenodo shared mapping format
+            f"{split_dir.name}/{f.name}",  # Zenodo shared mapping without .zip
+        ]
+
+        for key in possible_keys:
+            if key in share_links:
+                file_reference = share_links[key]
+                break
+
         if file_reference is None:
-            # Fallback: try without .zip suffix or use the file path directly
-            file_reference = share_links.get(f.name, str(f.resolve()))
+            # Fallback: use the file path directly
+            file_reference = str(f.resolve())
 
         constructor.add_anndata(
             adata=adata,
             sentence_keys=sentence_keys,
             caption_key=caption_key,
             batch_key=batch_key,
-            share_link=file_reference,
+            adata_link=file_reference,
         )
 
     return constructor.get_dataset()
@@ -145,18 +176,19 @@ def build_split_dataset(
 
 def build_repo_id(
     base_repo_id: str,
-    dataset_names: List[str],
-    dataset_format: str,
-    caption_key: str,
+    dataset_name: str,
 ) -> str:
     """
-    Compose the final HF repo-ID.
+    Compose the final HF repo-ID using only the base repo ID and dataset name.
+
+    The dataset format and caption key information is documented in the dataset card
+    rather than being included in the repo ID.
 
     Example:
-        >>> build_repo_id("jo-mengr", ["bulk_5k", "geo"], "pairs", "cell_type")
-        'jo-mengr/bulk_5k_geo_pairs_cell_type'
+        >>> build_repo_id("jo-mengr", "bulk_5k_geo")
+        'jo-mengr/bulk_5k_geo'
     """
-    return f"{base_repo_id.rstrip('/')}/{dataset_names}_{dataset_format}_{caption_key}"
+    return f"{base_repo_id.rstrip('/')}/{dataset_name}"
 
 
 def check_and_version_repo_id(base_repo_id: str) -> str:
@@ -212,12 +244,11 @@ def check_and_version_repo_id(base_repo_id: str) -> str:
 def push_dataset_to_hub(
     hf_dataset: DatasetDict,
     repo_id: str,
-    caption_key: str,
     embedding_keys: List[str],
     dataset_format: str,
     share_links: Dict[str, Dict[str, str]],
-    cs_length: int,
-    sentence_keys: List[str],
+    cs_length: int | None = None,
+    private: bool = True,
 ):
     """
     Push DatasetDict *hf_dataset* to the Hub, writing a rich README.
@@ -233,34 +264,6 @@ def push_dataset_to_hub(
         "contrastive-learning or inference tasks)."
     )
 
-    # Create example data from the first row of the dataset for the description
-    example_data = {}
-    first_split = list(hf_dataset.keys())[0]
-    if len(hf_dataset[first_split]) > 0:
-        first_row = hf_dataset[first_split][0]
-
-        # Define column priority order for better presentation
-        priority_columns = ["sample_idx"]
-        if caption_key and caption_key in first_row:
-            priority_columns.append(caption_key)
-        priority_columns.extend(sentence_keys)
-
-        # Add priority columns first
-        for key in priority_columns:
-            if key in first_row:
-                value = str(first_row[key])
-                if len(value) > 150:  # Increased from 100 for better context
-                    value = value[:150] + "..."
-                example_data[key] = value
-
-        # Add remaining columns (excluding those already added)
-        for key in first_row.keys():
-            if key not in example_data:
-                value = str(first_row[key])
-                if len(value) > 150:
-                    value = value[:150] + "..."
-                example_data[key] = value
-
     # Get one example share link (not all of them)
     example_share_link = None
     if share_links:
@@ -269,13 +272,12 @@ def push_dataset_to_hub(
                 example_share_link = list(split_links.values())[0]
                 break
 
-    metadata = {
-        "adata_links": share_links,
-        "cs_length": cs_length,
-        "sentence_keys": sentence_keys,
-        "example_data": example_data,
-        "example_share_link": example_share_link,
-    }
+    # Build metadata
+    metadata = {}
+    if cs_length is not None:
+        metadata["cs_length"] = cs_length
+    if example_share_link:
+        metadata["example_share_link"] = example_share_link
 
     annotate_and_push_dataset(
         dataset=hf_dataset,
@@ -284,7 +286,7 @@ def push_dataset_to_hub(
         repo_id=final_repo_id,
         readme_template_name="cellwhisperer_train",
         metadata=metadata,
-        private=True,
+        private=private,
     )
     logger.info("Dataset pushed to HF Hub at %s", final_repo_id)
 
@@ -295,7 +297,7 @@ def push_dataset_to_hub(
 @hydra.main(
     version_base=None,
     config_path="../../conf",
-    config_name="dataset_human_disease",
+    config_name="dataset_cellxgene_pseudo_bulk_10k",
 )
 def main(cfg: DictConfig):
     """
@@ -364,9 +366,52 @@ def main(cfg: DictConfig):
     required_obsm_keys: List[str] = dataset_cfg.required_obsm_keys
     base_repo_id: str = dataset_cfg.base_repo_id
     push_to_hub_flag: bool = dataset_cfg.push_to_hub
+    private_dataset: bool = dataset_cfg.get(
+        "private", True
+    )  # Default to True (private)
+    resolve_negatives: bool = dataset_cfg.get("resolve_negatives", False)
     use_nextcloud: bool = dataset_cfg.get(
         "use_nextcloud", True
     )  # Default to True for backward compatibility
+    use_zenodo: bool = dataset_cfg.get("use_zenodo", False)
+
+    # Validate that only one upload method is selected
+    if use_nextcloud and use_zenodo:
+        raise ValueError(
+            "Both 'use_nextcloud' and 'use_zenodo' are enabled. "
+            "Please choose only one upload method."
+        )
+
+    # Get Zenodo token if Zenodo is enabled
+    zenodo_token = None
+    zenodo_cfg = None
+    if use_zenodo:
+        zenodo_cfg = (
+            dict(dataset_cfg.zenodo_config)
+            if hasattr(dataset_cfg, "zenodo_config")
+            else {}
+        )
+        use_sandbox = zenodo_cfg.get("sandbox", False)
+
+        if use_sandbox:
+            zenodo_token = os.getenv("ZENODO_SANDBOX_TOKEN")
+            token_env_name = "ZENODO_SANDBOX_TOKEN"
+            token_url = "https://sandbox.zenodo.org/account/settings/applications/"
+        else:
+            zenodo_token = os.getenv("ZENODO_TOKEN")
+            token_env_name = "ZENODO_TOKEN"
+            token_url = "https://zenodo.org/account/settings/applications/"
+
+        if not zenodo_token:
+            logger.error(
+                f"Zenodo integration is enabled (sandbox={use_sandbox}), but {token_env_name} is not found in environment variables.\n"
+                f"Please add a valid {token_env_name} to your .env file.\n"
+                f"You can create a token at: {token_url}"
+            )
+            raise ValueError(
+                f"{token_env_name} not found. Please add it to your .env file. "
+                "See logs for instructions."
+            )
 
     nextcloud_cfg = dict(dataset_cfg.nextcloud_config) if use_nextcloud else None
 
@@ -385,6 +430,11 @@ def main(cfg: DictConfig):
     hf_splits: Dict[str, Dataset] = {}
     share_links_per_split: Dict[str, Dict[str, str]] = {}
 
+    # For Zenodo, use a shared mapping file at the data_dir level to share one deposit
+    shared_zenodo_mapping = None
+    if use_zenodo and zenodo_cfg and zenodo_token:
+        shared_zenodo_mapping = data_dir / "zenodo_share_map.json"
+
     for split in split_names:
         split_dir = data_dir / split
         logger.info("Processing split '%s' (%s)", split, split_dir)
@@ -398,6 +448,28 @@ def main(cfg: DictConfig):
             del adata_tmp
 
         # ------------------------------------------------------------------ #
+        # 1.5) Remove specified attributes from files (if configured)
+        # ------------------------------------------------------------------ #
+        attributes_to_remove = dataset_cfg.get("attributes_to_remove", None)
+        if attributes_to_remove:
+            logger.info(
+                f"Removing attributes from files in split '{split}': {attributes_to_remove}"
+            )
+            for f in sorted(split_dir.glob("*.h5ad")) + sorted(
+                split_dir.glob("*.zarr")
+            ):
+                try:
+                    remove_attributes_from_file(
+                        file_path=f,
+                        attributes_to_remove=attributes_to_remove,
+                        in_place=True,
+                    )
+                    logger.info(f"Cleaned attributes from {f.name}")
+                except Exception as e:
+                    logger.error(f"Failed to remove attributes from {f.name}: {e}")
+                    raise
+
+        # ------------------------------------------------------------------ #
         # 2) upload folder or use local paths
         # ------------------------------------------------------------------ #
         if use_nextcloud and nextcloud_cfg:
@@ -405,9 +477,57 @@ def main(cfg: DictConfig):
             share_links = upload_folder_to_nextcloud(
                 data_folder=str(split_dir),
                 nextcloud_config=nextcloud_cfg | {"progress": True},
-                force_reupload=True,
+                force_reupload=dataset_cfg.get("force_reupload", True),
             )
             logger.info("Uploaded files to Nextcloud for split '%s'", split)
+        elif use_zenodo and zenodo_cfg and zenodo_token:
+            try:
+                # Get dataset metadata from config
+                dataset_name = dataset_cfg.get("dataset_name")
+                dataset_description = dataset_cfg.get("data_description")
+                raw_data_link = dataset_cfg.get("raw_data_link")
+
+                # Build the final repo_id for HuggingFace (will be versioned later if needed)
+                # We'll build it here to pass to Zenodo, but it might get versioned later
+                temp_repo_id = build_repo_id(
+                    base_repo_id=base_repo_id,
+                    dataset_name=data_name,
+                )
+
+                share_links = upload_folder_to_zenodo(
+                    data_folder=str(split_dir),
+                    zenodo_token=zenodo_token,
+                    zenodo_config=zenodo_cfg,
+                    force_reupload=dataset_cfg.get("force_reupload", True),
+                    dataset_name=dataset_name,
+                    dataset_description=dataset_description,
+                    raw_data_link=raw_data_link,
+                    obsm_keys=required_obsm_keys,
+                    hf_repo_id=temp_repo_id,
+                    shared_mapping_path=str(shared_zenodo_mapping)
+                    if shared_zenodo_mapping
+                    else None,
+                )
+                logger.info("Uploaded files to Zenodo for split '%s'", split)
+            except RuntimeError as e:
+                error_msg = str(e)
+                if "401" in error_msg or "Authentication" in error_msg:
+                    use_sandbox = (
+                        zenodo_cfg.get("sandbox", False) if zenodo_cfg else False
+                    )
+                    token_env_name = (
+                        "ZENODO_SANDBOX_TOKEN" if use_sandbox else "ZENODO_TOKEN"
+                    )
+                    token_url = (
+                        "https://sandbox.zenodo.org/account/settings/applications/"
+                        if use_sandbox
+                        else "https://zenodo.org/account/settings/applications/"
+                    )
+                    logger.error(
+                        f"Zenodo authentication failed. Please check your {token_env_name} in .env file.\n"
+                        f"You can create a token at: {token_url}"
+                    )
+                raise
         else:
             # Create a mapping of filename to local path instead of share links
             share_links = {}
@@ -434,6 +554,8 @@ def main(cfg: DictConfig):
             gene_name_column=dataset_cfg.gene_name_column,
             annotation_key=annotation_key,
             cs_length=dataset_cfg.cs_length,
+            resolve_negatives=resolve_negatives,
+            split_name=split,
         )
         # if the split is called all, change it to "test" to avoid issue with hf format
         if split == "all":
@@ -447,9 +569,7 @@ def main(cfg: DictConfig):
     # ------------------------------------------------------------------ #
     repo_id = build_repo_id(
         base_repo_id=base_repo_id,
-        dataset_names=data_name,
-        dataset_format=dataset_format,
-        caption_key=caption_key or "no_caption",
+        dataset_name=data_name,
     )
     logger.info("Final repo_id would be: %s", repo_id)
 
@@ -462,12 +582,11 @@ def main(cfg: DictConfig):
         push_dataset_to_hub(
             hf_dataset=hf_dataset,
             repo_id=repo_id,
-            caption_key=caption_key or "",
             embedding_keys=required_obsm_keys,
             dataset_format=dataset_format,
             share_links=share_links_per_split,
-            cs_length=dataset_cfg.cs_length,
-            sentence_keys=sentence_keys,
+            cs_length=dataset_cfg.get("cs_length"),
+            private=private_dataset,
         )
 
     logger.info("Dataset creation script finished.")

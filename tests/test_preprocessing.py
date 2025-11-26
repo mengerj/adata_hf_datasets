@@ -382,8 +382,10 @@ def test_preprocess_h5ad_with_category_consolidation(realistic_adata, temp_h5ad_
     realistic_adata.obs["rare_category"] = "common"
     # Add a few rare categories
     rare_indices = np.random.choice(realistic_adata.n_obs, size=5, replace=False)
+    # Use iloc for position-based indexing
+    col_idx = realistic_adata.obs.columns.get_loc("rare_category")
     for i, idx in enumerate(rare_indices):
-        realistic_adata.obs["rare_category"][str(idx)] = f"rare_{i}"
+        realistic_adata.obs.iloc[int(idx), col_idx] = f"rare_{i}"
 
     # Save the test AnnData to disk
     realistic_adata.write_h5ad(input_path)
@@ -519,11 +521,13 @@ def test_preprocess_h5ad_with_empty_chunks(realistic_adata, temp_h5ad_paths):
     batch_mask = realistic_adata.obs["batch"] == "batch_0"
     batch_cells = np.where(batch_mask)[0]
     cells_to_modify = batch_cells[: len(batch_cells) // 2]
-    cells_to_modify_str = [str(i) for i in cells_to_modify]
-    realistic_adata.obs["percent_mito"][cells_to_modify_str] = (
-        0.9  # Very high mito percent
-    )
-    realistic_adata.obs["n_genes"][cells_to_modify_str] = 10  # Very few genes
+    # Use iloc for position-based indexing
+    realistic_adata.obs.iloc[
+        cells_to_modify, realistic_adata.obs.columns.get_loc("percent_mito")
+    ] = 0.9  # Very high mito percent
+    realistic_adata.obs.iloc[
+        cells_to_modify, realistic_adata.obs.columns.get_loc("n_genes")
+    ] = 10  # Very few genes
 
     # Save the modified data
     realistic_adata.write_h5ad(input_path)

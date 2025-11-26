@@ -3,7 +3,7 @@ import scanpy as sc
 from anndata import AnnData
 import numpy as np
 import scipy.sparse as sp
-from adata_hf_datasets.pp.utils import (
+from .utils import (
     ensure_log_norm,
     consolidate_low_frequency_categories,
     check_enough_genes_per_batch,

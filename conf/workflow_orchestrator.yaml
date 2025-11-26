@@ -9,15 +9,6 @@ workflow:
   # Execution backend: "slurm" (default, submit via SSH + SLURM) or "local" (run on this machine)
   execution_mode: slurm
 
-  # Legacy flag (ignored if execution_mode is set); kept for backwards-compatibility
-  local_mode: false
-
-  # Transfer mode configuration
-  # Set to true to use local scratch storage with transfers between clusters (faster processing, slower transfers)
-  # Set to false to use shared filesystem directly (slower processing, no transfer overhead)
-  # This allows performance comparison between local scratch + transfers vs shared filesystem
-  enable_transfers: false
-
   # SSH connection settings for CPU cluster
   # Using SSH aliases from ~/.ssh/config (handles ProxyJump automatically)
   cpu_login:
@@ -34,34 +25,66 @@ workflow:
   cpu_partition: "compute" # CPU partition on imbi13
   gpu_partition: "gpu" # GPU partition on imbi_gpu_H100
 
+  # Execution host: "cpu" or "gpu"
+  # Determines which cluster/hardware to use for ALL workflow steps (download, preprocessing, embedding, dataset creation)
+  # When set to "cpu": All steps run on the CPU cluster using cpu_partition and cpu_node (if specified)
+  # When set to "gpu": All steps run on the GPU cluster using gpu_partition and gpu_node (if specified)
+  # Note: For embedding in GPU mode, the master coordination job runs on CPU cluster, but array jobs run on GPU
+  #host: gpu # Options: "cpu" or "gpu"
+
+  # Node constraint for CPU jobs (optional)
+  # If set, all CPU jobs will be constrained to run on this specific node
+  # Must be a node that exists in the cpu_partition (slurm)
+  # Available nodes in slurm partition: imbi3, imbi4, imbi5, imbi6, imbi7, imbi11
+  # Example: "imbi3" or null to allow any node
+  cpu_node: null
+
+  # Node constraint for GPU jobs (optional)
+  # If set, GPU embedding jobs will be constrained to run on this specific node
+  # If null, any available GPU node will be used
+  # Example: "gpu-node-1" or null to allow any GPU node
+  gpu_node: null
+
   # Job polling interval (seconds)
-  poll_interval: 3600
+  # How often the master job checks if a submitted SLURM job has finished
+  # Default: 600 seconds (10 minutes)
+  # Lower values = more frequent checks (faster detection of completion, more SSH overhead)
+  # Higher values = less frequent checks (less SSH overhead, slower detection of completion)
+  poll_interval: 120 # Check every 2 minutes
 
   # Timeout for job completion (seconds, 0 = no timeout)
-  job_timeout: 0
+  # Maximum time to wait for a job to complete before timing out
+  # If 0, wait indefinitely (no timeout)
+  # If > 0, timeout after this many seconds
+  job_timeout: 0 # No timeout (wait indefinitely)
 
   # Output directory configuration
-  # This is the base directory where all workflow outputs and logs will be stored
+  # Separate paths for local and SLURM execution modes
   # The actual workflow directory will be: {output_directory}/{date}/workflow_{job_id}/
-  output_directory: "/home/mengerj/repos/adata_hf_datasets/outputs" #"/Users/mengerj/repos/adata_hf_datasets/outputs" #"/home/menger/git/adata_hf_datasets/outputs"
+  local_output_directory: "./outputs" # For local execution
+  slurm_output_directory: "/home/menger/git/adata_hf_datasets/outputs" # For SLURM execution
+
+  # Project directory configuration
+  # Separate paths for local and SLURM execution modes
+  # All commands will `cd` into this directory before running
+  local_project_directory: "." # For local execution (relative to where script is run)
+  slurm_project_directory: "/home/menger/git/adata_hf_datasets" # For SLURM execution
 
   # Local backend settings (effective only when execution_mode == "local")
   # Maximum number of parallel workers for local embedding array tasks
-  local_max_workers: 4
+  local_max_workers: 2
   # Enable running GPU embedding locally (off by default to avoid OOM on laptops)
-  local_enable_gpu: false
+  local_enable_gpu: true
 
   # Base data directories depending on backend
   # Used as default when dataset config doesn't set base_file_path explicitly
-  local_base_file_path: "/Users/mengerj/repos/adata_hf_datasets/data/RNA"
-  slurm_base_file_path: "/home/mengerj/data/RNA"
+  local_base_file_path: "./data/RNA"
+  slurm_base_file_path: "/scratch/global/menger/data/RNA"
 
-  # Project directory on the cluster hosts (used for SSH/SLURM submissions)
-  # All sbatch commands will `cd` into this directory before running
-  project_directory: "/home/mengerj/repos/adata_hf_datasets"
-
-  # Virtual environment path (relative to project_directory) used by SLURM scripts
-  venv_path: ".venv"
+  # Virtual environment paths (relative to project_directory)
+  # Separate paths for local and SLURM execution modes
+  local_venv_path: ".venv" # For local execution
+  slurm_venv_path: ".venv" # For SLURM execution
 
 # =============================================================================
 # ORCHESTRATOR SETTINGS
@@ -70,4 +93,4 @@ workflow:
 force: false
 
 # Dataset config name to use (will be overridden by command line)
-dataset_config_name: "dataset_cellxgene_pseudo_bulk_35k"
+dataset_config_name: null
