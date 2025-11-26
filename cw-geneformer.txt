@@ -1,5 +1,5 @@
 accumulation-tree==0.6.4
--e file:///Users/mengerj/repos/adata_hf_datasets
+-e .
 aiohappyeyeballs==2.6.1
 aiohttp==3.13.2
 aiosignal==1.4.0
@@ -16,7 +16,7 @@ biothings-client==0.4.1
 boto3==1.41.2
 botocore==1.41.2
 cattrs==25.3.0
--e file:///Users/mengerj/repos/adata_hf_datasets/external/CellWhisperer
+-e external/CellWhisperer
 certifi==2025.11.12
 charset-normalizer==3.4.4
 click==8.3.1
