@@ -62,13 +62,13 @@ workflow:
   # Separate paths for local and SLURM execution modes
   # The actual workflow directory will be: {output_directory}/{date}/workflow_{job_id}/
   local_output_directory: "./outputs" # For local execution
-  slurm_output_directory: "~/repos/adata_hf_datasets/outputs" # For SLURM execution
+  slurm_output_directory: "/h/mengerj/repos/adata_hf_datasets/outputs" # For SLURM execution
 
   # Project directory configuration
   # Separate paths for local and SLURM execution modes
   # All commands will `cd` into this directory before running
   local_project_directory: "." # For local execution (relative to where script is run)
-  slurm_project_directory: "~/repos/adata_hf_datasets" # For SLURM execution
+  slurm_project_directory: "/h/mengerj/repos/adata_hf_datasets" # For SLURM execution
 
   # Local backend settings (effective only when execution_mode == "local")
   # Maximum number of parallel workers for local embedding array tasks
