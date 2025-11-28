@@ -1414,7 +1414,7 @@ class WorkflowOrchestrator:
             logger.info("=== Download Step Skipped (disabled) ===")
             self.workflow_logger.log_step_skipped("Download", "disabled in config")
 
-        # Step 2: Preprocessing (depends on download if download was enabled)
+        # Step 2: Preprocessing (no dependency needed since we've already waited for completion)
         preprocessing_job_id = None
         preprocessing_enabled = getattr(dataset_config.preprocessing, "enabled", True)
         if preprocessing_enabled:
@@ -1422,7 +1422,7 @@ class WorkflowOrchestrator:
             preprocessing_job_id = self.run_preprocessing_step(
                 dataset_config_name_or_path,
                 workflow_config,
-                dependency_job_id=download_job_id,
+                dependency_job_id=None,  # No dependency - we've already waited for download
             )
             logger.info(
                 f"✓ Preprocessing job {preprocessing_job_id} submitted to cluster ({self.cpu_login['host']})"
@@ -1445,7 +1445,7 @@ class WorkflowOrchestrator:
             logger.info("=== Preprocessing Step Skipped (disabled) ===")
             self.workflow_logger.log_step_skipped("Preprocessing", "disabled in config")
 
-        # Step 3: Embedding Preparation (depends on preprocessing)
+        # Step 3: Embedding Preparation (no dependency needed since we've already waited)
         embedding_prepare_job_id = None
         embedding_prepare_enabled = getattr(
             dataset_config.embedding_preparation, "enabled", True
@@ -1455,7 +1455,7 @@ class WorkflowOrchestrator:
             embedding_prepare_job_id = self.run_embedding_prepare_step(
                 dataset_config_name_or_path,
                 workflow_config,
-                dependency_job_id=preprocessing_job_id,
+                dependency_job_id=None,  # No dependency - we've already waited
             )
             logger.info(
                 f"✓ Embedding preparation job {embedding_prepare_job_id} submitted to cluster ({self.cpu_login['host']})"
@@ -1489,14 +1489,14 @@ class WorkflowOrchestrator:
             dataset_config.dataset_creation, "enabled", True
         )
 
-        # Step 4a: CPU Embedding (depends on embedding preparation)
+        # Step 4a: CPU Embedding (no dependency needed since we've already waited)
         embedding_cpu_job_id = None
         if embedding_cpu_enabled:
             logger.info("=== Starting CPU Embedding Step ===")
             embedding_cpu_job_id = self.run_embedding_cpu_step(
                 dataset_config_name_or_path,
                 workflow_config,
-                dependency_job_id=embedding_prepare_job_id,
+                dependency_job_id=None,  # No dependency - we've already waited
             )
             logger.info(
                 f"✓ CPU embedding job {embedding_cpu_job_id} submitted to cluster ({self.cpu_login['host']})"
@@ -1519,21 +1519,16 @@ class WorkflowOrchestrator:
             logger.info("=== CPU Embedding Step Skipped (disabled) ===")
             self.workflow_logger.log_step_skipped("CPU Embedding", "disabled in config")
 
-        # Step 4b: GPU Embedding (depends on CPU embedding if enabled, otherwise embedding preparation)
+        # Step 4b: GPU Embedding (no dependency needed since we've already waited)
         embedding_gpu_job_id = None
         if embedding_gpu_enabled:
             logger.info("=== Starting GPU Embedding Step ===")
-            # Dependency logic: depend on CPU embedding if enabled, otherwise embedding preparation
-            gpu_embedding_dependency = (
-                embedding_cpu_job_id
-                if embedding_cpu_enabled
-                else embedding_prepare_job_id
-            )
+            # No dependency needed - we've already waited for previous step to complete
 
             embedding_gpu_job_id = self.run_embedding_gpu_step(
                 dataset_config_name_or_path,
                 workflow_config,
-                dependency_job_id=gpu_embedding_dependency,
+                dependency_job_id=None,  # No dependency - we've already waited
             )
             logger.info(
                 f"✓ GPU embedding job {embedding_gpu_job_id} submitted to cluster ({self.gpu_login['host']})"
@@ -1556,22 +1551,14 @@ class WorkflowOrchestrator:
             logger.info("=== GPU Embedding Step Skipped (disabled) ===")
             self.workflow_logger.log_step_skipped("GPU Embedding", "disabled in config")
 
-        # Step 5: Dataset Creation (depends on final embedding results)
-        # Use the last completed embedding job for dependency
-        embedding_dependency = None
-        if embedding_gpu_job_id:
-            embedding_dependency = embedding_gpu_job_id
-        elif embedding_cpu_job_id:
-            embedding_dependency = embedding_cpu_job_id
-        elif embedding_prepare_job_id:
-            embedding_dependency = embedding_prepare_job_id
-
+        # Step 5: Dataset Creation (no dependency needed since we've already waited)
+        # We've already waited for all previous jobs to complete
         if dataset_creation_enabled:
             logger.info("=== Starting Dataset Creation Step ===")
             dataset_job_ids = self.run_dataset_creation_step(
                 dataset_config_name_or_path,
                 workflow_config,
-                dependency_job_id=embedding_dependency,
+                dependency_job_id=None,  # No dependency - we've already waited
             )
             if len(dataset_job_ids) == 1:
                 logger.info(
