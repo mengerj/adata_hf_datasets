@@ -96,8 +96,8 @@ else:
     print(f"GPU login: {gpu_login}")
     print("Creating orchestrator...")
     orchestrator = WorkflowOrchestrator(cpu_login=cpu_login, gpu_login=gpu_login)
-    print("Starting workflow execution (SLURM, wait mode)...")
-    orchestrator.run_workflow_local(
+    print("Starting workflow execution (SLURM mode)...")
+    orchestrator.run_workflow(
         dataset_config_name_or_path=dataset_config_name_or_path,
         workflow_config=resolved_config,
         force=False,
