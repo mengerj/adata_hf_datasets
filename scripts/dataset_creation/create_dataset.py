@@ -33,7 +33,11 @@ from datasets import Dataset, DatasetDict
 from hydra.core.hydra_config import HydraConfig
 
 from adata_hf_datasets.dataset import AnnDataSetConstructor
-from adata_hf_datasets.utils import annotate_and_push_dataset, setup_logging
+from adata_hf_datasets.utils import (
+    annotate_and_push_dataset,
+    setup_logging,
+    get_hf_token,
+)
 from adata_hf_datasets.dataset import create_cell_sentences
 from adata_hf_datasets.file_utils import (
     upload_folder_to_nextcloud,
@@ -250,7 +254,7 @@ def build_repo_id(
     return f"{base_repo_id.rstrip('/')}/{dataset_name}"
 
 
-def check_and_version_repo_id(base_repo_id: str) -> str:
+def check_and_version_repo_id(base_repo_id: str, token: str | None = None) -> str:
     """
     Check if a repository exists and add version suffix if needed.
 
@@ -258,6 +262,8 @@ def check_and_version_repo_id(base_repo_id: str) -> str:
     ----------
     base_repo_id : str
         The base repository ID to check
+    token : str, optional
+        HuggingFace token. If None, will try to get from env vars or cached credentials.
 
     Returns
     -------
@@ -266,10 +272,11 @@ def check_and_version_repo_id(base_repo_id: str) -> str:
     """
     from huggingface_hub import HfApi
     from huggingface_hub.errors import RepositoryNotFoundError
-    import os
 
-    api = HfApi()
-    token = os.getenv("HF_TOKEN_UPLOAD") or os.getenv("HF_TOKEN")
+    if token is None:
+        token = get_hf_token()
+
+    api = HfApi(token=token)
 
     # Try the base repo_id first
     try:
@@ -308,12 +315,17 @@ def push_dataset_to_hub(
     share_links: Dict[str, Dict[str, str]],
     cs_length: int | None = None,
     private: bool = True,
+    token: str | None = None,
 ):
     """
     Push DatasetDict *hf_dataset* to the Hub, writing a rich README.
     """
+    # Get token if not provided
+    if token is None:
+        token = get_hf_token()
+
     # Check for existing repo and add version if needed
-    final_repo_id = check_and_version_repo_id(repo_id)
+    final_repo_id = check_and_version_repo_id(repo_id, token=token)
 
     embedding_generation = (
         f"Each AnnData contained the following embedding keys: {embedding_keys}."
@@ -346,6 +358,7 @@ def push_dataset_to_hub(
         readme_template_name="cellwhisperer_train",
         metadata=metadata,
         private=private,
+        token=token,
     )
     logger.info("Dataset pushed to HF Hub at %s", final_repo_id)
 

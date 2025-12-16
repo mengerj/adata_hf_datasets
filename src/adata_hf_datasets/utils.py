@@ -152,6 +152,31 @@ def setup_logging(log_dir: str = "logs"):
     return logger
 
 
+def get_hf_token() -> str | None:
+    """
+    Get HuggingFace token from environment variables or cached credentials.
+
+    Returns
+    -------
+    str | None
+        The HuggingFace token if found, None otherwise.
+    """
+    import os
+
+    # Try environment variables first
+    token = os.getenv("HF_TOKEN_UPLOAD") or os.getenv("HF_TOKEN")
+    if token:
+        return token
+
+    # Fall back to cached token from CLI login
+    try:
+        from huggingface_hub import HfFolder
+
+        return HfFolder.get_token()
+    except Exception:
+        return None
+
+
 def annotate_and_push_dataset(
     dataset,
     repo_id: str | None = None,
@@ -160,6 +185,7 @@ def annotate_and_push_dataset(
     embedding_generation: str | None = None,
     dataset_type_explanation: str | None = None,
     metadata: dict | None = None,
+    token: str | None = None,
 ) -> None:
     """Annotates and pushes the dataset to Hugging Face.
 
@@ -184,7 +210,12 @@ def annotate_and_push_dataset(
         Additional metadata. Can contain:
         - cs_length: Length of cell sentences (optional)
         - example_share_link: Example link to an adata file (optional)
+    token : str, optional
+        HuggingFace token. If None, will try to get from env vars or cached credentials.
     """
+    # Get token if not provided
+    if token is None:
+        token = get_hf_token()
     # Extract example data from the first row of the dataset
     example_data = {}
     first_split = list(dataset.keys())[0]
@@ -218,10 +249,10 @@ def annotate_and_push_dataset(
             )
 
         # Push dataset with README
-        dataset.push_to_hub(repo_id, private=private)
+        dataset.push_to_hub(repo_id, private=private, token=token)
 
         # Upload README file
-        api = HfApi()
+        api = HfApi(token=token)
         api.upload_file(
             path_or_fileobj=str(readme_path),
             path_in_repo="README.md",
