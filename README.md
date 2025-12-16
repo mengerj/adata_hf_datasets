@@ -282,7 +282,6 @@ In your dataset config (or `conf/dataset_default.yaml`):
 dataset_creation:
   enabled: true
   push_to_hub: true # Enable HuggingFace Hub upload
-  base_repo_id: "your-hf-username" # Your HuggingFace username
 ```
 
 ### Usage
@@ -311,7 +310,6 @@ By default, datasets are uploaded as **private**. You can control this in your d
 ```yaml
 dataset_creation:
   push_to_hub: true
-  base_repo_id: "your-hf-username"
   private: true # true = private (default), false = public
 ```
 
@@ -978,7 +976,6 @@ dataset_creation:
   negatives_per_sample: 2
   required_obsm_keys: ["X_pca", "X_scvi_fm", "X_geneformer"]
   push_to_hub: true
-  base_repo_id: "your-username"
 ```
 
 ---
