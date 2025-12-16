@@ -46,6 +46,65 @@ from hydra.utils import to_absolute_path
 logger = logging.getLogger(__name__)
 
 
+def get_hf_username() -> str:
+    """
+    Auto-detect HuggingFace username from token or CLI login.
+
+    Tries the following in order:
+    1. HF_TOKEN_UPLOAD environment variable
+    2. HF_TOKEN environment variable
+    3. Cached credentials from `huggingface-cli login`
+
+    Returns
+    -------
+    str
+        The username associated with the authenticated HuggingFace account.
+
+    Raises
+    ------
+    ValueError
+        If no valid authentication is found or the token is invalid.
+    """
+    from huggingface_hub import HfApi
+    from huggingface_hub.errors import LocalTokenNotFoundError
+
+    api = HfApi()
+    token = os.getenv("HF_TOKEN_UPLOAD") or os.getenv("HF_TOKEN")
+
+    try:
+        # whoami() will use the provided token, or fall back to cached credentials
+        user_info = api.whoami(token=token)
+
+        # user_info can be a dict with 'name' key for user accounts
+        # or 'name' for organization tokens
+        if isinstance(user_info, dict):
+            username = user_info.get("name")
+            if username:
+                logger.info(f"Auto-detected HuggingFace username: {username}")
+                return username
+            else:
+                raise ValueError(
+                    "Could not extract username from HuggingFace API response. "
+                    f"Response: {user_info}"
+                )
+        else:
+            raise ValueError(
+                f"Unexpected response type from whoami(): {type(user_info)}"
+            )
+
+    except LocalTokenNotFoundError:
+        raise ValueError(
+            "No HuggingFace authentication found. Please either:\n"
+            "1. Set HF_TOKEN or HF_TOKEN_UPLOAD environment variable, or\n"
+            "2. Run 'huggingface-cli login' to authenticate"
+        )
+    except Exception as e:
+        raise ValueError(
+            f"Failed to get HuggingFace username: {e}\n"
+            "Please check your HuggingFace token is valid."
+        )
+
+
 # -----------------------------------------------------------------------------#
 # core helpers
 # -----------------------------------------------------------------------------#
@@ -364,8 +423,15 @@ def main(cfg: DictConfig):
     negatives_per_sample: int = dataset_cfg.negatives_per_sample
     dataset_format: str = dataset_cfg.dataset_format
     required_obsm_keys: List[str] = dataset_cfg.required_obsm_keys
-    base_repo_id: str = dataset_cfg.base_repo_id
     push_to_hub_flag: bool = dataset_cfg.push_to_hub
+
+    # Auto-detect base_repo_id from HuggingFace token/CLI login
+    if push_to_hub_flag:
+        base_repo_id = get_hf_username()
+    else:
+        # If not pushing to hub, use a placeholder
+        base_repo_id = "local"
+        logger.info("push_to_hub is False, using 'local' as placeholder for repo_id")
     private_dataset: bool = dataset_cfg.get(
         "private", True
     )  # Default to True (private)

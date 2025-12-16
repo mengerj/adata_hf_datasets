@@ -7,7 +7,7 @@
 # =============================================================================
 workflow:
   # Execution backend: "slurm" (default, submit via SSH + SLURM) or "local" (run on this machine)
-  execution_mode: slurm
+  execution_mode: local
 
   # SSH connection settings for CPU cluster
   # Using SSH aliases from ~/.ssh/config (handles ProxyJump automatically)
@@ -37,7 +37,7 @@ workflow:
   # Must be a node that exists in the cpu_partition (slurm)
   # Available nodes in slurm partition: imbi3, imbi4, imbi5, imbi6, imbi7, imbi11
   # Example: "imbi3" or null to allow any node
-  cpu_node: null
+  cpu_node: imbi223-hpc
 
   # Node constraint for GPU jobs (optional)
   # If set, GPU embedding jobs will be constrained to run on this specific node
