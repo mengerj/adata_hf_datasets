@@ -4,7 +4,7 @@ Data Transfer Module for Multi-Location Workflow
 
 This module provides robust data transfer functionality between execution locations
 (local, cpu cluster, gpu cluster) with support for:
-- Automatic compression of zarr directories (many small files)
+- Automatic compression of directories (tar.gz for efficient transfer)
 - Progress tracking via rsync
 - Remote-to-remote transfers via SSH agent forwarding or local intermediary
 - Integrity verification using checksums
@@ -264,6 +264,14 @@ class DataTransfer:
             return result.returncode == 0
         else:
             return Path(path).exists()
+
+    def _path_is_directory(self, location: LocationConfig, path: str) -> bool:
+        """Check if a path is a directory at a location."""
+        if location.is_remote:
+            result = self._run_ssh_command(location, f"test -d '{path}'", timeout=30)
+            return result.returncode == 0
+        else:
+            return Path(path).is_dir()
 
     def _is_zarr_directory(self, location: LocationConfig, path: str) -> bool:
         """Check if a path is a zarr directory."""
@@ -635,8 +643,8 @@ class DataTransfer:
         target_path : Optional[Union[str, Path]]
             Path for the target. If None, auto-translated from source_path
         use_compression : Optional[bool]
-            Whether to use compression. If None, uses config default
-            (compression is recommended for zarr directories)
+            Whether to use compression. If None, auto-detects based on
+            whether the source is a directory (directories are compressed)
 
         Returns
         -------
@@ -689,10 +697,9 @@ class DataTransfer:
 
         # Determine if compression should be used
         if use_compression is None:
-            # Auto-detect: use compression for zarr directories
-            use_compression = self.compression_enabled and self._is_zarr_directory(
-                source_config, source_path
-            )
+            # Auto-detect: use compression for all directories when enabled
+            is_directory = self._path_is_directory(source_config, source_path)
+            use_compression = self.compression_enabled and is_directory
 
         # Ensure target parent directory exists
         target_parent = str(Path(target_path).parent)
@@ -700,7 +707,7 @@ class DataTransfer:
 
         if use_compression:
             stats.compression_used = True
-            logger.info("Using compression for transfer (zarr directory detected)")
+            logger.info("Using compression for transfer (directory detected)")
 
             # Generate archive names
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
