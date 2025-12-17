@@ -760,7 +760,20 @@ class DataTransfer:
                 )
                 logger.info(f"Transfer took {stats.transfer_time_seconds:.2f}s")
 
-                # Step 3: Decompress on target
+                # Step 3: Remove existing target directory to ensure clean extraction
+                # (tar -xzf overwrites but doesn't delete extra files)
+                if self._path_exists(target_config, target_path):
+                    logger.info(f"Removing existing target directory: {target_path}")
+                    if target_config.is_remote:
+                        self._run_ssh_command(
+                            target_config,
+                            f"rm -rf '{target_path}'",
+                            timeout=600,
+                        )
+                    else:
+                        shutil.rmtree(target_path)
+
+                # Step 4: Decompress on target
                 logger.info(f"Decompressing on {target_location}...")
                 stats.decompression_time_seconds = self._decompress_archive(
                     target_config, target_archive, target_parent
