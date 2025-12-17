@@ -65,7 +65,7 @@ dataset_creation:
   required_obsm_keys: [
       "X_pca",
       #"X_scvi_fm",
-      #"X_geneformer",
+      "X_geneformer",
       #"X_gs10k",
       #"X_geneformer-v1",
       #"X_cw-geneformer",

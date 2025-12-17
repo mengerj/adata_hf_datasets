@@ -37,7 +37,7 @@ workflow:
       slurm_partition: "slurm"
       node: "imbi223-hpc" # Optional: constrain to specific node, null for any
       # Paths on the CPU cluster
-      base_file_path: "/scratch/global/menger/data/RNA"
+      base_file_path: "/scratch/local/menger/data/RNA"
       project_directory: "/home/menger/git/adata_hf_datasets"
       venv_path: ".venv"
       output_directory: "/home/menger/git/adata_hf_datasets/outputs"
@@ -51,9 +51,9 @@ workflow:
       slurm_partition: "gpu"
       node: null # Optional: constrain to specific node, null for any
       # Paths on the GPU cluster
-      base_file_path: "/scratch/global/menger/data/RNA"
+      base_file_path: "/scratch/local/menger/data/RNA"
       project_directory: "/home/menger/git/adata_hf_datasets"
-      venv_path: ".venv"
+      venv_path: "/scratch/local/menger/adata_hf_datasets/venv"
       output_directory: "/home/menger/git/adata_hf_datasets/outputs"
 
   # =============================================================================
