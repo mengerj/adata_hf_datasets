@@ -2,6 +2,23 @@
 set -euo pipefail
 
 
+# === Array job tracking for cleanup ===
+SPAWNED_JOBS=()
+
+# Trap function to cancel all spawned array jobs on termination
+cleanup_jobs() {
+    echo "Received termination signal, cancelling spawned array jobs..."
+    for jid in "${SPAWNED_JOBS[@]}"; do
+        if [[ -n "$jid" ]]; then
+            scancel "$jid" 2>/dev/null && echo "Cancelled job $jid" || true
+        fi
+    done
+    # Clean up temp file
+    rm -f "/tmp/embedding_array_jobs_${SLURM_JOB_ID:-$$}.txt" 2>/dev/null || true
+    exit 130
+}
+trap cleanup_jobs SIGTERM SIGINT SIGHUP
+
 # === User‐configurable section ===
 # Use environment variables if provided, otherwise use defaults
 MODE="${MODE:-cpu}"         # "cpu" or "gpu"
@@ -67,8 +84,10 @@ DATASET_CONFIG="${DATASET_CONFIG:-}" \
         job_id=$(echo "$job_output" | grep -o "Submitted batch job [0-9]*" | grep -o "[0-9]*")
         echo "Submitted batch job $job_id"
 
-        # Store job ID in a file for the main script to read
+        # Store job ID in array for cleanup on termination
         if [[ -n "$job_id" ]]; then
+            SPAWNED_JOBS+=("$job_id")
+            # Also write to file for external tracking
             echo "$job_id" >> /tmp/embedding_array_jobs_${SLURM_JOB_ID:-$$}.txt
         fi
     else

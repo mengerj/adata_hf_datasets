@@ -7,6 +7,41 @@
 # Exit on any error
 set -euo pipefail
 
+# === Signal handling to cancel spawned array jobs ===
+cleanup_and_cancel() {
+    local signal="$1"
+    local job_file="/tmp/embedding_array_jobs_${SLURM_JOB_ID:-$$}.txt"
+
+    # If we received a termination signal (not EXIT), cancel spawned array jobs
+    if [[ "$signal" != "EXIT" ]]; then
+        echo "Received $signal signal, cancelling spawned array jobs..."
+        if [[ -f "$job_file" ]]; then
+            while IFS= read -r array_job_id; do
+                if [[ -n "$array_job_id" && "$array_job_id" =~ ^[0-9]+$ ]]; then
+                    echo "Cancelling array job $array_job_id..."
+                    scancel "$array_job_id" 2>/dev/null && \
+                        echo "Cancelled array job $array_job_id" || \
+                        echo "Failed to cancel array job $array_job_id"
+                fi
+            done < "$job_file"
+        fi
+    fi
+
+    # Clean up temp file
+    if [[ -f "$job_file" ]]; then
+        rm -f "$job_file"
+    fi
+
+    # If terminated by signal, exit with appropriate code
+    if [[ "$signal" == "TERM" || "$signal" == "INT" ]]; then
+        exit 130
+    fi
+}
+
+trap 'cleanup_and_cancel EXIT' EXIT
+trap 'cleanup_and_cancel TERM' TERM
+trap 'cleanup_and_cancel INT' INT
+
 # ─────────────────────────────────────────────────────────────────────────────
 # 0) Define a unified RUN_ID: real job ID under SLURM, or a timestamp locally
 # ─────────────────────────────────────────────────────────────────────────────

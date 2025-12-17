@@ -87,17 +87,55 @@ echo "Launching embedding array jobs..."
 # Ensure temp directory exists
 mkdir -p /scratch/global/menger/tmp
 
-# Set up cleanup trap for the temp file
-temp_cleanup() {
+# Set up cleanup trap for temp files AND array job cancellation
+cleanup_and_cancel() {
+    local signal="$1"
     local job_file="/scratch/global/menger/tmp/embedding_array_jobs_${SLURM_JOB_ID}.txt"
+
+    # If we received a termination signal (not EXIT), cancel spawned array jobs
+    if [[ "$signal" != "EXIT" ]]; then
+        echo "Received $signal signal, cancelling spawned array jobs..."
+        if [[ -f "$job_file" ]]; then
+            while IFS= read -r job_line; do
+                if [[ -n "$job_line" ]]; then
+                    # Parse job line format: job_id:cluster_type:host
+                    IFS=':' read -r array_job_id cluster_type cluster_host <<< "$job_line"
+                    if [[ -n "$array_job_id" && "$array_job_id" =~ ^[0-9]+$ ]]; then
+                        echo "Cancelling array job $array_job_id..."
+                        if [[ "$cluster_type" == "gpu" && "$cluster_host" != "local" ]]; then
+                            ssh "$cluster_host" "scancel $array_job_id" 2>/dev/null && \
+                                echo "Cancelled array job $array_job_id on $cluster_host" || \
+                                echo "Failed to cancel array job $array_job_id on $cluster_host"
+                        else
+                            scancel "$array_job_id" 2>/dev/null && \
+                                echo "Cancelled array job $array_job_id" || \
+                                echo "Failed to cancel array job $array_job_id"
+                        fi
+                    fi
+                fi
+            done < "$job_file"
+        fi
+    fi
+
+    # Clean up temp file
     if [[ -f "$job_file" ]]; then
         echo "Cleaning up temp file: $job_file"
         rm -f "$job_file"
     fi
+
+    # Clean up any completion marker files for this job
+    rm -f /scratch/global/menger/tmp/array_job_completed_*_*.txt 2>/dev/null || true
+
+    # If terminated by signal, exit with appropriate code
+    if [[ "$signal" == "TERM" || "$signal" == "INT" ]]; then
+        exit 130
+    fi
 }
 
-# Set up trap to clean up on exit (success, failure, or cancellation)
-trap temp_cleanup EXIT INT TERM
+# Set up traps for different signals
+trap 'cleanup_and_cancel EXIT' EXIT
+trap 'cleanup_and_cancel TERM' TERM
+trap 'cleanup_and_cancel INT' INT
 
 # Build launcher command
 launcher_cmd=(

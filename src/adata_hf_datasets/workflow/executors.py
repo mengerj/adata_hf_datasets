@@ -300,9 +300,6 @@ class RemoteExecutor(StepExecutor):
         self.poll_interval = poll_interval
         self.job_timeout = job_timeout
 
-        # Remote temp directory for logs
-        self.remote_temp_dir = "/tmp/workflow_logs"
-
         # Track current job for cancellation
         self._current_job_id: Optional[str] = None
 
@@ -442,23 +439,28 @@ exit $exit_code
 """
         return script
 
-    def _submit_slurm_job(self, script_content: str) -> Optional[str]:
+    def _submit_slurm_job(
+        self, script_content: str, remote_workflow_dir: str
+    ) -> Optional[str]:
         """
         Submit a SLURM job and return the job ID.
 
+        Args:
+            script_content: The SLURM script content
+            remote_workflow_dir: Remote workflow directory (from WORKFLOW_DIR env var)
+
         Returns None if submission failed.
         """
-        # Create remote temp directory
-        mkdir_code, _, mkdir_err = self._run_ssh_command(
-            f"mkdir -p {self.remote_temp_dir}"
-        )
+        # Create remote directories for logs and slurm scripts
+        remote_slurm_dir = f"{remote_workflow_dir}/slurm"
+        mkdir_code, _, mkdir_err = self._run_ssh_command(f"mkdir -p {remote_slurm_dir}")
         if mkdir_code != 0:
-            logger.error(f"Failed to create remote temp dir: {mkdir_err}")
+            logger.error(f"Failed to create remote slurm dir: {mkdir_err}")
             return None
 
-        # Write script to remote temp file
+        # Write script to remote slurm directory
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        remote_script = f"{self.remote_temp_dir}/step_{timestamp}.slurm"
+        remote_script = f"{remote_slurm_dir}/step_{timestamp}.slurm"
 
         write_code, _, write_err = self._run_ssh_command(
             f"cat > {remote_script} << 'SLURM_SCRIPT_EOF'\n{script_content}\nSLURM_SCRIPT_EOF"
@@ -527,6 +529,8 @@ exit $exit_code
             # Parse sacct output
             lines = stdout.strip().split("\n")
             main_job_state = None
+            main_job_exit_code = None
+            failed_array_jobs = []
 
             for line in lines:
                 if not line.strip():
@@ -535,14 +539,41 @@ exit $exit_code
                 if len(parts) >= 2:
                     job_id_part = parts[0]
                     state = parts[1]
+                    exit_code = parts[2] if len(parts) >= 3 else None
 
                     # Look for main job (not .batch or .extern)
                     if job_id_part == job_id or job_id_part == f"{job_id}.batch":
                         main_job_state = state
-                        break
+                        main_job_exit_code = exit_code
+                    # Check for failed array jobs (job_id_[array_index])
+                    elif f"{job_id}_" in job_id_part and state not in [
+                        "COMPLETED",
+                        "COMPLETED+",
+                        "PENDING",
+                        "RUNNING",
+                    ]:
+                        failed_array_jobs.append((job_id_part, state, exit_code))
 
             if main_job_state:
                 if main_job_state in ["COMPLETED", "COMPLETED+"]:
+                    # Check if main job succeeded but array jobs failed
+                    if failed_array_jobs:
+                        error_msg = (
+                            f"Job {job_id} main task completed but "
+                            f"{len(failed_array_jobs)} array task(s) failed:"
+                        )
+                        for (
+                            array_job_id,
+                            array_state,
+                            array_exit_code,
+                        ) in failed_array_jobs:
+                            error_msg += (
+                                f"\n  - Array job {array_job_id}: {array_state}"
+                                f" (exit code: {array_exit_code})"
+                            )
+                        logger.error(error_msg)
+                        return False, "ARRAY_FAILED"
+
                     logger.info(f"Job {job_id} completed successfully")
                     return True, main_job_state
                 elif main_job_state in [
@@ -552,7 +583,10 @@ exit $exit_code
                     "OUT_OF_MEMORY",
                     "NODE_FAIL",
                 ]:
-                    logger.error(f"Job {job_id} failed with state: {main_job_state}")
+                    error_msg = f"Job {job_id} failed with state: {main_job_state}"
+                    if main_job_exit_code and main_job_exit_code != "0:0":
+                        error_msg += f" (exit code: {main_job_exit_code})"
+                    logger.error(error_msg)
                     return False, main_job_state
                 elif main_job_state in ["PENDING", "RUNNING", "COMPLETING"]:
                     logger.info(f"Job {job_id} state: {main_job_state}")
@@ -563,9 +597,19 @@ exit $exit_code
                     time.sleep(self.poll_interval)
                     continue
             else:
-                # No state found, job may have completed
-                logger.info(f"Job {job_id} no longer in sacct, assuming completed")
-                return True, "COMPLETED"
+                # No state found in sacct - check squeue before assuming completed
+                code, stdout, stderr = self._run_ssh_command(
+                    f"squeue -j {job_id} --noheader"
+                )
+                if code == 0 and stdout.strip():
+                    # Job still in queue (not yet in sacct accounting)
+                    logger.info(f"Job {job_id} still running (not yet in sacct)")
+                    time.sleep(self.poll_interval)
+                    continue
+                else:
+                    # Job not in queue AND not in sacct - likely completed
+                    logger.info(f"Job {job_id} no longer in sacct or squeue")
+                    return True, "COMPLETED"
 
     def _retrieve_logs(
         self,
@@ -634,11 +678,27 @@ exit $exit_code
         """Execute step on remote cluster via SSH + SLURM."""
         start_time = time.time()
 
-        # Prepare log paths
+        # Determine remote workflow directory from env
+        # Fall back to project_directory/outputs if WORKFLOW_DIR not set
+        remote_workflow_dir = (
+            env.get("WORKFLOW_DIR")
+            if env
+            else f"{self.location_config.project_directory}/outputs"
+        )
+        if not remote_workflow_dir:
+            remote_workflow_dir = f"{self.location_config.project_directory}/outputs"
+
+        # Ensure remote log directory exists
+        remote_log_dir = f"{remote_workflow_dir}/{step_name}"
+        mkdir_code, _, _ = self._run_ssh_command(f"mkdir -p {remote_log_dir}")
+        if mkdir_code != 0:
+            logger.warning(f"Could not create remote log dir: {remote_log_dir}")
+
+        # Prepare log paths on remote (in workflow dir, not /tmp)
         log_dir = self._get_step_log_dir(step_name)
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        remote_stdout = f"{self.remote_temp_dir}/{step_name}_{timestamp}.out"
-        remote_stderr = f"{self.remote_temp_dir}/{step_name}_{timestamp}.err"
+        remote_stdout = f"{remote_log_dir}/{step_name}_{timestamp}.out"
+        remote_stderr = f"{remote_log_dir}/{step_name}_{timestamp}.err"
 
         logger.info(f"Executing remotely on {self.location_name}: {' '.join(cmd)}")
         logger.info(f"SSH target: {self.ssh_target}")
@@ -647,7 +707,7 @@ exit $exit_code
         script = self._generate_slurm_script(
             cmd, step_name, env, remote_stdout, remote_stderr
         )
-        job_id = self._submit_slurm_job(script)
+        job_id = self._submit_slurm_job(script, remote_workflow_dir)
 
         if not job_id:
             execution_time = time.time() - start_time

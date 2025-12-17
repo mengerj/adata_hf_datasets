@@ -12,6 +12,7 @@ This module provides robust data transfer functionality between execution locati
 
 import hashlib
 import logging
+import re
 import shutil
 import subprocess
 import time
@@ -435,6 +436,7 @@ class DataTransfer:
         )
 
         stdout_lines = []
+        last_logged_percent = -10  # Track last logged percentage to avoid spam
         # Stream output for progress tracking
         while True:
             line = process.stdout.readline()
@@ -442,8 +444,20 @@ class DataTransfer:
                 break
             if line:
                 stdout_lines.append(line)
-                # Log progress lines
-                if "%" in line or "to-check" in line:
+                # Log progress lines, but throttle to every 10%
+                if "%" in line:
+                    # Try to parse percentage from rsync output (e.g., "  1234567  45%  12.34MB/s")
+                    match = re.search(r"(\d+)%", line)
+                    if match:
+                        current_percent = int(match.group(1))
+                        # Only log if we've progressed by at least 10%
+                        if (
+                            current_percent >= last_logged_percent + 10
+                            or current_percent == 100
+                        ):
+                            logger.info(f"rsync progress: {line.strip()}")
+                            last_logged_percent = current_percent
+                elif "to-check" in line:
                     logger.info(f"rsync progress: {line.strip()}")
 
         stderr = process.stderr.read()
