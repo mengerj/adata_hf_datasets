@@ -156,7 +156,20 @@ class EmbeddingLauncher:
 
         # Persist the resolved base path for other methods (e.g., sbatch/env)
         self.resolved_base_file_path = str(base_file_path)
-        base_dir = Path(base_file_path) / "processed"
+
+        # Determine input subdirectory based on mode:
+        # - prepare_only or cpu mode: read from processed/ (preprocessing output)
+        # - gpu mode: read from processed_with_emb/ (where cpu embedding put the data)
+        if self.mode == "gpu" and not self.prepare_only:
+            input_subdir = "processed_with_emb"
+            logger.info("GPU mode: looking for input in processed_with_emb/")
+        else:
+            input_subdir = "processed"
+            logger.info(
+                f"{'Prepare' if self.prepare_only else 'CPU'} mode: looking for input in processed/"
+            )
+
+        base_dir = Path(base_file_path) / input_subdir
         dataset_name = self.config.dataset.name
 
         # Determine if we're processing train or test data
