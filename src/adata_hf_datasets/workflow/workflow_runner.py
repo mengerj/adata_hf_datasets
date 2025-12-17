@@ -651,12 +651,25 @@ class WorkflowRunner:
         """Build environment variables for a step."""
         env = os.environ.copy()
         env["DATASET_CONFIG"] = self.dataset_config_name
-        env["WORKFLOW_DIR"] = str(self.workflow_dir)
 
         loc_config = self.locations.get(step_location)
         if loc_config:
             env["BASE_FILE_PATH"] = loc_config.base_file_path
             env["PROJECT_DIR"] = loc_config.project_directory
+
+            # For WORKFLOW_DIR, use the location's output directory for remote locations
+            # This ensures logs go to the correct place on each machine
+            if loc_config.is_remote:
+                # Build remote workflow dir path using remote output directory
+                date_str = datetime.now().strftime("%Y-%m-%d")
+                remote_workflow_dir = (
+                    f"{loc_config.output_directory}/{date_str}/{self.workflow_id}"
+                )
+                env["WORKFLOW_DIR"] = remote_workflow_dir
+            else:
+                env["WORKFLOW_DIR"] = str(self.workflow_dir)
+        else:
+            env["WORKFLOW_DIR"] = str(self.workflow_dir)
 
         # Local parallelism setting
         local_max = str(self.workflow_config.get("local_max_workers", 4))

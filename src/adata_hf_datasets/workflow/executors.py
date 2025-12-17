@@ -418,6 +418,19 @@ fi
 # Set environment variables
 {env_exports}
 
+# Create WORKFLOW_DIR if it doesn't exist (for remote log collection)
+if [ -n "$WORKFLOW_DIR" ]; then
+    mkdir -p "$WORKFLOW_DIR/logs" 2>/dev/null || true
+fi
+
+# Set up error logging to WORKFLOW_DIR if accessible
+if [ -n "$WORKFLOW_DIR" ] && [ -d "$WORKFLOW_DIR/logs" ]; then
+    ERROR_LOG="$WORKFLOW_DIR/logs/errors_consolidated.log"
+else
+    echo "Warning: Could not set up error logging to $WORKFLOW_DIR/logs/errors_consolidated.log"
+    echo "Continuing without centralized error logging..."
+fi
+
 # Execute the step command
 {cmd_str}
 exit_code=$?

@@ -709,31 +709,14 @@ class DataTransfer:
             stats.compression_used = True
             logger.info("Using compression for transfer (directory detected)")
 
-            # Generate archive names
+            # Generate archive name
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
             archive_name = f"transfer_{Path(source_path).name}_{timestamp}.tar.gz"
 
-            # Determine temp directories
-            if source_config.is_remote:
-                source_temp_dir = "/tmp/workflow_transfer"
-                self._run_ssh_command(
-                    source_config, f"mkdir -p '{source_temp_dir}'", timeout=30
-                )
-            else:
-                source_temp_dir = self.temp_dir
-                Path(source_temp_dir).mkdir(parents=True, exist_ok=True)
-
-            if target_config.is_remote:
-                target_temp_dir = "/tmp/workflow_transfer"
-                self._run_ssh_command(
-                    target_config, f"mkdir -p '{target_temp_dir}'", timeout=30
-                )
-            else:
-                target_temp_dir = self.temp_dir
-                Path(target_temp_dir).mkdir(parents=True, exist_ok=True)
-
-            source_archive = f"{source_temp_dir}/{archive_name}"
-            target_archive = f"{target_temp_dir}/{archive_name}"
+            # Put archives in the source/target parent directories (avoids temp dir issues)
+            source_parent = str(Path(source_path).parent)
+            source_archive = f"{source_parent}/{archive_name}"
+            target_archive = f"{target_parent}/{archive_name}"
 
             try:
                 # Step 1: Compress on source
@@ -804,11 +787,10 @@ class DataTransfer:
                         logger.warning("Transfer verification failed: size mismatch")
 
             finally:
-                # Cleanup temp files
-                if self.cleanup_temp:
-                    logger.info("Cleaning up temporary files...")
-                    self._cleanup_file(source_config, source_archive)
-                    self._cleanup_file(target_config, target_archive)
+                # Always clean up archive files (they're in the data directories, not temp)
+                logger.info("Cleaning up archive files...")
+                self._cleanup_file(source_config, source_archive)
+                self._cleanup_file(target_config, target_archive)
 
         else:
             # Direct rsync without compression
