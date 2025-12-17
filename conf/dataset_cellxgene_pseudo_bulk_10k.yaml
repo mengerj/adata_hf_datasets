@@ -26,32 +26,41 @@ other_bio_labels: ["tissue", "disease"]
 # DATASET-SPECIFIC OVERRIDES
 # =============================================================================
 # Download configuration
+# Downloads run locally since we have internet access on the local machine
 download:
   enabled: false
+  execution_location: local # Download data on local machine
   subset_size: 10000
 
 # Preprocessing overrides (both dataset-specific and execution parameters)
+# Preprocessing can run on CPU cluster for larger datasets
 preprocessing:
-  # Dataset-specific parameters
   enabled: false
+  execution_location: cpu # Run on CPU cluster
   chunk_size: 10000
-  split_dataset: true # Important for training datasets. Set to false for test datasets. (Similar parameters in dataset_creation)
+  split_dataset: true # Important for training datasets. Set to false for test datasets.
   count_layer_key: "counts" # Key in adata.layers with raw counts. If not present, adata.raw.X is checked.
 
 # Embedding preparation overrides
+# Preparation runs on CPU cluster
 embedding_preparation:
-  enabled: false # Set to false to skip embedding preparation
+  enabled: false
+  execution_location: cpu # Prepare on CPU cluster
   methods: ["geneformer-v1"] #run the prepare step on cpu to save gpu time
 
 # Embedding overrides (both dataset-specific and execution parameters)
+# CPU embeddings run on CPU cluster
 embedding_cpu:
   enabled: false
+  execution_location: cpu # CPU methods run on CPU cluster
   overwrite: true
   venv_path: ".venv"
   methods: ["gs10k"]
 
+# GPU embeddings run on GPU cluster
 embedding_gpu:
   enabled: false
+  execution_location: gpu # GPU methods run on GPU cluster (with automatic data transfer)
   overwrite: true
   venv_path: "cw_gf"
   methods: ["cw-geneformer"]
@@ -70,8 +79,10 @@ embedding_gpu:
     #   forward_batch_size: 16
 
 # Dataset creation overrides
+# Final dataset creation runs on CPU cluster
 dataset_creation:
   enabled: true
+  execution_location: cpu # Create dataset on CPU cluster
   use_nextcloud: false
   use_zenodo: true
   # Dataset-specific parameters

@@ -6,85 +6,95 @@
 # WORKFLOW MODE CONFIGURATION
 # =============================================================================
 workflow:
-  # Execution backend: "slurm" (default, submit via SSH + SLURM) or "local" (run on this machine)
-  execution_mode: local
+  # Default execution mode: "local" | "cpu" | "gpu"
+  # Used as fallback when a step doesn't specify execution_location
+  # For backward compatibility: "slurm" is treated as "cpu"
+  default_execution_location: local
 
-  # SSH connection settings for CPU cluster
-  # Using SSH aliases from ~/.ssh/config (handles ProxyJump automatically)
-  cpu_login:
-    host: "imbi13" # SSH alias that resolves through biom5
-    user: "menger" # Use the user from SSH config
+  # =============================================================================
+  # LOCATION-SPECIFIC CONFIGURATIONS
+  # =============================================================================
+  # Each location defines connection settings, paths, and resources
+  # Steps can run on any location by setting execution_location in dataset config
+  locations:
+    # Local machine configuration
+    local:
+      # No SSH needed for local execution
+      base_file_path: "./data/RNA"
+      project_directory: "."
+      venv_path: ".venv"
+      output_directory: "./outputs"
+      # Local execution settings
+      max_workers: 2 # Maximum parallel workers for array tasks
+      enable_gpu: true # Enable GPU embedding locally (disable for laptops)
 
-  # SSH connection settings for GPU cluster
-  # Using SSH aliases from ~/.ssh/config (handles ProxyJump automatically)
-  gpu_login:
-    host: "imbi_gpu_H100" # SSH alias that resolves through biom5
-    user: "menger" # Use the user from SSH config
+    # CPU cluster configuration
+    cpu:
+      # SSH connection settings (using SSH aliases from ~/.ssh/config)
+      ssh_host: "imbi13"
+      ssh_user: "menger"
+      # SLURM settings
+      slurm_partition: "slurm"
+      node: "imbi223-hpc" # Optional: constrain to specific node, null for any
+      # Paths on the CPU cluster
+      base_file_path: "/scratch/global/menger/data/RNA"
+      project_directory: "/home/menger/git/adata_hf_datasets"
+      venv_path: ".venv"
+      output_directory: "/home/menger/git/adata_hf_datasets/outputs"
 
-  # SLURM partition names (from actual cluster configuration)
-  cpu_partition: "slurm" # CPU partition on imbi13
-  gpu_partition: "gpu" # GPU partition on imbi_gpu_H100
+    # GPU cluster configuration
+    gpu:
+      # SSH connection settings (using SSH aliases from ~/.ssh/config)
+      ssh_host: "imbi_gpu_H100"
+      ssh_user: "menger"
+      # SLURM settings
+      slurm_partition: "gpu"
+      node: null # Optional: constrain to specific node, null for any
+      # Paths on the GPU cluster
+      base_file_path: "/scratch/global/menger/data/RNA"
+      project_directory: "/home/menger/git/adata_hf_datasets"
+      venv_path: ".venv"
+      output_directory: "/home/menger/git/adata_hf_datasets/outputs"
 
-  # Execution host: "cpu" or "gpu"
-  # Determines which cluster/hardware to use for ALL workflow steps (download, preprocessing, embedding, dataset creation)
-  # When set to "cpu": All steps run on the CPU cluster using cpu_partition and cpu_node (if specified)
-  # When set to "gpu": All steps run on the GPU cluster using gpu_partition and gpu_node (if specified)
-  # Note: For embedding in GPU mode, the master coordination job runs on CPU cluster, but array jobs run on GPU
-  #host: gpu # Options: "cpu" or "gpu"
+  # =============================================================================
+  # DATA TRANSFER CONFIGURATION
+  # =============================================================================
+  # Settings for automatic data transfer between locations
+  transfer:
+    # Enable automatic transfer when consecutive steps run on different locations
+    enabled: true
+    # Use tar.gz compression for zarr directories (many small files)
+    compression: true
+    # Compression level (1-9, higher = smaller but slower)
+    compression_level: 6
+    # Verify file integrity after transfer using checksums
+    verify_integrity: true
+    # For remote-to-remote transfers (e.g., CPU to GPU):
+    # - false: Use SSH agent forwarding for direct transfer (faster, requires SSH agent)
+    # - true: Transfer via local machine as intermediary (slower, more reliable)
+    remote_to_remote_via_local: false
+    # Temporary directory for compressed archives
+    temp_dir: "/tmp/workflow_transfer"
+    # Cleanup temporary files after successful transfer
+    cleanup_temp: true
+    # rsync options
+    rsync_options:
+      - "--archive" # Preserve permissions, timestamps, etc.
+      - "--compress" # Compress during transfer
+      - "--partial" # Keep partially transferred files for resume
+      - "--progress" # Show progress
+      - "--human-readable"
 
-  # Node constraint for CPU jobs (optional)
-  # If set, all CPU jobs will be constrained to run on this specific node
-  # Must be a node that exists in the cpu_partition (slurm)
-  # Available nodes in slurm partition: imbi3, imbi4, imbi5, imbi6, imbi7, imbi11
-  # Example: "imbi3" or null to allow any node
-  cpu_node: imbi223-hpc
-
-  # Node constraint for GPU jobs (optional)
-  # If set, GPU embedding jobs will be constrained to run on this specific node
-  # If null, any available GPU node will be used
-  # Example: "gpu-node-1" or null to allow any GPU node
-  gpu_node: null
-
+  # =============================================================================
+  # JOB MONITORING SETTINGS
+  # =============================================================================
   # Job polling interval (seconds)
-  # How often the master job checks if a submitted SLURM job has finished
-  # Default: 600 seconds (10 minutes)
-  # Lower values = more frequent checks (faster detection of completion, more SSH overhead)
-  # Higher values = less frequent checks (less SSH overhead, slower detection of completion)
+  # How often the orchestrator checks if a submitted job has finished
   poll_interval: 120 # Check every 2 minutes
 
   # Timeout for job completion (seconds, 0 = no timeout)
   # Maximum time to wait for a job to complete before timing out
-  # If 0, wait indefinitely (no timeout)
-  # If > 0, timeout after this many seconds
   job_timeout: 0 # No timeout (wait indefinitely)
-
-  # Output directory configuration
-  # Separate paths for local and SLURM execution modes
-  # The actual workflow directory will be: {output_directory}/{date}/workflow_{job_id}/
-  local_output_directory: "./outputs" # For local execution
-  slurm_output_directory: "/home/menger/git/adata_hf_datasets/outputs" # For SLURM execution
-
-  # Project directory configuration
-  # Separate paths for local and SLURM execution modes
-  # All commands will `cd` into this directory before running
-  local_project_directory: "." # For local execution (relative to where script is run)
-  slurm_project_directory: "/home/menger/git/adata_hf_datasets" # For SLURM execution
-
-  # Local backend settings (effective only when execution_mode == "local")
-  # Maximum number of parallel workers for local embedding array tasks
-  local_max_workers: 2
-  # Enable running GPU embedding locally (off by default to avoid OOM on laptops)
-  local_enable_gpu: true
-
-  # Base data directories depending on backend
-  # Used as default when dataset config doesn't set base_file_path explicitly
-  local_base_file_path: "./data/RNA"
-  slurm_base_file_path: "/scratch/global/menger/data/RNA"
-
-  # Virtual environment paths (relative to project_directory)
-  # Separate paths for local and SLURM execution modes
-  local_venv_path: ".venv" # For local execution
-  slurm_venv_path: ".venv" # For SLURM execution
 
 # =============================================================================
 # ORCHESTRATOR SETTINGS

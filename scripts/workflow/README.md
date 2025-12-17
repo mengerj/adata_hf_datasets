@@ -4,13 +4,13 @@ This directory contains scripts for orchestrating the complete single-cell data 
 
 ## Overview
 
-The workflow orchestrator provides a unified interface for running all pipeline steps (download, preprocessing, embedding, dataset creation) with automatic:
+The workflow orchestrator provides a **unified interface** for running all pipeline steps (download, preprocessing, embedding, dataset creation) with:
 
-- Job submission and dependency management
-- Configuration resolution and propagation
-- Centralized logging and error tracking
-- Resource allocation (CPU vs GPU)
-- Cancellation and cleanup
+- **Per-step execution locations** - Each step can run on local, CPU cluster, or GPU cluster
+- **Automatic data transfer** - Data is automatically moved between locations as needed
+- **Centralized logging** - All logs collected in a single workflow directory
+- **Graceful termination** - Kill signals propagate to all child processes and remote jobs
+- **Resource allocation** - Appropriate CPU/GPU resources per step
 
 **For basic usage instructions, see the [Main README](../../README.md)**. This document provides technical details about how the orchestration works internally.
 
@@ -18,34 +18,122 @@ The workflow orchestrator provides a unified interface for running all pipeline 
 
 ## Table of Contents
 
+- [Quick Start](#quick-start)
 - [Architecture](#architecture)
-- [Submission Process](#submission-process)
-- [Configuration Resolution](#configuration-resolution)
-- [Master Job Coordination](#master-job-coordination)
-- [Logging and Error Handling](#logging-and-error-handling)
+- [Configuration](#configuration)
+- [Execution Locations](#execution-locations)
+- [Data Transfer](#data-transfer)
+- [Logging and Monitoring](#logging-and-monitoring)
 - [Job Cancellation](#job-cancellation)
-- [Execution Modes](#execution-modes)
 - [Troubleshooting](#troubleshooting)
+
+---
+
+## Quick Start
+
+### Basic Usage
+
+```bash
+# Submit workflow (runs in background)
+python scripts/workflow/submit_workflow.py --config human_pancreas
+
+# Run in foreground (see output directly)
+python scripts/workflow/submit_workflow.py --config human_pancreas --foreground
+
+# Skip config sync validation
+python scripts/workflow/submit_workflow.py --config human_pancreas --force
+```
+
+### Output
+
+```
+================================================================================
+WORKFLOW SUBMISSION
+================================================================================
+Dataset config: human_pancreas
+Force mode: False
+Foreground: False
+
+Loading workflow configuration...
+✓ Workflow configuration loaded
+
+Configured locations:
+  local: local
+  cpu: menger@imbi13
+  gpu: menger@imbi_gpu_H100
+
+Execution plan:
+----------------------------------------
+  download                  → local
+  preprocessing             → cpu
+  embedding_preparation     (disabled)
+  embedding_cpu             → cpu
+  embedding_gpu             → gpu
+  dataset_creation          → cpu
+----------------------------------------
+
+Submitting workflow for dataset: human_pancreas
+Submitting workflow in background...
+
+================================================================================
+WORKFLOW RUNNING IN BACKGROUND
+================================================================================
+Process ID (PID): 12345
+Workflow directory: /path/to/outputs/2025-12-17/workflow_20251217_110830
+Logs: /path/to/outputs/2025-12-17/workflow_20251217_110830/logs/
+
+To stop this workflow: kill 12345
+Or use: kill $(cat /path/to/outputs/2025-12-17/workflow_20251217_110830/logs/workflow.pid)
+
+Note: Killing the process will also terminate any running steps
+      (including remote SLURM jobs if applicable)
+================================================================================
+```
 
 ---
 
 ## Architecture
 
-### Components
+### Unified Workflow Model
 
-The workflow system consists of several key components:
+The workflow system uses a **unified orchestrator** that can execute steps on different locations:
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                      WorkflowRunner                              │
+│                                                                  │
+│  ┌─────────────┐    ┌─────────────┐    ┌─────────────┐         │
+│  │   Local     │    │     CPU     │    │     GPU     │         │
+│  │  Executor   │    │  Executor   │    │  Executor   │         │
+│  └──────┬──────┘    └──────┬──────┘    └──────┬──────┘         │
+│         │                  │                  │                 │
+│         ▼                  ▼                  ▼                 │
+│    subprocess         SSH + SLURM        SSH + SLURM           │
+│                                                                  │
+└─────────────────────────────────────────────────────────────────┘
+                              │
+                              ▼
+              ┌───────────────────────────────┐
+              │       DataTransfer            │
+              │  (rsync + tar.gz compression) │
+              └───────────────────────────────┘
+```
+
+### Components
 
 ```
 User Interface:
-├── submit_workflow.py          # SLURM cluster submission
-├── submit_workflow_local.py    # Local machine submission
-└── run_workflow_master.py      # Entry point (called by both)
+└── scripts/workflow/
+    └── submit_workflow.py      # Unified submission script
 
 Core Orchestrator:
 └── src/adata_hf_datasets/workflow/
-    ├── workflow_orchestrator.py     # Main orchestration logic
-    ├── config_utils.py              # Configuration transformations
-    └── WorkflowLogger class         # Centralized logging
+    ├── workflow_runner.py      # Main WorkflowRunner class
+    ├── executors.py            # LocalExecutor, RemoteExecutor
+    ├── data_transfer.py        # Data transfer between locations
+    ├── log_retrieval.py        # Log consolidation utilities
+    ├── config_utils.py         # Configuration transformations
+    └── workflow_orchestrator.py # Legacy support + helpers
 
 Step Scripts:
 ├── scripts/download/
@@ -57,600 +145,370 @@ Step Scripts:
 ### Workflow Flow
 
 ```
-1. User runs submit_workflow.py or submit_workflow_local.py
+1. User runs submit_workflow.py --config dataset_name
                     ↓
-2. Script validates configuration and submits master job
+2. Script shows execution plan (which steps run where)
                     ↓
-3. Master job (run_workflow_master.py) starts
+3. Validates config sync with remote locations (if needed)
                     ↓
-4. Master loads configs, resolves paths, creates workflow directory
+4. Launches WorkflowRunner (foreground or background)
                     ↓
-5. Master executes each enabled step sequentially:
-   - Download (optional)
-   - Preprocessing
-   - Embedding Preparation (CPU) (with array jobs for chunks)
-   - CPU Embedding (with array jobs for chunks)
-   - GPU Embedding (with array jobs for chunks)
-   - Dataset Creation
+5. For each enabled step:
+   a. Determine execution location from step config
+   b. Transfer data if location changed from previous step
+   c. Execute step using appropriate executor
+   d. Collect logs to central workflow directory
                     ↓
-6. Master collects logs, generates summary, marks completion
+6. Generate workflow summary
 ```
 
 ---
 
-## Submission Process
+## Configuration
 
-### SLURM Submission (`submit_workflow.py`)
+### Dataset Configuration
 
-When you run:
+Each step in your dataset config can specify where it should run:
 
-```bash
-python scripts/workflow/submit_workflow.py --config-name dataset_example
+```yaml
+# conf/my_dataset.yaml
+defaults:
+  - dataset_default.yaml
+  - _self_
+
+dataset:
+  name: "my_dataset"
+  description: "My dataset description"
+
+# Per-step execution locations
+download:
+  enabled: true
+  execution_location: local # Download locally (has internet)
+
+preprocessing:
+  enabled: true
+  execution_location: cpu # Preprocess on CPU cluster
+
+embedding_preparation:
+  enabled: true
+  execution_location: cpu
+
+embedding_cpu:
+  enabled: true
+  execution_location: cpu
+  methods: ["pca", "scvi_fm"]
+
+embedding_gpu:
+  enabled: true
+  execution_location: gpu # GPU embeddings on GPU cluster
+  methods: ["geneformer"]
+
+dataset_creation:
+  enabled: true
+  execution_location: cpu
 ```
 
-**What happens:**
+**Execution location options:**
 
-1. **Load Configurations:**
-   - Loads `conf/workflow_orchestrator.yaml` for cluster settings
-   - Loads `conf/dataset_example.yaml` for dataset parameters
+- `local` - Run on the local machine
+- `cpu` - Run on the CPU cluster via SLURM
+- `gpu` - Run on the GPU cluster via SLURM
 
-2. **Validate Config Synchronization:**
-   - Checks that the dataset config exists on the remote cluster
-   - Compares local and remote config file hashes
-   - Ensures configs are in sync (unless `--force` is used)
+### Workflow Configuration
 
-3. **Submit Master SLURM Job:**
-   - Constructs `sbatch` command with appropriate environment variables
-   - SSHs to CPU cluster: `ssh cpu_cluster "cd {project_dir} && sbatch ..."`
-   - Passes `DATASET_CONFIG` and `PROJECT_DIR` as environment variables
-   - Returns master job ID
+Configure the locations in `conf/workflow_orchestrator.yaml`:
 
-4. **Job Starts:**
-   - SLURM scheduler allocates resources on CPU cluster
-   - Runs `scripts/workflow/run_workflow_master.slurm`
-   - Which in turn calls `scripts/workflow/run_workflow_master.py`
+```yaml
+workflow:
+  default_execution_location: local # Fallback if step doesn't specify
 
-**Key Environment Variables:**
+  locations:
+    local:
+      base_file_path: "./data/RNA"
+      project_directory: "."
+      venv_path: ".venv"
+      output_directory: "./outputs"
+      max_workers: 2
+      enable_gpu: true
 
-- `DATASET_CONFIG`: Name of dataset config (e.g., `dataset_example`)
-- `PROJECT_DIR`: Project directory on cluster
-- `SLURM_JOB_ID`: Assigned by SLURM, used as workflow identifier
-- `EXECUTION_MODE`: Set to `slurm` for cluster execution
+    cpu:
+      ssh_host: "cpu_cluster" # SSH hostname
+      ssh_user: "username" # SSH username
+      slurm_partition: "slurm" # SLURM partition
+      node: null # Specific node (optional)
+      base_file_path: "/scratch/data/RNA"
+      project_directory: "/home/user/project"
+      venv_path: ".venv"
+      output_directory: "/home/user/project/outputs"
 
-### Local Submission (`submit_workflow_local.py`)
+    gpu:
+      ssh_host: "gpu_cluster"
+      ssh_user: "username"
+      slurm_partition: "gpu"
+      node: null
+      base_file_path: "/scratch/data/RNA"
+      project_directory: "/home/user/project"
+      venv_path: ".venv"
+      output_directory: "/home/user/project/outputs"
 
-When you run:
+  transfer:
+    enabled: true
+    compression: true # Use tar.gz for Zarr directories
+    compression_level: 6
+    verify_integrity: true
+    rsync_options:
+      - "--archive"
+      - "--compress"
+      - "--partial"
+      - "--progress"
+      - "--human-readable"
 
-```bash
-python scripts/workflow/submit_workflow_local.py --config-name dataset_example
+  poll_interval: 120 # Seconds between SLURM job status checks
+  job_timeout: 0 # Max wait time (0 = unlimited)
 ```
-
-**What happens:**
-
-1. **Load Configuration:**
-   - Loads `conf/workflow_orchestrator.yaml`
-   - Sets `execution_mode` to `local`
-
-2. **Generate Run ID:**
-   - Creates unique run ID: `local_{timestamp}`
-   - Used for log directory naming
-
-3. **Run Master Process:**
-   - **Foreground mode** (`--foreground`): Runs in current terminal
-   - **Background mode** (default): Uses `nohup` + `caffeinate` (macOS) to run detached
-
-4. **Execute Steps:**
-   - Master process calls `run_workflow_localhost()` function
-   - Steps execute as local subprocesses (not SLURM jobs)
-   - Each step runs synchronously
-
-**Key Differences from SLURM:**
-
-- No SSH required (runs locally)
-- No SLURM job dependencies (sequential execution)
-- No cluster resource allocation
-- Simpler for development and testing
 
 ---
 
-## Configuration Resolution
+## Execution Locations
 
-One of the key features of the orchestrator is **automatic configuration resolution** for each step.
+### Local Execution
 
-### The Problem
+When a step runs locally:
 
-Different steps need different information:
-
-- Preprocessing needs: input file path, output directory
-- Embedding needs: processed file paths, embedding dimensions
-- Dataset creation needs: embedded file paths, HuggingFace settings
-
-But we want users to specify dataset properties **once** in a single config file.
-
-### The Solution: Configuration Transformations
-
-The `apply_all_transformations()` function (in `config_utils.py`) automatically:
-
-1. **Generates file paths** from dataset metadata:
-
-   ```python
-   # User specifies once:
-   dataset.name = "cellxgene_10k"
-   base_file_path = "/data/RNA"
-   split_dataset = true
-
-   # Automatically generates:
-   preprocessing.input_file = "/data/RNA/raw/train/cellxgene_10k.h5ad"
-   preprocessing.output_dir = "/data/RNA/processed/train/cellxgene_10k"
-   embedding_cpu.input_files = [
-       "/data/RNA/processed/train/cellxgene_10k/train/chunk_0.zarr",
-       "/data/RNA/processed/train/cellxgene_10k/val/chunk_0.zarr"
-   ]
-   embedding_cpu.output_dir = "/data/RNA/processed_with_emb/train/cellxgene_10k"
-   ```
-
-2. **Propagates common keys** to all steps:
-
-   ```python
-   # User defines once at top level:
-   batch_key = "dataset_title"
-   annotation_key = "cell_type"
-
-   # Automatically copied to:
-   preprocessing.batch_key = "dataset_title"
-   embedding_cpu.batch_key = "dataset_title"
-   dataset_creation.batch_key = "dataset_title"
-   ```
-
-3. **Auto-generates consolidation categories:**
-
-   ```python
-   # Based on annotation_key and other_bio_labels
-   preprocessing.consolidation_categories = ["cell_type", "tissue", "disease"]
-   ```
-
-4. **Resolves variable interpolations:**
-
-   ```python
-   # Hydra variable references like:
-   preprocessing.split_dataset = ${split_dataset}
-
-   # Are resolved to actual values:
-   preprocessing.split_dataset = true
-   ```
-
-### When Resolution Happens
-
-```
-Master job starts
-       ↓
-run_workflow_master.py loads config
-       ↓
-apply_all_transformations(config) is called
-       ↓
-Resolved config passed to each step
-       ↓
-Step scripts receive fully-resolved config with all paths
-```
-
-Each step script also calls `apply_all_transformations()` to ensure consistency.
-
----
-
-## Master Job Coordination
-
-The master job is the central coordinator that manages all pipeline steps.
-
-### Master Job Responsibilities
-
-1. **Configuration Management:**
-   - Load and resolve dataset config
-   - Set up environment variables (`BASE_FILE_PATH`, `WORKFLOW_DIR`)
-   - Validate enabled/disabled steps
-
-2. **Directory Structure:**
-   - Create workflow directory: `{output_dir}/{date}/workflow_{job_id}/`
-   - Create step subdirectories: `preprocessing/`, `embedding/`, etc.
-   - Copy dataset config for reproducibility
-
-3. **Step Execution:**
-   - Check if each step is enabled in config
-   - Execute or skip based on flags
-   - Pass appropriate parameters and environment variables
-
-4. **Logging:**
-   - Create centralized log files
-   - Redirect step outputs to appropriate directories
-   - Generate workflow summary at completion
-
-### Step Execution Patterns
-
-#### SLURM Mode
-
-For SLURM execution, the master job:
-
-**Single-File Steps** (preprocessing, dataset creation):
+1. `LocalExecutor` spawns a subprocess
+2. Output is captured to step-specific log files
+3. Process is tracked for cleanup on termination
 
 ```python
-# Submit SLURM job
-job_id = submit_slurm_job(
-    script="scripts/preprocessing/run_preprocess.slurm",
-    env_vars={"DATASET_CONFIG": dataset_config_name},
-    dependency=None  # or previous_job_id
-)
-
-# Wait for completion (polling)
-wait_for_job(job_id, poll_interval=3600)
-```
-
-**Array Job Steps** (embedding):
-
-```python
-# Discover input chunks
-input_files = glob(f"{processed_dir}/train/chunk_*.zarr")
-
-# Submit array job (one task per chunk)
-array_job_id = submit_slurm_array_job(
-    script="scripts/embed/embed_array.slurm",
-    array_size=len(input_files),
-    dependency=prep_job_id
-)
-
-# Wait for all array tasks
-wait_for_job(array_job_id, poll_interval=3600)
-```
-
-#### Local Mode
-
-For local execution, the master process:
-
-**Single-File Steps:**
-
-```python
-# Run as subprocess
-subprocess.run(
-    ["python", "scripts/preprocessing/preprocess.py", "--config-name", dataset_config],
-    cwd=project_root,
+# Internal execution
+subprocess.Popen(
+    ["python", "scripts/preprocessing/preprocess.py", "--config-name", "my_dataset"],
     stdout=log_file,
-    stderr=err_file
+    stderr=err_file,
+    cwd=project_directory
 )
-# Blocks until complete
 ```
 
-**Array Job Steps:**
+### Remote Execution (CPU/GPU)
 
-```python
-# Use ThreadPoolExecutor for parallel processing
-with ThreadPoolExecutor(max_workers=local_max_workers) as executor:
-    futures = []
-    for input_file in input_files:
-        future = executor.submit(
-            process_chunk,
-            input_file=input_file,
-            config_name=dataset_config,
-            ...
-        )
-        futures.append(future)
+When a step runs on a cluster:
 
-    # Wait for all to complete
-    for future in futures:
-        future.result()
+1. `RemoteExecutor` generates a SLURM script
+2. Submits via SSH: `ssh cluster "sbatch script.slurm"`
+3. Polls job status until completion
+4. Retrieves logs via rsync
+
+```bash
+# Generated SLURM script
+#!/bin/bash
+#SBATCH --job-name=preprocessing_20251217_110830
+#SBATCH --output=/tmp/workflow_logs/preprocessing_20251217_110830.out
+#SBATCH --error=/tmp/workflow_logs/preprocessing_20251217_110830.err
+#SBATCH --partition=slurm
+
+cd /home/user/project
+source .venv/bin/activate
+python scripts/preprocessing/preprocess.py --config-name my_dataset
 ```
 
-### Job Dependencies (SLURM)
+### Mixed Execution Example
 
-SLURM dependencies ensure correct execution order:
+A typical workflow might use different locations for different steps:
 
-```
-Download Job (if enabled)
-    ↓ (afterok dependency)
-Preprocessing Job
-    ↓ (afterok)
-Embedding Preparation Array Job
-    ↓ (afterok)
-┌───────────────────────────┐
-│  CPU Embedding Array Job  │  (parallel, both wait for prep)
-│  GPU Embedding Array Job  │
-└───────────────────────────┘
-    ↓ (afterok, waits for both)
-Dataset Creation Job(s)
-```
-
-**Dependency types:**
-
-- `afterok`: Next job runs only if previous succeeded (exit code 0)
-- `afterany`: Next job runs regardless of previous exit code
-- The orchestrator uses `afterok` to stop on failures
+| Step                  | Location | Reason                               |
+| --------------------- | -------- | ------------------------------------ |
+| download              | local    | Local machine has internet access    |
+| preprocessing         | cpu      | CPU-intensive, benefits from cluster |
+| embedding_preparation | cpu      | Prepare tokenized data               |
+| embedding_cpu         | cpu      | PCA, scVI don't need GPU             |
+| embedding_gpu         | gpu      | Geneformer needs GPU                 |
+| dataset_creation      | cpu      | Final assembly, push to HuggingFace  |
 
 ---
 
-## Logging and Error Handling
+## Data Transfer
 
-### Log Directory Structure
+### Automatic Transfer
+
+When consecutive steps run on different locations, data is automatically transferred:
 
 ```
-{output_directory}/{date}/workflow_{job_id}/
+Step 1: download (local)
+    ↓
+    Output: ./data/RNA/raw/train/my_dataset.h5ad
+    ↓
+[TRANSFER: local → cpu via rsync]
+    ↓
+Step 2: preprocessing (cpu)
+    ↓
+    Output: /scratch/data/RNA/processed/train/my_dataset/
+    ↓
+[NO TRANSFER: cpu → cpu]
+    ↓
+Step 3: embedding_cpu (cpu)
+    ↓
+    Output: /scratch/data/RNA/processed_with_emb/train/my_dataset/
+    ↓
+[TRANSFER: cpu → gpu via rsync]
+    ↓
+Step 4: embedding_gpu (gpu)
+```
+
+### Transfer Mechanism
+
+1. **Path Translation**: Paths are mapped between location base directories
+   - `./data/RNA/raw/train/file.h5ad` (local)
+   - → `/scratch/data/RNA/raw/train/file.h5ad` (cpu)
+
+2. **Compression**: Zarr directories (many small files) are compressed with tar.gz before transfer
+
+3. **Rsync**: Actual transfer uses rsync with progress tracking
+
+   ```bash
+   rsync --archive --compress --partial --progress \
+       source:/path/to/data target:/path/to/data
+   ```
+
+4. **Verification**: Optional integrity check after transfer
+
+### Transfer Configuration
+
+```yaml
+transfer:
+  enabled: true # Enable automatic data transfer
+  compression: true # Compress Zarr directories
+  compression_level: 6 # gzip compression level (1-9)
+  verify_integrity: true # Verify after transfer
+  remote_to_remote_via_local: false # Direct remote-to-remote if SSH agent forwarding works
+  temp_dir: "/tmp/workflow_transfer"
+  cleanup_temp: true
+```
+
+---
+
+## Logging and Monitoring
+
+### Directory Structure
+
+All logs are centralized in a single workflow directory:
+
+```
+outputs/2025-12-17/workflow_20251217_110830/
 ├── logs/
-│   ├── workflow_master.out              # Master job stdout
-│   ├── workflow_master.err              # Master job stderr
-│   ├── workflow_summary.log             # High-level summary
-│   └── errors_consolidated.log          # All ERROR-level messages
+│   ├── launcher.out           # Launcher process stdout
+│   ├── launcher.err           # Launcher process stderr (main workflow log)
+│   ├── workflow.pid           # Process ID for killing
+│   ├── workflow_summary.log   # High-level summary
+│   └── errors_consolidated.log # All ERROR-level messages
+│
+├── download/
+│   ├── download_20251217_110903.out
+│   └── download_20251217_110903.err
 │
 ├── preprocessing/
-│   └── job_{slurm_job_id}/
-│       ├── preprocessing.out
-│       ├── preprocessing.err
-│       └── .hydra/config.yaml           # Resolved config used
+│   ├── preprocessing_20251217_110915.out
+│   └── preprocessing_20251217_110915.err
 │
-├── embedding_prepare/
-│   └── job_{slurm_job_id}/
-│       ├── master.out
-│       ├── master.err
-│       └── array_{array_job_id}/
-│           ├── task_0.out
-│           ├── task_0.err
-│           ├── task_1.out
-│           └── task_1.err
+├── embedding_preparation/
+│   └── ...
 │
-├── embedding/
-│   ├── job_{cpu_job_id}/
-│   │   ├── cpu_master.out
-│   │   └── array_{array_job_id}/
-│   │       └── task_*.out/err
-│   └── job_{gpu_job_id}/
-│       ├── gpu_master.out
-│       └── array_{array_job_id}/
-│           └── task_*.out/err
+├── embedding_cpu/
+│   └── ...
 │
-├── dataset_creation/
-│   └── job_{slurm_job_id}/
-│       ├── create_ds_0.out              # One per cs_length/caption_key combo
-│       └── create_ds_0.err
+├── embedding_gpu/
+│   └── ...
 │
-└── config/
-    └── dataset_config.yaml              # Copy of dataset config
+└── dataset_creation/
+    └── ...
 ```
 
-### Consolidated Error Logging
-
-The orchestrator attempts to consolidate all ERROR-level log messages:
-
-**How it works:**
-
-1. Each step script adds a logging handler for `errors_consolidated.log`
-2. All `logger.error()` calls are written to this file
-3. Master job can check this file for failures
-
-**Example:**
-
-```python
-# In each step script
-error_log_path = os.path.join(WORKFLOW_DIR, "logs", "errors_consolidated.log")
-error_handler = logging.FileHandler(error_log_path, mode="a")
-error_handler.setLevel(logging.ERROR)
-logging.getLogger().addHandler(error_handler)
-```
-
-### Error Handling Limitations
-
-⚠️ **Known Issues:**
-
-**Problem 1: Jobs Don't Always Stop on Errors**
-
-Sometimes a job reports an error but doesn't exit with a non-zero code:
-
-- Python exceptions are caught and logged but script continues
-- SLURM sees exit code 0 (success) and continues pipeline
-- Dependent jobs run even though previous step failed
-
-**Workaround:**
-
-- Check `errors_consolidated.log` manually
-- Look for ERROR messages in step-specific `.err` files
-- Monitor job outputs during execution
-
-**Problem 2: Silent Failures**
-
-Some failures may not be logged to the consolidated log:
-
-- Segmentation faults (process crashes)
-- Out-of-memory kills (SLURM sends SIGKILL)
-- Network errors during SSH/SLURM communication
-
-**Workaround:**
-
-- Check SLURM job status: `sacct -j {job_id}`
-- Look for `FAILED`, `CANCELLED`, `OUT_OF_MEMORY` states
-- Check step-specific `.err` files
-
-**Problem 3: Resource Exhaustion**
-
-Jobs may fail due to resource limits:
-
-- Memory exceeded → SLURM kills job
-- Time limit exceeded → Job cancelled
-- Disk space full → Write failures
-
-**Workaround:**
-
-- Check `sacct -j {job_id} --format=JobID,State,MaxRSS,Elapsed`
-- Increase memory allocation in step SLURM scripts
-- Increase time limits for large datasets
-
-### Debugging Workflow Issues
-
-**Step 1: Check workflow summary**
+### Monitoring a Running Workflow
 
 ```bash
-cat {output_dir}/{date}/workflow_{job_id}/logs/workflow_summary.log
+# Watch the main workflow log
+tail -f outputs/2025-12-17/workflow_*/logs/launcher.err
+
+# Check current step
+ls -la outputs/2025-12-17/workflow_*/*/
+
+# Check for errors
+cat outputs/2025-12-17/workflow_*/logs/errors_consolidated.log
 ```
 
-**Step 2: Check consolidated errors**
+### Workflow Summary
 
-```bash
-cat {output_dir}/{date}/workflow_{job_id}/logs/errors_consolidated.log
+After completion, check `workflow_summary.log`:
+
 ```
+================================================================================
+WORKFLOW SUMMARY
+================================================================================
+Workflow ID: workflow_20251217_110830
+Dataset: my_dataset
+Status: COMPLETED
 
-**Step 3: Check master job logs**
+Steps:
+  download:              ✓ SUCCESS (2.3s)
+  preprocessing:         ✓ SUCCESS (45.2s)
+  embedding_preparation: SKIPPED
+  embedding_cpu:         ✓ SUCCESS (120.5s)
+  embedding_gpu:         ✓ SUCCESS (89.3s)
+  dataset_creation:      ✓ SUCCESS (15.8s)
 
-```bash
-cat {output_dir}/{date}/workflow_{job_id}/logs/workflow_master.err
-```
-
-**Step 4: Check individual step logs**
-
-```bash
-# Find the failing step
-ls {output_dir}/{date}/workflow_{job_id}/
-
-# Check its error log
-cat {output_dir}/{date}/workflow_{job_id}/{step_name}/job_*/step.err
-```
-
-**Step 5: Check SLURM job status (SLURM mode only)**
-
-```bash
-# On the cluster
-sacct -j {job_id} --format=JobID,JobName,State,ExitCode,MaxRSS,Elapsed
-
-# Look for non-zero ExitCode or FAILED State
+Total time: 273.1s
+================================================================================
 ```
 
 ---
 
 ## Job Cancellation
 
-### Cancelling the Master Job
+### Killing a Workflow
 
-The master job controls all subjobs. **Cancelling the master job cancels everything.**
-
-#### SLURM Mode
+When you kill the main workflow process, **all child processes and remote jobs are terminated**:
 
 ```bash
-# Find the master job ID (from submission output or squeue)
-ssh cpu_cluster "squeue -u username"
+# Option 1: Use the PID directly
+kill 12345
 
-# Cancel the master job
-ssh cpu_cluster "scancel {master_job_id}"
+# Option 2: Use the PID file
+kill $(cat outputs/2025-12-17/workflow_*/logs/workflow.pid)
 ```
 
-**What happens:**
+### What Happens on Kill
 
-1. SLURM sends SIGTERM to master job
-2. Master job's signal handler catches it
-3. Master job calls `cancel_all_jobs()`:
-   - Cancels all subjobs it submitted
-   - Cancels preprocessing job (if running)
-   - Cancels embedding array jobs (if running)
-   - Cancels dataset creation jobs (if running)
-4. Master job exits
+1. **Signal caught** - WorkflowRunner receives SIGTERM/SIGINT
+2. **Cleanup initiated** - `_cleanup_all()` is called
+3. **Local processes terminated** - Any running subprocess is killed
+4. **Remote jobs cancelled** - `scancel` is called via SSH for SLURM jobs
+5. **Process exits** - Main workflow process terminates
 
-**Automatic cleanup:**
+Log output on termination:
 
-- All SLURM jobs with dependencies on the master are automatically cancelled by SLURM
-- This includes queued jobs that haven't started yet
+```
+Received signal 15, terminating workflow...
+Cleaning up all running processes and jobs...
+Terminating executor for local...
+Terminating local process 12456
+Terminating executor for cpu...
+Cancelling SLURM job 789012 on cpu
+Successfully cancelled job 789012
+Cleanup complete
+```
 
-#### Local Mode
+### Cancelling Only Remote Jobs
+
+If you need to cancel a specific remote job without stopping the workflow:
 
 ```bash
-# Find the process (if running in background)
-ps aux | grep run_workflow_master.py
+# On the cluster
+scancel <job_id>
 
-# Kill the process
-kill {pid}
-
-# Or use the PID file (if you noted the output directory)
-kill $(cat {output_dir}/{date}/workflow_{timestamp}/master.pid)
+# Or via SSH
+ssh cpu_cluster "scancel <job_id>"
 ```
 
-**What happens:**
-
-1. Python process receives SIGTERM
-2. Signal handler catches it (if running in foreground)
-3. All subprocess are terminated
-4. Process exits
-
-**Note:** Background processes (using `nohup`) may not respond to Ctrl+C. Use `kill` command instead.
-
-### Cancelling Individual Steps
-
-⚠️ **Not recommended:** Cancelling individual subjobs breaks the workflow dependency chain.
-
-**What happens if you cancel a subjob:**
-
-- Master job may not detect the cancellation
-- Dependent jobs may fail due to missing input files
-- Master job may hang waiting for a job that will never complete
-
-**If you must cancel a specific step:**
-
-1. Cancel the master job first
-2. Or let the step fail naturally and the master will handle it
-
----
-
-## Execution Modes
-
-### SLURM Mode
-
-**Best for:**
-
-- Large datasets (> 100K cells)
-- Production workflows
-- GPU-intensive steps
-- Parallel processing across multiple nodes
-
-**Requirements:**
-
-- SLURM cluster access
-- SSH key authentication
-- Shared filesystem between CPU and GPU nodes
-- Appropriate partition access
-
-**Configuration:**
-
-```yaml
-workflow:
-  execution_mode: "slurm"
-  cpu_login:
-    host: "cpu_cluster"
-    user: "username"
-  gpu_login:
-    host: "gpu_cluster"
-    user: "username"
-  slurm_base_file_path: "/scratch/global/username/data/RNA"
-```
-
-### Local Mode
-
-**Best for:**
-
-- Small datasets (< 10K cells)
-- Development and testing
-- Debugging workflows
-- Single-machine setups
-
-**Requirements:**
-
-- Sufficient local resources (RAM, CPU)
-- Python environment with all dependencies
-- Optional: CUDA-capable GPU (for GPU embeddings)
-
-**Configuration:**
-
-```yaml
-workflow:
-  execution_mode: "local"
-  local_base_file_path: "/Users/username/data/RNA"
-  local_max_workers: 2
-  local_enable_gpu: false
-```
-
-**Limitations:**
-
-- No true parallelization (uses threading, not multiprocessing)
-- Limited by local machine resources
-- GPU embedding disabled by default (to prevent OOM on laptops)
+⚠️ **Note:** This may cause the workflow to fail when it detects the cancelled job.
 
 ---
 
@@ -658,7 +516,7 @@ workflow:
 
 ### Common Issues
 
-#### Issue: "SSH connection timed out"
+#### "SSH connection timed out"
 
 **Cause:** Cannot connect to cluster via SSH
 
@@ -676,7 +534,7 @@ ssh-add -l
 ssh-add ~/.ssh/id_ed25519
 ```
 
-#### Issue: "Config file not synchronized"
+#### "Config file not synchronized"
 
 **Cause:** Local and remote configs differ
 
@@ -684,90 +542,72 @@ ssh-add ~/.ssh/id_ed25519
 
 ```bash
 # Option 1: Use --force to skip check
-python scripts/workflow/submit_workflow.py --config-name dataset_example --force
+python scripts/workflow/submit_workflow.py --config my_dataset --force
 
 # Option 2: Sync configs manually
-ssh cpu_cluster "cd {project_dir} && git pull"
-
-# Option 3: Copy config directly
-scp conf/dataset_example.yaml cpu_cluster:{project_dir}/conf/
+ssh cpu_cluster "cd /path/to/project && git pull"
 ```
 
-#### Issue: "Master job stuck waiting"
+#### "All steps run locally - skipping remote config sync check"
 
-**Cause:** A subjob failed but master didn't detect it
+**This is expected** when all your steps have `execution_location: local`. No remote validation is needed.
+
+#### "Data transfer failed"
+
+**Cause:** rsync or SSH issue
 
 **Solution:**
 
 ```bash
-# Check subjob status
-ssh cpu_cluster "sacct -j {master_job_id}.batch --format=JobID,State"
+# Test rsync manually
+rsync -avz --progress local_file cpu_cluster:/path/
 
-# Look for FAILED or CANCELLED
-# Cancel master job if needed
-ssh cpu_cluster "scancel {master_job_id}"
+# Check disk space on target
+ssh cpu_cluster "df -h /scratch"
 ```
 
-#### Issue: "No such file or directory" during workflow
+#### "SLURM job failed"
 
-**Cause:** Path configuration mismatch
-
-**Solution:**
-
-- Check `base_file_path` in `workflow_orchestrator.yaml`
-- Ensure it's accessible from both CPU and GPU clusters
-- Verify previous steps completed successfully
-- Check step-specific output directories exist
-
-#### Issue: "Permission denied" errors
-
-**Cause:** Insufficient permissions on shared filesystem
+**Cause:** Resource limits, missing dependencies, or script error
 
 **Solution:**
 
 ```bash
-# Check permissions
-ssh cpu_cluster "ls -la {base_file_path}"
+# Check job status
+ssh cpu_cluster "sacct -j <job_id> --format=JobID,State,ExitCode,MaxRSS"
 
-# Create directory if needed
-ssh cpu_cluster "mkdir -p {base_file_path}/raw/train"
-
-# Check if writable
-ssh cpu_cluster "touch {base_file_path}/test && rm {base_file_path}/test"
+# Check job output
+cat outputs/*/step_name/*.err
 ```
 
-#### Issue: "Import error" in step scripts
+#### "Process not terminating"
 
-**Cause:** Virtual environment not activated or missing dependencies
+**Cause:** Child process ignoring SIGTERM
 
 **Solution:**
 
 ```bash
-# On cluster, verify venv
-ssh cpu_cluster "cd {project_dir} && source .venv/bin/activate && python -c 'import adata_hf_datasets'"
+# Force kill
+kill -9 <pid>
 
-# Reinstall if needed
-ssh cpu_cluster "cd {project_dir} && uv sync --all-extras"
+# Kill entire process group
+kill -9 -<pgid>
+```
+
+### Debug Mode
+
+For more verbose output, run in foreground:
+
+```bash
+python scripts/workflow/submit_workflow.py --config my_dataset --foreground
 ```
 
 ### Getting Help
 
-For workflow-specific issues:
-
-1. **Check master job logs:**
-   - `{output_dir}/{date}/workflow_{job_id}/logs/workflow_master.err`
-
-2. **Check consolidated errors:**
-   - `{output_dir}/{date}/workflow_{job_id}/logs/errors_consolidated.log`
-
-3. **Check step-specific logs:**
-   - Navigate to the failing step's directory and check `.err` files
-
-4. **Check SLURM job status:**
-   - `sacct -j {job_id} --format=JobID,State,ExitCode,MaxRSS`
-
-5. **Review configuration:**
-   - `{output_dir}/{date}/workflow_{job_id}/config/dataset_config.yaml`
+1. **Check launcher log:** `outputs/*/logs/launcher.err`
+2. **Check step logs:** `outputs/*/step_name/*.err`
+3. **Check consolidated errors:** `outputs/*/logs/errors_consolidated.log`
+4. **Check workflow summary:** `outputs/*/logs/workflow_summary.log`
 
 For step-specific issues, see the individual step README files:
 
@@ -780,18 +620,23 @@ For step-specific issues, see the individual step README files:
 
 ## Summary
 
-The workflow orchestrator provides a robust system for managing complex multi-step pipelines:
+The unified workflow orchestrator provides:
 
-✅ **Automatic configuration resolution** from dataset metadata
-✅ **Centralized logging** with consolidated error tracking
-✅ **Job dependency management** via SLURM or sequential execution
-✅ **Cancellation support** with automatic cleanup
-✅ **Multiple execution modes** for different use cases
+✅ **Per-step execution locations** - Run each step where it makes sense
+✅ **Automatic data transfer** - Seamless movement between locations
+✅ **Centralized logging** - All logs in one place
+✅ **Graceful termination** - Kill propagates to all processes and remote jobs
+✅ **Simple interface** - Single submission script for all modes
 
-⚠️ **Known limitations:**
+**Key commands:**
 
-- Error detection is not perfect - manual log checking may be needed
-- Some failures may not stop the pipeline automatically
-- Resource exhaustion can cause silent failures
+```bash
+# Submit workflow
+python scripts/workflow/submit_workflow.py --config my_dataset
 
-For most use cases, follow the [Main README](../../README.md) for basic usage. Refer to this document for troubleshooting and understanding the internal workings.
+# Run in foreground
+python scripts/workflow/submit_workflow.py --config my_dataset --foreground
+
+# Kill workflow
+kill $(cat outputs/*/logs/workflow.pid)
+```
