@@ -157,17 +157,38 @@ class EmbeddingLauncher:
         # Persist the resolved base path for other methods (e.g., sbatch/env)
         self.resolved_base_file_path = str(base_file_path)
 
-        # Determine input subdirectory based on mode:
-        # - prepare_only or cpu mode: read from processed/ (preprocessing output)
-        # - gpu mode: read from processed_with_emb/ (where cpu embedding put the data)
-        if self.mode == "gpu" and not self.prepare_only:
+        # Determine input subdirectory based on config and mode:
+        # The key question: has CPU embedding already run and put data in processed_with_emb/?
+        #
+        # Logic:
+        # - prepare_only mode: always reads from processed/ (preprocessing output)
+        # - cpu mode: always reads from processed/ (preprocessing output)
+        # - gpu mode: depends on whether embedding_cpu is enabled
+        #   - If enabled: CPU ran first and wrote to processed_with_emb/, so read from there
+        #   - If disabled: GPU runs directly on preprocessing output, read from processed/
+        #
+        # Note: embedding_preparation does NOT write to processed_with_emb/ (only runs prepare() step)
+        cpu_embedding_enabled = (
+            hasattr(self.config, "embedding_cpu")
+            and self.config.embedding_cpu is not None
+            and self.config.embedding_cpu.get("enabled", True)
+        )
+
+        if self.mode == "gpu" and not self.prepare_only and cpu_embedding_enabled:
             input_subdir = "processed_with_emb"
-            logger.info("GPU mode: looking for input in processed_with_emb/")
+            logger.info(
+                "GPU mode with CPU embedding enabled: looking for input in processed_with_emb/"
+            )
         else:
             input_subdir = "processed"
-            logger.info(
-                f"{'Prepare' if self.prepare_only else 'CPU'} mode: looking for input in processed/"
-            )
+            if self.mode == "gpu" and not cpu_embedding_enabled:
+                logger.info(
+                    "GPU mode with CPU embedding disabled: looking for input in processed/"
+                )
+            else:
+                logger.info(
+                    f"{'Prepare' if self.prepare_only else 'CPU'} mode: looking for input in processed/"
+                )
 
         base_dir = Path(base_file_path) / input_subdir
         dataset_name = self.config.dataset.name
