@@ -833,9 +833,16 @@ class DataTransfer:
 
         return stats
 
-    def test_connectivity(self) -> Dict[str, bool]:
+    def test_connectivity(
+        self, locations_to_test: Optional[set] = None
+    ) -> Dict[str, bool]:
         """
-        Test connectivity to all configured locations.
+        Test connectivity to configured locations.
+
+        Parameters
+        ----------
+        locations_to_test : Optional[set]
+            If provided, only test these locations. If None, test all locations.
 
         Returns
         -------
@@ -845,6 +852,10 @@ class DataTransfer:
         results = {}
 
         for name, config in self.locations.items():
+            # Skip if not in the filter set (when filter is provided)
+            if locations_to_test is not None and name not in locations_to_test:
+                continue
+
             if config.is_remote:
                 try:
                     result = self._run_ssh_command(

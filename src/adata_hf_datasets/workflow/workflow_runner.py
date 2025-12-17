@@ -335,7 +335,7 @@ class WorkflowRunner:
                 self.executors[name] = None
 
     def _setup_data_transfer(self) -> None:
-        """Initialize data transfer if enabled."""
+        """Initialize data transfer if enabled (connectivity check deferred)."""
         transfer_config = self.workflow_config.get("transfer", {})
 
         if not transfer_config.get("enabled", False):
@@ -348,20 +348,80 @@ class WorkflowRunner:
 
         try:
             self.data_transfer = DataTransfer(self.locations, transfer_config)
-
-            # Test connectivity
-            connectivity = self.data_transfer.test_connectivity()
-            for loc, connected in connectivity.items():
-                if not connected:
-                    logger.warning(
-                        f"Cannot connect to {loc} - steps on this location may fail"
-                    )
-                else:
-                    logger.info(f"Connectivity to {loc}: OK")
-
+            # Note: Connectivity check is deferred to run_workflow() when we know
+            # which locations are actually used
         except Exception as e:
             logger.warning(f"Failed to initialize data transfer: {e}")
             self.data_transfer = None
+
+    def _get_used_locations(self, dataset_config: DictConfig) -> set:
+        """
+        Determine which locations are actually used by enabled steps.
+
+        Parameters
+        ----------
+        dataset_config : DictConfig
+            The dataset configuration
+
+        Returns
+        -------
+        set
+            Set of location names that are used by enabled steps
+        """
+        used_locations = set()
+
+        for step in WORKFLOW_STEPS:
+            step_config = getattr(dataset_config, step, None)
+            if step_config is None:
+                continue
+
+            # Check if step is enabled
+            enabled = getattr(step_config, "enabled", True)
+            if not enabled:
+                continue
+
+            # Get execution location
+            location = get_step_execution_location(
+                step, dataset_config, self.default_location
+            )
+            used_locations.add(location)
+
+        return used_locations
+
+    def _check_connectivity(self, used_locations: set) -> None:
+        """
+        Check connectivity only to locations that are actually used.
+
+        Parameters
+        ----------
+        used_locations : set
+            Set of location names to check connectivity for
+        """
+        if self.data_transfer is None:
+            return
+
+        # Only check remote locations that are actually used
+        remote_locations_to_check = {
+            loc
+            for loc in used_locations
+            if loc in self.locations and self.locations[loc].is_remote
+        }
+
+        if not remote_locations_to_check:
+            logger.info("All steps run locally - skipping remote connectivity check")
+            return
+
+        logger.info(f"Checking connectivity to: {', '.join(remote_locations_to_check)}")
+
+        # Test connectivity only to used remote locations
+        connectivity = self.data_transfer.test_connectivity(remote_locations_to_check)
+        for loc, connected in connectivity.items():
+            if not connected:
+                logger.warning(
+                    f"Cannot connect to {loc} - steps on this location may fail"
+                )
+            else:
+                logger.info(f"Connectivity to {loc}: OK")
 
     def _setup_signal_handlers(self) -> None:
         """Set up signal handlers for graceful termination."""
@@ -690,6 +750,13 @@ class WorkflowRunner:
 
         start_time = time.time()
         workflow_success = True
+
+        # Determine which locations are actually used and check connectivity
+        used_locations = self._get_used_locations(dataset_config)
+        logger.info(
+            f"Locations used in this workflow: {', '.join(sorted(used_locations))}"
+        )
+        self._check_connectivity(used_locations)
 
         # Log workflow start
         self.log_writer.write_workflow_start(
