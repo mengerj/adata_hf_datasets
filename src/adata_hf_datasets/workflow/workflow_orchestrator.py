@@ -138,7 +138,11 @@ def get_step_output_paths(
     """
     base_path = location_config.base_file_path
     dataset_name = dataset_config.dataset.name
-    split_dataset = dataset_config.get("split_dataset", True)
+
+    # Determine split from preprocessing config (consistent with config_utils.py)
+    split_dataset = dataset_config.preprocessing.get(
+        "split_dataset", dataset_config.get("split_dataset", True)
+    )
     split_subdir = "train" if split_dataset else "test"
 
     if step_name == "download":
@@ -184,7 +188,11 @@ def get_step_input_paths(
     """
     base_path = location_config.base_file_path
     dataset_name = dataset_config.dataset.name
-    split_dataset = dataset_config.get("split_dataset", True)
+
+    # Determine split from preprocessing config (consistent with config_utils.py)
+    split_dataset = dataset_config.preprocessing.get(
+        "split_dataset", dataset_config.get("split_dataset", True)
+    )
     split_subdir = "train" if split_dataset else "test"
 
     if step_name == "download":
