@@ -4,6 +4,25 @@
 #SBATCH --mem=32G
 #SBATCH --cpus-per-task=4
 
+# ═══════════════════════════════════════════════════════════════════════════════
+# DEPRECATION NOTICE
+# ═══════════════════════════════════════════════════════════════════════════════
+# This "master job" script is DEPRECATED and kept only for standalone/legacy usage.
+#
+# For the new unified workflow, use:
+#   python scripts/workflow/submit_workflow.py --config-name <dataset_config>
+#
+# The new workflow uses EmbeddingArraySubmitter to directly submit array jobs
+# via SSH without needing an intermediate master SLURM job. Benefits:
+#   - No wasted resources (no idle master job)
+#   - Direct array job tracking from Python orchestrator
+#   - Better cancellation handling
+#   - Cleaner architecture
+#
+# This script is only useful if you want to manually submit embedding jobs
+# without using the workflow orchestrator.
+# ═══════════════════════════════════════════════════════════════════════════════
+
 # Exit on any error, but be more careful about pipefail
 set -euo pipefail
 
@@ -137,31 +156,172 @@ trap 'cleanup_and_cancel EXIT' EXIT
 trap 'cleanup_and_cancel TERM' TERM
 trap 'cleanup_and_cancel INT' INT
 
-# Build launcher command
-launcher_cmd=(
-    "python" "scripts/embed/embed_launcher.py"
-    "--config-name" "$DATASET_CONFIG"
-    "--mode" "$MODE"
-)
+# ─────────────────────────────────────────────────────────────────────────────
+# Direct Array Job Submission
+# ─────────────────────────────────────────────────────────────────────────────
+# Note: This script now directly submits array jobs instead of relying on
+# embed_launcher.py, which has been simplified to local-only execution.
+# For unified workflow execution, use the orchestrator's RemoteExecutor.
 
-if [[ "$PREPARE_ONLY" == "true" ]]; then
-    launcher_cmd+=("--prepare-only")
-fi
+# Determine input directories based on config
+# Use Python to extract paths from the Hydra config
+echo "Determining input directories from config..."
 
-# Log the command
-echo "Executing: ${launcher_cmd[*]}"
+# Get base path and dataset name from config
+INPUT_INFO=$(python -c "
+import os
+import sys
+from hydra import compose, initialize_config_dir
+from hydra.core.global_hydra import GlobalHydra
+from adata_hf_datasets.workflow import apply_all_transformations
 
-# Set environment variables for the launcher
-export DATASET_CONFIG
-export MODE
-export PREPARE_ONLY
-export WORKFLOW_DIR
+GlobalHydra.instance().clear()
+config_path = os.path.join(os.getcwd(), 'conf')
 
-# Run the launcher
-if ! "${launcher_cmd[@]}"; then
-    echo "ERROR: Failed to launch embedding array jobs"
+with initialize_config_dir(config_dir=config_path, version_base=None):
+    cfg = compose(config_name='$DATASET_CONFIG')
+cfg = apply_all_transformations(cfg)
+
+# Determine base path
+base_file_path = os.environ.get('BASE_FILE_PATH') or cfg.get('base_file_path', './data/RNA')
+
+# Check if CPU embedding is enabled (for GPU mode input selection)
+cpu_enabled = hasattr(cfg, 'embedding_cpu') and cfg.embedding_cpu is not None and cfg.embedding_cpu.get('enabled', True)
+mode = '$MODE'
+prepare_only = '$PREPARE_ONLY' == 'true'
+
+# Determine input subdirectory
+if mode == 'gpu' and not prepare_only and cpu_enabled:
+    input_subdir = 'processed_with_emb'
+else:
+    input_subdir = 'processed'
+
+# Determine train or test
+split_dataset = cfg.preprocessing.get('split_dataset', True)
+train_or_test = 'train' if split_dataset else 'test'
+dataset_name = cfg.dataset.name
+
+print(f'{base_file_path}|{input_subdir}|{train_or_test}|{dataset_name}|{split_dataset}')
+" 2>/dev/null)
+
+if [[ -z "$INPUT_INFO" ]]; then
+    echo "ERROR: Failed to determine input directories from config"
     exit 1
 fi
+
+IFS='|' read -r BASE_PATH INPUT_SUBDIR TRAIN_OR_TEST DATASET_NAME SPLIT_DATASET <<< "$INPUT_INFO"
+echo "Base path: $BASE_PATH"
+echo "Input subdir: $INPUT_SUBDIR"
+echo "Train/Test: $TRAIN_OR_TEST"
+echo "Dataset name: $DATASET_NAME"
+echo "Split dataset: $SPLIT_DATASET"
+
+# Build list of input directories to process
+declare -a INPUT_DIRS
+declare -a LABELS
+
+if [[ "$TRAIN_OR_TEST" == "test" ]]; then
+    INPUT_DIRS=("$BASE_PATH/$INPUT_SUBDIR/test/$DATASET_NAME/all")
+    LABELS=("test")
+else
+    INPUT_DIRS=(
+        "$BASE_PATH/$INPUT_SUBDIR/train/$DATASET_NAME/train"
+        "$BASE_PATH/$INPUT_SUBDIR/train/$DATASET_NAME/val"
+    )
+    LABELS=("train" "val")
+fi
+
+# Submit array jobs for each input directory
+echo "Submitting array jobs..."
+JOB_FILE="/scratch/global/menger/tmp/embedding_array_jobs_${SLURM_JOB_ID}.txt"
+
+for i in "${!INPUT_DIRS[@]}"; do
+    INPUT_DIR="${INPUT_DIRS[$i]}"
+    LABEL="${LABELS[$i]}"
+
+    # Check if directory exists
+    if [[ ! -d "$INPUT_DIR" ]]; then
+        echo "WARNING: Directory does not exist: $INPUT_DIR, skipping $LABEL"
+        continue
+    fi
+
+    # Count zarr files
+    FILE_COUNT=$(ls -1d "$INPUT_DIR"/*.zarr 2>/dev/null | wc -l)
+
+    if [[ "$FILE_COUNT" -eq 0 ]]; then
+        echo "WARNING: No .zarr files found in $INPUT_DIR, skipping $LABEL"
+        continue
+    fi
+
+    echo "Found $FILE_COUNT zarr files in $INPUT_DIR for $LABEL"
+
+    # Build sbatch command
+    SBATCH_CMD=(
+        "sbatch"
+        "--job-name=embed_${LABEL}"
+        "--array=0-$((FILE_COUNT - 1))%${FILE_COUNT}"
+        "--time=6:00:00"
+    )
+
+    # Add resource requirements based on mode
+    if [[ "$MODE" == "cpu" ]]; then
+        SBATCH_CMD+=("--mem=60G" "--cpus-per-task=4" "--partition=slurm")
+    else
+        SBATCH_CMD+=("--mem=64G" "--cpus-per-task=4" "--gres=gpu:1" "--partition=gpu")
+    fi
+
+    # Determine embedding config section
+    if [[ "$PREPARE_ONLY" == "true" ]]; then
+        CONFIG_SECTION="embedding_preparation"
+    elif [[ "$MODE" == "cpu" ]]; then
+        CONFIG_SECTION="embedding_cpu"
+    else
+        CONFIG_SECTION="embedding_gpu"
+    fi
+
+    # Build environment variables
+    ENV_VARS="INPUT_DIR=$INPUT_DIR"
+    ENV_VARS+=",DATASET_CONFIG=$DATASET_CONFIG"
+    ENV_VARS+=",PREPARE_ONLY=$PREPARE_ONLY"
+    ENV_VARS+=",WORKFLOW_DIR=$WORKFLOW_DIR"
+    ENV_VARS+=",MODE=$MODE"
+    ENV_VARS+=",BASE_FILE_PATH=$BASE_PATH"
+    ENV_VARS+=",EMBEDDING_CONFIG_SECTION=$CONFIG_SECTION"
+
+    SBATCH_CMD+=("--export=ALL,$ENV_VARS")
+    SBATCH_CMD+=("scripts/embed/embed_chunks_parallel.slurm")
+
+    echo "Executing: ${SBATCH_CMD[*]}"
+
+    # Submit the job
+    SUBMIT_OUTPUT=$("${SBATCH_CMD[@]}" 2>&1)
+    SUBMIT_RC=$?
+
+    if [[ $SUBMIT_RC -ne 0 ]]; then
+        echo "ERROR: Failed to submit array job for $LABEL: $SUBMIT_OUTPUT"
+        continue
+    fi
+
+    # Parse job ID
+    JOB_ID=$(echo "$SUBMIT_OUTPUT" | grep -o "Submitted batch job [0-9]*" | grep -o "[0-9]*")
+
+    if [[ -n "$JOB_ID" ]]; then
+        echo "Submitted array job $JOB_ID for $LABEL ($FILE_COUNT tasks)"
+        # Write to tracking file
+        echo "$JOB_ID:$MODE:local" >> "$JOB_FILE"
+    else
+        echo "ERROR: Could not parse job ID from: $SUBMIT_OUTPUT"
+    fi
+done
+
+# Check if any jobs were submitted
+if [[ ! -f "$JOB_FILE" ]] || [[ ! -s "$JOB_FILE" ]]; then
+    echo "ERROR: No array jobs were submitted"
+    exit 1
+fi
+
+echo "Successfully submitted array jobs. Tracking file: $JOB_FILE"
+cat "$JOB_FILE"
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Wait for Array Jobs to Complete

@@ -20,9 +20,14 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple
 
 from .data_transfer import LocationConfig
+
+if TYPE_CHECKING:
+    from omegaconf import DictConfig
+
+    from .embedding_submitter import ArrayJobInfo
 
 logger = logging.getLogger(__name__)
 
@@ -302,9 +307,12 @@ class RemoteExecutor(StepExecutor):
 
         # Track current job for cancellation
         self._current_job_id: Optional[str] = None
+        # Track array jobs for cancellation
+        self._current_array_job_ids: List[str] = []
 
     def terminate(self) -> None:
-        """Cancel the currently running SLURM job if any."""
+        """Cancel the currently running SLURM job(s) if any."""
+        # Cancel regular jobs
         if self._current_job_id is not None:
             logger.info(
                 f"Cancelling SLURM job {self._current_job_id} on {self.location_name}"
@@ -323,6 +331,9 @@ class RemoteExecutor(StepExecutor):
                 logger.error(f"Error cancelling job {self._current_job_id}: {e}")
             finally:
                 self._current_job_id = None
+
+        # Cancel array jobs
+        self.terminate_array_jobs()
 
     def _run_ssh_command(
         self,
@@ -767,6 +778,268 @@ exit $exit_code
             else None,
             warnings=warnings,
         )
+
+    def execute_embedding_array_jobs(
+        self,
+        step_name: str,
+        dataset_config: "DictConfig",
+        dataset_config_name: str,
+        mode: str,
+        prepare_only: bool = False,
+        env: Optional[Dict[str, str]] = None,
+    ) -> ExecutionResult:
+        """
+        Execute embedding step by directly submitting and tracking array jobs.
+
+        This bypasses the master job pattern and directly submits SLURM array jobs,
+        then tracks them until all tasks complete.
+
+        Parameters
+        ----------
+        step_name : str
+            Name of the step (e.g., "embedding_gpu")
+        dataset_config : DictConfig
+            The resolved dataset configuration
+        dataset_config_name : str
+            Name of the dataset config file
+        mode : str
+            Processing mode: "cpu" or "gpu"
+        prepare_only : bool
+            Whether to run only the prepare step
+        env : Dict[str, str], optional
+            Environment variables to pass to jobs
+
+        Returns
+        -------
+        ExecutionResult
+            Result of the execution
+        """
+        from .embedding_submitter import EmbeddingArraySubmitter
+
+        start_time = time.time()
+
+        logger.info(
+            f"Executing {step_name} via direct array submission on {self.location_name}"
+        )
+
+        # Create the submitter
+        submitter = EmbeddingArraySubmitter(
+            location_config=self.location_config,
+            dataset_config=dataset_config,
+            workflow_dir=self.workflow_dir,
+            dataset_config_name=dataset_config_name,
+        )
+
+        # Submit array jobs
+        try:
+            submitted_jobs = submitter.submit_array_jobs(
+                mode=mode,
+                prepare_only=prepare_only,
+                env=env,
+            )
+        except Exception as e:
+            logger.error(f"Failed to submit array jobs: {e}")
+            return ExecutionResult(
+                success=False,
+                return_code=-1,
+                step_name=step_name,
+                location=self.location_name,
+                execution_time_seconds=time.time() - start_time,
+                error_message=f"Failed to submit array jobs: {e}",
+            )
+
+        if not submitted_jobs:
+            logger.error("No array jobs were submitted")
+            return ExecutionResult(
+                success=False,
+                return_code=-1,
+                step_name=step_name,
+                location=self.location_name,
+                execution_time_seconds=time.time() - start_time,
+                error_message="No array jobs were submitted",
+            )
+
+        # Track all job IDs for cancellation
+        self._current_array_job_ids = [job.job_id for job in submitted_jobs]
+
+        logger.info(
+            f"Submitted {len(submitted_jobs)} array jobs: "
+            f"{[j.job_id for j in submitted_jobs]}"
+        )
+
+        # Wait for all array jobs to complete
+        all_success = True
+        failed_jobs = []
+
+        try:
+            for job_info in submitted_jobs:
+                logger.info(
+                    f"Waiting for array job {job_info.job_id} ({job_info.label}, "
+                    f"{job_info.task_count} tasks)..."
+                )
+                success, final_state = self._wait_for_array_job(job_info)
+
+                if not success:
+                    all_success = False
+                    failed_jobs.append((job_info.job_id, job_info.label, final_state))
+                    logger.error(
+                        f"Array job {job_info.job_id} ({job_info.label}) failed: {final_state}"
+                    )
+                else:
+                    logger.info(
+                        f"Array job {job_info.job_id} ({job_info.label}) completed successfully"
+                    )
+        finally:
+            self._current_array_job_ids = []
+
+        execution_time = time.time() - start_time
+
+        if not all_success:
+            error_msg = f"Array job(s) failed: {failed_jobs}"
+            return ExecutionResult(
+                success=False,
+                return_code=1,
+                step_name=step_name,
+                location=self.location_name,
+                execution_time_seconds=execution_time,
+                error_message=error_msg,
+            )
+
+        return ExecutionResult(
+            success=True,
+            return_code=0,
+            step_name=step_name,
+            location=self.location_name,
+            execution_time_seconds=execution_time,
+            job_id=",".join([j.job_id for j in submitted_jobs]),
+        )
+
+    def _wait_for_array_job(self, job_info: "ArrayJobInfo") -> Tuple[bool, str]:
+        """
+        Wait for a SLURM array job to complete, tracking all tasks.
+
+        Returns (success, final_state).
+        """
+        job_id = job_info.job_id
+        start_time = time.time()
+
+        while True:
+            # Check timeout
+            if self.job_timeout > 0:
+                elapsed = time.time() - start_time
+                if elapsed > self.job_timeout:
+                    logger.warning(f"Array job {job_id} timed out after {elapsed:.0f}s")
+                    self._run_ssh_command(f"scancel {job_id}")
+                    return False, "TIMEOUT"
+
+            # Check job status using sacct to see all array tasks
+            code, stdout, stderr = self._run_ssh_command(
+                f"sacct -j {job_id} --format=JobID,State,ExitCode --noheader --parsable2"
+            )
+
+            if code != 0:
+                logger.warning(f"sacct failed: {stderr}")
+                # Fall back to squeue
+                code, stdout, stderr = self._run_ssh_command(
+                    f"squeue -j {job_id} --noheader"
+                )
+                if code == 0 and stdout.strip():
+                    logger.info(f"Array job {job_id} still has tasks running...")
+                    time.sleep(self.poll_interval)
+                    continue
+                else:
+                    # Job not in queue, check sacct again
+                    time.sleep(5)
+                    continue
+
+            # Parse sacct output
+            lines = stdout.strip().split("\n")
+            pending_or_running = 0
+            completed_tasks = 0
+            failed_tasks = []
+
+            for line in lines:
+                if not line.strip():
+                    continue
+                parts = line.split("|")
+                if len(parts) < 2:
+                    continue
+
+                job_id_part = parts[0]
+                state = parts[1]
+                exit_code = parts[2] if len(parts) >= 3 else None
+
+                # Skip main job entry, we only care about array tasks
+                if job_id_part == job_id:
+                    continue
+                # Check for array tasks (job_id_[task_index])
+                elif f"{job_id}_" in job_id_part and ".batch" not in job_id_part:
+                    if state in ["PENDING", "RUNNING"]:
+                        pending_or_running += 1
+                    elif state in ["COMPLETED", "COMPLETED+"]:
+                        completed_tasks += 1
+                    elif state in [
+                        "FAILED",
+                        "CANCELLED",
+                        "TIMEOUT",
+                        "OUT_OF_MEMORY",
+                        "NODE_FAIL",
+                    ]:
+                        failed_tasks.append((job_id_part, state, exit_code))
+
+            # Log progress
+            total_expected = job_info.task_count
+            logger.info(
+                f"Array job {job_id}: {completed_tasks}/{total_expected} completed, "
+                f"{pending_or_running} running/pending, {len(failed_tasks)} failed"
+            )
+
+            # Check if all tasks are done
+            if pending_or_running == 0 and (completed_tasks > 0 or failed_tasks):
+                if failed_tasks:
+                    logger.error(
+                        f"Array job {job_id} has {len(failed_tasks)} failed tasks"
+                    )
+                    for task_id, state, exit_code in failed_tasks[:5]:
+                        logger.error(f"  - {task_id}: {state} (exit: {exit_code})")
+                    return False, "ARRAY_TASKS_FAILED"
+                else:
+                    return True, "COMPLETED"
+
+            # Still running - check squeue as backup
+            code, stdout, stderr = self._run_ssh_command(
+                f"squeue -j {job_id} --noheader"
+            )
+            if code == 0 and stdout.strip():
+                # Jobs still in queue
+                time.sleep(self.poll_interval)
+                continue
+            elif completed_tasks > 0 or failed_tasks:
+                # No jobs in queue and we have results
+                if failed_tasks:
+                    return False, "ARRAY_TASKS_FAILED"
+                return True, "COMPLETED"
+            else:
+                # No jobs in queue but no results yet - wait a bit
+                time.sleep(self.poll_interval)
+                continue
+
+    def terminate_array_jobs(self) -> None:
+        """Cancel all currently tracked array jobs."""
+        if hasattr(self, "_current_array_job_ids") and self._current_array_job_ids:
+            for job_id in self._current_array_job_ids:
+                logger.info(f"Cancelling array job {job_id} on {self.location_name}")
+                try:
+                    code, stdout, stderr = self._run_ssh_command(
+                        f"scancel {job_id}", timeout=30
+                    )
+                    if code == 0:
+                        logger.info(f"Successfully cancelled array job {job_id}")
+                    else:
+                        logger.warning(f"Failed to cancel array job {job_id}: {stderr}")
+                except Exception as e:
+                    logger.error(f"Error cancelling array job {job_id}: {e}")
+            self._current_array_job_ids = []
 
 
 def create_executor(

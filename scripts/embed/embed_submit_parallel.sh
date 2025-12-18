@@ -1,4 +1,16 @@
 #!/usr/bin/env bash
+# ═══════════════════════════════════════════════════════════════════════════════
+# DEPRECATION NOTICE
+# ═══════════════════════════════════════════════════════════════════════════════
+# This script is DEPRECATED and kept only for standalone/legacy usage.
+#
+# For the new unified workflow, use:
+#   python scripts/workflow/submit_workflow.py --config-name <dataset_config>
+#
+# The new workflow uses EmbeddingArraySubmitter to directly submit array jobs
+# via SSH without needing this intermediate shell script.
+# ═══════════════════════════════════════════════════════════════════════════════
+
 set -euo pipefail
 
 

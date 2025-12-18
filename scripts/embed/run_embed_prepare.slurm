@@ -4,6 +4,21 @@
 #SBATCH --mem=16G
 #SBATCH --cpus-per-task=4
 
+# ═══════════════════════════════════════════════════════════════════════════════
+# DEPRECATION NOTICE
+# ═══════════════════════════════════════════════════════════════════════════════
+# This "master job" script is DEPRECATED and kept only for standalone/legacy usage.
+#
+# For the new unified workflow, use:
+#   python scripts/workflow/submit_workflow.py --config-name <dataset_config>
+#
+# The new workflow uses EmbeddingArraySubmitter to directly submit array jobs
+# via SSH without needing an intermediate master SLURM job.
+#
+# This script is only useful if you want to manually submit embedding preparation
+# jobs without using the workflow orchestrator.
+# ═══════════════════════════════════════════════════════════════════════════════
+
 # Exit on any error
 set -euo pipefail
 

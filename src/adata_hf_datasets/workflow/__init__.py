@@ -39,6 +39,10 @@ from .workflow_runner import (
     create_workflow_runner,
     run_unified_workflow,
 )
+from .embedding_submitter import (
+    EmbeddingArraySubmitter,
+    ArrayJobInfo,
+)
 
 __all__ = [
     # Orchestrator (legacy)
@@ -79,4 +83,7 @@ __all__ = [
     "LogSummary",
     "ConsolidatedLogWriter",
     "retrieve_and_summarize_step_logs",
+    # Embedding array job submission
+    "EmbeddingArraySubmitter",
+    "ArrayJobInfo",
 ]

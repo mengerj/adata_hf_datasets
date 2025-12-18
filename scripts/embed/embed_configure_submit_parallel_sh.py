@@ -2,6 +2,15 @@
 """
 Script to run embedding with parameters from dataset config.
 
+DEPRECATION NOTICE:
+    This script is DEPRECATED and kept only for standalone/legacy usage.
+
+    For the new unified workflow, use:
+        python scripts/workflow/submit_workflow.py --config-name <dataset_config>
+
+    The new workflow uses EmbeddingArraySubmitter to directly submit array jobs
+    via SSH without needing this intermediate script.
+
 This script loads the dataset configuration, extracts embedding parameters,
 and runs the bash script with the correct parameters.
 """

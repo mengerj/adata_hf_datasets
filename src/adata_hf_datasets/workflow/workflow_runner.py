@@ -714,19 +714,65 @@ class WorkflowRunner:
         # Transfer data if location changed
         self._transfer_data_if_needed(step_name, step_location)
 
-        # Build command and environment
-        cmd = self._build_step_command(
-            step_name, dataset_config, step_location, **kwargs
-        )
+        # Build environment
         env = self._build_step_env(step_name, step_location)
 
-        # Execute
-        result = executor.execute(
-            cmd=cmd,
-            step_name=step_name,
-            env=env,
-            cwd=self.locations[step_location].project_directory,
-        )
+        # Check if this is an embedding step on a remote location
+        # For remote embedding steps, use direct array job submission
+        embedding_steps = {"embedding_preparation", "embedding_cpu", "embedding_gpu"}
+        loc_config = self.locations.get(step_location)
+
+        if step_name in embedding_steps and loc_config and loc_config.is_remote:
+            # Use direct array job submission for remote embedding steps
+            from .executors import RemoteExecutor
+
+            if isinstance(executor, RemoteExecutor):
+                # Determine mode and prepare_only flags
+                if step_name == "embedding_preparation":
+                    mode = "cpu"
+                    prepare_only = True
+                elif step_name == "embedding_cpu":
+                    mode = "cpu"
+                    prepare_only = False
+                else:  # embedding_gpu
+                    mode = "gpu"
+                    prepare_only = False
+
+                logger.info(
+                    f"Using direct array job submission for {step_name} "
+                    f"(mode={mode}, prepare_only={prepare_only})"
+                )
+
+                result = executor.execute_embedding_array_jobs(
+                    step_name=step_name,
+                    dataset_config=dataset_config,
+                    dataset_config_name=self.dataset_config_name,
+                    mode=mode,
+                    prepare_only=prepare_only,
+                    env=env,
+                )
+            else:
+                # Fallback to regular execution if executor type is unexpected
+                cmd = self._build_step_command(
+                    step_name, dataset_config, step_location, **kwargs
+                )
+                result = executor.execute(
+                    cmd=cmd,
+                    step_name=step_name,
+                    env=env,
+                    cwd=loc_config.project_directory,
+                )
+        else:
+            # Regular command execution
+            cmd = self._build_step_command(
+                step_name, dataset_config, step_location, **kwargs
+            )
+            result = executor.execute(
+                cmd=cmd,
+                step_name=step_name,
+                env=env,
+                cwd=loc_config.project_directory if loc_config else ".",
+            )
 
         # Store result and update tracking
         self.step_results[step_name] = result
