@@ -606,6 +606,22 @@ def main(cfg: DictConfig):
                     # General init_kwargs are passed to all embedders; unused kwargs are ignored
                     # Optional: method-specific init_kwargs_<method> can override for specific methods
                     init_kwargs = {}
+
+                    # Debug: Log init_kwargs extraction for troubleshooting
+                    logger.info(
+                        f"[FULL PIPELINE] Extracting init_kwargs for method '{method}'..."
+                    )
+                    logger.info(
+                        f"  hasattr(embedding_cfg, 'init_kwargs'): {hasattr(embedding_cfg, 'init_kwargs')}"
+                    )
+                    if hasattr(embedding_cfg, "init_kwargs"):
+                        logger.info(
+                            f"  embedding_cfg.init_kwargs value: {embedding_cfg.init_kwargs}"
+                        )
+                    logger.info(
+                        f"  PROJECT_DIR env: {os.environ.get('PROJECT_DIR', 'NOT SET')}"
+                    )
+
                     if (
                         hasattr(embedding_cfg, "init_kwargs")
                         and embedding_cfg.init_kwargs
@@ -614,8 +630,14 @@ def main(cfg: DictConfig):
                         general_kwargs = OmegaConf.to_container(
                             embedding_cfg.init_kwargs, resolve=True
                         )
+                        logger.info(f"  Extracted general_kwargs: {general_kwargs}")
                         if general_kwargs:
                             init_kwargs.update(general_kwargs)
+                    else:
+                        logger.warning(
+                            "  No init_kwargs found in embedding config! "
+                            "geneformer_root will use auto-detection fallback."
+                        )
 
                     # Method-specific kwargs override general ones (optional, for method-specific overrides)
                     method_specific_key = f"init_kwargs_{method.replace('-', '_')}"
@@ -668,9 +690,15 @@ def main(cfg: DictConfig):
                                             f"PROJECT_DIR not set, resolved {path_kwarg} to: {resolved_path}"
                                         )
 
-                    if init_kwargs:
-                        logger.debug(
-                            f"Passing init_kwargs to {method}: {list(init_kwargs.keys())}"
+                    # Log final init_kwargs being passed to embedder
+                    logger.info(f"  Final init_kwargs for {method}: {init_kwargs}")
+                    if "geneformer_root" in init_kwargs:
+                        logger.info(
+                            f"  geneformer_root will be passed: {init_kwargs['geneformer_root']}"
+                        )
+                    else:
+                        logger.warning(
+                            "  geneformer_root NOT in init_kwargs - embedder will use auto-detection!"
                         )
 
                     # monitor.log_event(f"Prepare {method}")

@@ -205,8 +205,11 @@ embedding_gpu:
 
   # Initialization kwargs for embedders (optional)
   # These kwargs are passed to all embedders; unused kwargs are ignored by embedders that don't need them
-  # Example for cw-geneformer:
+  # Relative paths are resolved relative to PROJECT_DIR environment variable
   init_kwargs:
+    # For geneformer: root directory of the Geneformer repository
+    geneformer_root: "external/Geneformer" # Relative paths are resolved relative to PROJECT_DIR
+    # For cw-geneformer: path to the model directory
     cw_model_path: "external/Geneformer_v1/geneformer-12L-30M" # Relative paths are resolved relative to PROJECT_DIR
   #   # Or use absolute path: "/absolute/path/to/geneformer-12L-30M"
   #   processor_kwargs:

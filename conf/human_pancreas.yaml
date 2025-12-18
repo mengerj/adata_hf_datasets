@@ -55,6 +55,9 @@ embedding_gpu:
   enabled: true
   execution_location: gpu
   methods: ["geneformer"]
+  # init_kwargs are needed for geneformer to find the repository
+  init_kwargs:
+    geneformer_root: "external/Geneformer" # Resolved relative to PROJECT_DIR
 
 # Dataset creation overrides
 dataset_creation:
