@@ -11,7 +11,6 @@ from adata_hf_datasets.pp.utils import (
     consolidate_low_frequency_categories,
 )
 from adata_hf_datasets.pp.pybiomart_utils import add_ensembl_ids, ensure_ensembl_index
-from adata_hf_datasets.file_utils import get_zarr_store_class
 import shutil
 import tempfile
 import uuid
@@ -1023,10 +1022,9 @@ class GeneformerEmbedder(BaseEmbedder):
             import zarr
 
             logger.debug("Trying to open zarr store from %s", file_path)
-            ZarrStore = get_zarr_store_class()
-            store = ZarrStore(file_path)
-            logger.debug("Opened zarr store from %s", file_path)
-            root = zarr.group(store=store)
+            # Use zarr.open_group to open an EXISTING group (not create a new one)
+            # This works consistently across zarr v2 and v3
+            root = zarr.open_group(str(file_path), mode="r")
             logger.debug("Opened zarr group from %s", file_path)
             if "obs" not in root or "sample_index" not in root["obs"]:
                 raise ValueError("sample_index not found in obs")
@@ -1085,9 +1083,9 @@ class GeneformerEmbedder(BaseEmbedder):
             # For zarr, we can read groups directly
             import zarr
 
-            ZarrStore = get_zarr_store_class()
-            store = ZarrStore(file_path)
-            root = zarr.group(store=store)
+            # Use zarr.open_group to open an EXISTING group (not create a new one)
+            # This works consistently across zarr v2 and v3
+            root = zarr.open_group(str(file_path), mode="r")
 
             # Check var columns
             if "var" in root:
@@ -1177,9 +1175,8 @@ class GeneformerEmbedder(BaseEmbedder):
         if file_format == "zarr":
             import zarr
 
-            ZarrStore = get_zarr_store_class()
-            store = ZarrStore(file_path)
-            root = zarr.group(store=store)
+            # Use zarr.open_group to open an EXISTING group (not create a new one)
+            root = zarr.open_group(str(file_path), mode="r")
             return "layers" in root and "counts" in root["layers"]
         elif file_format == "h5ad":
             import h5py
@@ -1218,10 +1215,8 @@ class GeneformerEmbedder(BaseEmbedder):
         if file_format == "zarr":
             import zarr
 
-            # Open zarr store in read-write mode
-            ZarrStore = get_zarr_store_class()
-            store = ZarrStore(file_path)
-            root = zarr.group(store=store, mode="r+")
+            # Use zarr.open_group to open an EXISTING group in read-write mode
+            root = zarr.open_group(str(file_path), mode="r+")
 
             # Get counts array
             counts_array = root["layers/counts"]
@@ -1234,7 +1229,6 @@ class GeneformerEmbedder(BaseEmbedder):
             # This preserves chunks, compression, and other metadata
             zarr.copy(counts_array, root, name="X")
 
-            store.close()
             logger.info("Successfully set X to counts in zarr store")
 
         elif file_format == "h5ad":
