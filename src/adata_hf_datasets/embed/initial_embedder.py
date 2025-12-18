@@ -1095,8 +1095,14 @@ class GeneformerEmbedder(BaseEmbedder):
             # Try to open with consolidated metadata first (anndata uses this)
             # Fall back to regular open_group if consolidated metadata doesn't exist
             try:
+                logger.info(
+                    f"Trying to open zarr with consolidated metadata from {file_path}"
+                )
                 root = zarr.open_consolidated(str(file_path), mode="r")
             except KeyError:
+                logger.info(
+                    f"Trying to open zarr with regular open_group from {file_path}"
+                )
                 root = zarr.open_group(str(file_path), mode="r")
 
             # Check var columns
