@@ -1396,10 +1396,6 @@ class GeneformerEmbedder(BaseEmbedder):
         if adata_path is None:
             raise ValueError("Either adata or adata_path must be provided.")
 
-        # quick fix: Always use "processed" dir and not "processed_with_emb" to avoid retokenization
-        if "processed_with_emb" in adata_path:
-            adata_path = adata_path.replace("processed_with_emb", "processed")
-
         self.in_adata_path = Path(adata_path)
         adata_name = self.in_adata_path.stem
 
