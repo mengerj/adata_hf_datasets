@@ -131,11 +131,12 @@ if [[ -z "${SLURM_ARRAY_JOB_ID:-}" ]]; then
         python3 scripts/embed/embed_core.py \
           --config-path="'"$CONFIG_PATH"'" \
           --config-name="${DATASET_CONFIG:-dataset_cellxgene_pseudo_bulk_3_5k}" \
+          ++embedding_config_section="'"$EMBEDDING_SECTION"'" \
           ++prepare_only='"$PREPARE_ONLY"' \
-          ++"$EMBEDDING_SECTION".methods="'"$METHODS_JSON"'" \
+          ++"'"$EMBEDDING_SECTION"'".methods="'"$METHODS_JSON"'" \
           ++batch_key="'"$BATCH_KEY"'" \
           ++batch_size="'"$BATCH_SIZE"'" \
-          ++"$EMBEDDING_SECTION".input_files="[\"$f\"]" \
+          ++"'"$EMBEDDING_SECTION"'".input_files="[\"$f\"]" \
           ++hydra.run.dir="$OUTDIR"
       ' {}
 
@@ -166,10 +167,12 @@ echo "[${RUN_ID}:${SLURM_ARRAY_TASK_ID}] Running methods: $METHODS_JSON"
 CONFIG_PATH="${PROJECT_DIR:-$(pwd)}/conf"
 echo "[${RUN_ID}:${SLURM_ARRAY_TASK_ID}] Config path: $CONFIG_PATH"
 echo "[${RUN_ID}:${SLURM_ARRAY_TASK_ID}] Config name: ${DATASET_CONFIG:-dataset_cellxgene_pseudo_bulk_3_5k}"
+echo "[${RUN_ID}:${SLURM_ARRAY_TASK_ID}] Embedding section: $EMBEDDING_SECTION"
 
 python3 scripts/embed/embed_core.py \
     --config-path="$CONFIG_PATH" \
     --config-name="${DATASET_CONFIG:-dataset_cellxgene_pseudo_bulk_3_5k}" \
+    ++embedding_config_section="$EMBEDDING_SECTION" \
     ++prepare_only="$PREPARE_ONLY" \
     ++"$EMBEDDING_SECTION".methods="$METHODS_JSON" \
     ++batch_key="$BATCH_KEY" \
