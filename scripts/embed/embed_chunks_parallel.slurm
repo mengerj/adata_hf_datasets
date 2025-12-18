@@ -116,6 +116,7 @@ if [[ -z "${SLURM_ARRAY_JOB_ID:-}" ]]; then
   echo "[LOCAL MODE] CPUs detected: $LOCAL_CPUS; using MAX_PROCS=$MAX_PROCS"
 
   # 2) Build the file list and hand off to xargs
+  CONFIG_PATH="${PROJECT_DIR:-$(pwd)}/conf"
   printf "%s\n" "${INPUT_DIR}"/*.zarr \
     | xargs -n1 -P"$MAX_PROCS" -I{} bash -c '
         f="$0"
@@ -128,6 +129,7 @@ if [[ -z "${SLURM_ARRAY_JOB_ID:-}" ]]; then
         mkdir -p "$OUTDIR"
         echo "[LOCAL][${idx}] → $OUTDIR"
         python3 scripts/embed/embed_core.py \
+          --config-path="'"$CONFIG_PATH"'" \
           --config-name="${DATASET_CONFIG:-dataset_cellxgene_pseudo_bulk_3_5k}" \
           ++prepare_only='"$PREPARE_ONLY"' \
           ++"$EMBEDDING_SECTION".methods="'"$METHODS_JSON"'" \
@@ -144,7 +146,10 @@ fi
 # ─────────────────────────────────────────────────────────────────────────────
 # 6) SLURM ARRAY MODE
 # ─────────────────────────────────────────────────────────────────────────────
-source .venv/bin/activate
+# Activate virtual environment (use VENV_PATH from environment or default to .venv)
+VENV_PATH="${VENV_PATH:-.venv}"
+echo "[${RUN_ID}:${SLURM_ARRAY_TASK_ID}] Activating venv: $VENV_PATH"
+source "$VENV_PATH/bin/activate"
 
 files=( "${INPUT_DIR}"/*.zarr )
 this_file="${files[$SLURM_ARRAY_TASK_ID]}"
@@ -156,7 +161,14 @@ fi
 echo "[${RUN_ID}:${SLURM_ARRAY_TASK_ID}] Processing $this_file ($MODE_STR)"
 
 echo "[${RUN_ID}:${SLURM_ARRAY_TASK_ID}] Running methods: $METHODS_JSON"
+
+# Determine config path (relative to project directory)
+CONFIG_PATH="${PROJECT_DIR:-$(pwd)}/conf"
+echo "[${RUN_ID}:${SLURM_ARRAY_TASK_ID}] Config path: $CONFIG_PATH"
+echo "[${RUN_ID}:${SLURM_ARRAY_TASK_ID}] Config name: ${DATASET_CONFIG:-dataset_cellxgene_pseudo_bulk_3_5k}"
+
 python3 scripts/embed/embed_core.py \
+    --config-path="$CONFIG_PATH" \
     --config-name="${DATASET_CONFIG:-dataset_cellxgene_pseudo_bulk_3_5k}" \
     ++prepare_only="$PREPARE_ONLY" \
     ++"$EMBEDDING_SECTION".methods="$METHODS_JSON" \

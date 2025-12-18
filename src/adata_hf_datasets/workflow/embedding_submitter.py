@@ -386,12 +386,16 @@ class EmbeddingArraySubmitter:
             "DATASET_CONFIG": self.dataset_config_name,
             "WORKFLOW_DIR": remote_workflow_dir,
             "EMBEDDING_CONFIG_SECTION": config_section,
+            # Always set from location config (needed for Hydra config path and venv activation)
+            "PROJECT_DIR": self.location_config.project_directory,
+            "VENV_PATH": self.location_config.venv_path or ".venv",
+            "BASE_FILE_PATH": self.location_config.base_file_path,
         }
 
-        # Add any additional environment variables
+        # Add any additional environment variables (may override defaults above)
         if env:
             for key in ["BASE_FILE_PATH", "PROJECT_DIR", "VENV_PATH"]:
-                if key in env:
+                if key in env and env[key]:
                     env_vars[key] = env[key]
 
         # Build export string
