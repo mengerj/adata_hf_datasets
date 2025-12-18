@@ -1022,10 +1022,19 @@ class GeneformerEmbedder(BaseEmbedder):
             import zarr
 
             logger.debug("Trying to open zarr store from %s", file_path)
-            # Use zarr.open_group to open an EXISTING group (not create a new one)
-            # This works consistently across zarr v2 and v3
-            root = zarr.open_group(str(file_path), mode="r")
-            logger.debug("Opened zarr group from %s", file_path)
+            # Try to open with consolidated metadata first (anndata uses this)
+            # Fall back to regular open_group if consolidated metadata doesn't exist
+            try:
+                root = zarr.open_consolidated(str(file_path), mode="r")
+                logger.debug(
+                    "Opened zarr with consolidated metadata from %s", file_path
+                )
+            except KeyError:
+                # No consolidated metadata, fall back to regular open
+                root = zarr.open_group(str(file_path), mode="r")
+                logger.debug(
+                    "Opened zarr group (no consolidated metadata) from %s", file_path
+                )
             if "obs" not in root or "sample_index" not in root["obs"]:
                 raise ValueError("sample_index not found in obs")
             return root["obs/sample_index"][:]
@@ -1083,9 +1092,12 @@ class GeneformerEmbedder(BaseEmbedder):
             # For zarr, we can read groups directly
             import zarr
 
-            # Use zarr.open_group to open an EXISTING group (not create a new one)
-            # This works consistently across zarr v2 and v3
-            root = zarr.open_group(str(file_path), mode="r")
+            # Try to open with consolidated metadata first (anndata uses this)
+            # Fall back to regular open_group if consolidated metadata doesn't exist
+            try:
+                root = zarr.open_consolidated(str(file_path), mode="r")
+            except KeyError:
+                root = zarr.open_group(str(file_path), mode="r")
 
             # Check var columns
             if "var" in root:
@@ -1175,8 +1187,11 @@ class GeneformerEmbedder(BaseEmbedder):
         if file_format == "zarr":
             import zarr
 
-            # Use zarr.open_group to open an EXISTING group (not create a new one)
-            root = zarr.open_group(str(file_path), mode="r")
+            # Try to open with consolidated metadata first (anndata uses this)
+            try:
+                root = zarr.open_consolidated(str(file_path), mode="r")
+            except KeyError:
+                root = zarr.open_group(str(file_path), mode="r")
             return "layers" in root and "counts" in root["layers"]
         elif file_format == "h5ad":
             import h5py
@@ -1215,8 +1230,12 @@ class GeneformerEmbedder(BaseEmbedder):
         if file_format == "zarr":
             import zarr
 
-            # Use zarr.open_group to open an EXISTING group in read-write mode
-            root = zarr.open_group(str(file_path), mode="r+")
+            # Try to open with consolidated metadata first (anndata uses this)
+            # Fall back to regular open_group if consolidated metadata doesn't exist
+            try:
+                root = zarr.open_consolidated(str(file_path), mode="r+")
+            except KeyError:
+                root = zarr.open_group(str(file_path), mode="r+")
 
             # Get counts array
             counts_array = root["layers/counts"]
