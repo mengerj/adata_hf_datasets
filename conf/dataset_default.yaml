@@ -102,47 +102,6 @@ preprocessing:
 
   # Virtual environment configuration
   venv_path: null # Virtual environment path (relative to project_directory). If null, uses workflow.venv_path or ".venv"
-
-# =============================================================================
-# EMBEDDING PREPARATION CONFIGURATION (dataset-specific overrides)
-# =============================================================================
-embedding_preparation:
-  # Whether to run embedding preparation step
-  enabled: true # Set to false to skip embedding preparation
-  # Execution location: local | cpu | gpu (where this step runs)
-  execution_location: local
-
-  # Preparation-specific parameters
-  prepare_only: true # Always true for preparation step
-  mode: "slurm" # Use CPU partition for preparation
-
-  # SLURM resource allocation
-  memory_gb: 60 # Memory allocation in GB (default: 60GB). Increase for larger datasets (e.g., 80, 120)
-
-  # Execution parameters (accessed by embedding preparation script)
-  input_format: "auto" # Input format detection
-  output_format: "zarr" # Output format preference
-  overwrite: false # Whether to overwrite existing preparation files
-  chunk_rows: 16384 # Number of cells written per chunk when streaming into Zarr
-  # Method-specific parameters
-  batch_size: 128 # Used by geneformer
-
-  init_kwargs: null
-
-  # Embedding dimensions (dataset-specific)
-  embedding_dim_map:
-    scvi_fm: 50 # Can't be changed as the pretrained scvi model is fixed.
-    geneformer: 768
-    pca: 50
-    hvg: 512
-    gs: 3936
-    gs10k: 10000
-    geneformer-v1: 512
-    cw-geneformer: 512
-
-  # Virtual environment configuration
-  venv_path: null # Virtual environment path (relative to project_directory). If null, uses workflow.venv_path or ".venv"
-
 # =============================================================================
 # CPU EMBEDDING CONFIGURATION (dataset-specific overrides)
 # =============================================================================

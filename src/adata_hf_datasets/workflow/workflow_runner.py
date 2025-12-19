@@ -50,7 +50,6 @@ logger = logging.getLogger(__name__)
 STEP_TO_CONFIG_SECTION = {
     "download": "download",
     "preprocessing": "preprocessing",
-    "embedding_preparation": "embedding_preparation",
     "embedding_cpu": "embedding_cpu",
     "embedding_gpu": "embedding_gpu",
     "dataset_creation": "dataset_creation",
@@ -60,7 +59,6 @@ STEP_TO_CONFIG_SECTION = {
 WORKFLOW_STEPS = [
     "download",
     "preprocessing",
-    "embedding_preparation",
     "embedding_cpu",
     "embedding_gpu",
     "dataset_creation",
@@ -148,7 +146,7 @@ def get_step_output_paths(
     elif step_name == "preprocessing":
         return [f"{base_path}/processed/{split_subdir}/{dataset_name}"]
 
-    elif step_name in ["embedding_preparation", "embedding_cpu", "embedding_gpu"]:
+    elif step_name in ["embedding_cpu", "embedding_gpu"]:
         return [f"{base_path}/processed_with_emb/{split_subdir}/{dataset_name}"]
 
     elif step_name == "dataset_creation":
@@ -193,9 +191,6 @@ def get_step_input_paths(
 
     elif step_name == "preprocessing":
         return [f"{base_path}/raw/{split_subdir}/{dataset_name}.h5ad"]
-
-    elif step_name == "embedding_preparation":
-        return [f"{base_path}/processed/{split_subdir}/{dataset_name}"]
 
     elif step_name in ["embedding_cpu", "embedding_gpu"]:
         return [f"{base_path}/processed_with_emb/{split_subdir}/{dataset_name}"]
@@ -587,19 +582,6 @@ class WorkflowRunner:
                 f"++hydra.run.dir={step_log_dir}",
             ]
 
-        elif step_name == "embedding_preparation":
-            return [
-                python_path,
-                "scripts/embed/embed_launcher.py",
-                "--config-name",
-                self.dataset_config_name,
-                "--mode",
-                "cpu",
-                "--backend",
-                "local" if not loc_config.is_remote else "slurm",
-                "--prepare-only",
-            ]
-
         elif step_name == "embedding_cpu":
             return [
                 python_path,
@@ -719,7 +701,7 @@ class WorkflowRunner:
 
         # Check if this is an embedding step on a remote location
         # For remote embedding steps, use direct array job submission
-        embedding_steps = {"embedding_preparation", "embedding_cpu", "embedding_gpu"}
+        embedding_steps = {"embedding_cpu", "embedding_gpu"}
         loc_config = self.locations.get(step_location)
 
         if step_name in embedding_steps and loc_config and loc_config.is_remote:
@@ -727,20 +709,14 @@ class WorkflowRunner:
             from .executors import RemoteExecutor
 
             if isinstance(executor, RemoteExecutor):
-                # Determine mode and prepare_only flags
-                if step_name == "embedding_preparation":
+                # Determine mode based on step name
+                if step_name == "embedding_cpu":
                     mode = "cpu"
-                    prepare_only = True
-                elif step_name == "embedding_cpu":
-                    mode = "cpu"
-                    prepare_only = False
                 else:  # embedding_gpu
                     mode = "gpu"
-                    prepare_only = False
 
                 logger.info(
-                    f"Using direct array job submission for {step_name} "
-                    f"(mode={mode}, prepare_only={prepare_only})"
+                    f"Using direct array job submission for {step_name} (mode={mode})"
                 )
 
                 result = executor.execute_embedding_array_jobs(
@@ -748,7 +724,6 @@ class WorkflowRunner:
                     dataset_config=dataset_config,
                     dataset_config_name=self.dataset_config_name,
                     mode=mode,
-                    prepare_only=prepare_only,
                     env=env,
                 )
             else:
@@ -858,16 +833,6 @@ class WorkflowRunner:
                     )
             else:
                 logger.info("Preprocessing step skipped (disabled in config)")
-
-            # Embedding Preparation
-            if _is_step_enabled("embedding_preparation", dataset_config):
-                result = self.run_step("embedding_preparation", dataset_config)
-                if not result.success:
-                    raise RuntimeError(
-                        f"Embedding preparation failed: {result.error_message}"
-                    )
-            else:
-                logger.info("Embedding preparation skipped (disabled in config)")
 
             # CPU Embedding
             if _is_step_enabled("embedding_cpu", dataset_config):

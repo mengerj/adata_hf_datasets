@@ -46,9 +46,7 @@ if WORKFLOW_DIR:
     logging.getLogger().addHandler(error_handler)
 
 
-def extract_embedding_params(
-    config: DictConfig, force_prepare_only: bool = False, force_cpu_only: bool = False
-) -> dict:
+def extract_embedding_params(config: DictConfig, force_cpu_only: bool = False) -> dict:
     """Extract embedding parameters from dataset config."""
     # Determine which embedding config to use based on command-line flags and MODE environment variable
     if force_cpu_only:
@@ -59,22 +57,10 @@ def extract_embedding_params(
         logger.info(f"Using MODE from environment: {mode}")
 
     # Determine which embedding config to use and which methods to extract
-    if force_prepare_only or force_cpu_only:
-        # For embedding preparation, use embedding_preparation config if available
-        if (
-            hasattr(config, "embedding_preparation")
-            and config.embedding_preparation is not None
-        ):
-            embedding_config = config.embedding_preparation
-            logger.info(
-                "Using embedding_preparation configuration for prepare-only mode"
-            )
-        else:
-            # Fallback to CPU config for preparation
-            embedding_config = config.embedding_cpu
-            logger.info(
-                "Using CPU embedding configuration for prepare-only mode (fallback)"
-            )
+    if force_cpu_only:
+        # Fallback to CPU config
+        embedding_config = config.embedding_cpu
+        logger.info("Using CPU embedding configuration")
     elif mode == "cpu":
         embedding_config = config.embedding_cpu
         logger.info("Using CPU embedding configuration")
@@ -96,22 +82,6 @@ def extract_embedding_params(
     logger.info(f"  Config mode: {mode}")
     logger.info(f"  Config batch_size: {getattr(embedding_config, 'batch_size', 128)}")
 
-    # Check for command-line overrides first, then environment variables, then config
-    if force_prepare_only:
-        prepare_only = True
-        logger.info(f"  Using PREPARE_ONLY from command line: {prepare_only}")
-    elif force_cpu_only:
-        prepare_only = True
-        logger.info(f"  Using PREPARE_ONLY from CPU-only mode: {prepare_only}")
-    else:
-        prepare_only_env = os.environ.get("PREPARE_ONLY")
-        if prepare_only_env is not None:
-            prepare_only = prepare_only_env.lower() == "true"
-            logger.info(f"  Using PREPARE_ONLY from environment: {prepare_only}")
-        else:
-            prepare_only = getattr(embedding_config, "prepare_only", False)
-            logger.info(f"  Using PREPARE_ONLY from config: {prepare_only}")
-
     # Extract parameters with defaults
     params = {
         "MODE": mode,
@@ -120,7 +90,6 @@ def extract_embedding_params(
         "BATCH_KEY": config.get("batch_key", "batch"),
         "BATCH_SIZE": getattr(embedding_config, "batch_size", 128),
         "METHODS": " ".join(getattr(embedding_config, "methods", ["pca", "hvg"])),
-        "PREPARE_ONLY": str(prepare_only).lower(),
         "TRAIN_OR_TEST": "train"
         if config.preprocessing.get("split_dataset", True)
         else "test",
@@ -152,7 +121,6 @@ def run_embedding_script(params: dict) -> None:
             "BATCH_KEY": params["BATCH_KEY"],
             "BATCH_SIZE": str(params["BATCH_SIZE"]),
             "METHODS": params["METHODS"],
-            "PREPARE_ONLY": params["PREPARE_ONLY"],
             "TRAIN_OR_TEST": params["TRAIN_OR_TEST"],
             "DATA_BASE_DIR": params["DATA_BASE_DIR"],
         }
@@ -204,9 +172,6 @@ def main():
     parser.add_argument(
         "config_name", nargs="?", help="Dataset config name (positional argument)"
     )
-    parser.add_argument(
-        "--prepare-only", action="store_true", help="Force prepare only mode"
-    )
     parser.add_argument("--cpu-only", action="store_true", help="Force CPU-only mode")
     args = parser.parse_args()
 
@@ -223,7 +188,7 @@ def main():
     logger.info(f"Running embedding for dataset: {cfg.dataset.name}")
 
     # Extract embedding parameters
-    params = extract_embedding_params(cfg, args.prepare_only, args.cpu_only)
+    params = extract_embedding_params(cfg, args.cpu_only)
 
     # Run the embedding script
     run_embedding_script(params)

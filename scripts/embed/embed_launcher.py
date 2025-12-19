@@ -9,9 +9,6 @@ RemoteExecutor which submits array jobs directly via SSH.
 Usage:
     # Local execution (parallel with multiple workers)
     python embed_launcher.py --config-name dataset_config --mode cpu --backend local
-
-    # Local preparation only
-    python embed_launcher.py --config-name dataset_config --mode cpu --backend local --prepare-only
 """
 
 import argparse
@@ -56,7 +53,7 @@ if WORKFLOW_DIR:
 class EmbeddingLauncher:
     """Handles local parallel execution of embedding tasks."""
 
-    def __init__(self, config_name: str, mode: str = "cpu", prepare_only: bool = False):
+    def __init__(self, config_name: str, mode: str = "cpu"):
         """
         Initialize the embedding launcher.
 
@@ -66,12 +63,9 @@ class EmbeddingLauncher:
             Name of the dataset configuration to use
         mode : str
             Processing mode: "cpu" or "gpu"
-        prepare_only : bool
-            If True, run only the preparation step
         """
         self.config_name = config_name
         self.mode = mode if mode != "auto" else os.environ.get("MODE", "cpu")
-        self.prepare_only = prepare_only
         self.config = self._load_config()
 
     def _load_config(self) -> DictConfig:
@@ -119,7 +113,7 @@ class EmbeddingLauncher:
             and self.config.embedding_cpu.get("enabled", True)
         )
 
-        if self.mode == "gpu" and not self.prepare_only and cpu_embedding_enabled:
+        if self.mode == "gpu" and cpu_embedding_enabled:
             input_subdir = "processed_with_emb"
             logger.info(
                 "GPU mode with CPU embedding enabled: looking for input in processed_with_emb/"
@@ -165,18 +159,6 @@ class EmbeddingLauncher:
 
     def _get_embedding_config(self) -> Optional[DictConfig]:
         """Get the embedding configuration based on mode."""
-        if self.prepare_only:
-            if (
-                hasattr(self.config, "embedding_preparation")
-                and self.config.embedding_preparation is not None
-            ):
-                return self.config.embedding_preparation
-            elif (
-                hasattr(self.config, "embedding_cpu")
-                and self.config.embedding_cpu is not None
-            ):
-                return self.config.embedding_cpu
-
         if self.mode == "cpu":
             if (
                 hasattr(self.config, "embedding_cpu")
@@ -197,7 +179,6 @@ class EmbeddingLauncher:
         label: str,
         input_dir: Path,
         max_workers: int,
-        prepare_only: bool = False,
     ) -> None:
         """
         Run embedding tasks locally using parallel workers.
@@ -214,16 +195,10 @@ class EmbeddingLauncher:
         job_id = f"local_{label}_{int(__import__('time').time())}"
 
         if workflow_dir:
-            if prepare_only:
-                base_out = Path(workflow_dir) / "embedding_prepare" / f"array_{job_id}"
-            else:
-                base_out = Path(workflow_dir) / "embedding" / f"array_{job_id}"
+            base_out = Path(workflow_dir) / "embedding" / f"array_{job_id}"
         else:
             date_str = __import__("datetime").datetime.now().strftime("%Y-%m-%d")
-            if prepare_only:
-                base_out = Path("outputs") / date_str / "embedding_prepare" / job_id
-            else:
-                base_out = Path("outputs") / date_str / "embedding" / job_id
+            base_out = Path("outputs") / date_str / "embedding" / job_id
 
         log_dir = base_out
         base_out.mkdir(parents=True, exist_ok=True)
@@ -234,16 +209,7 @@ class EmbeddingLauncher:
         )
 
         # Choose which embedding config section to use
-        if prepare_only:
-            if (
-                hasattr(self.config, "embedding_preparation")
-                and self.config.embedding_preparation is not None
-            ):
-                config_section = "embedding_preparation"
-            else:
-                config_section = "embedding_cpu"
-        else:
-            config_section = "embedding_cpu" if self.mode == "cpu" else "embedding_gpu"
+        config_section = "embedding_cpu" if self.mode == "cpu" else "embedding_gpu"
 
         def run_one(task_idx: int, file_path: Path) -> Tuple[int, Path]:
             task_out = base_out / str(task_idx)
@@ -255,7 +221,6 @@ class EmbeddingLauncher:
                 "--config-path=../../conf",
                 f"--config-name={self.config_name}",
                 f'++{config_section}.input_files=["{str(file_path)}"]',
-                f"++prepare_only={str(prepare_only).lower()}",
                 f"++hydra.run.dir={str(task_out)}",
                 f"++embedding_config_section={config_section}",
             ]
@@ -268,7 +233,6 @@ class EmbeddingLauncher:
 
             env = os.environ.copy()
             env["EMBEDDING_CONFIG_SECTION"] = config_section
-            env["PREPARE_ONLY"] = str(prepare_only).lower()
             if resolved_base:
                 env["BASE_FILE_PATH"] = resolved_base
 
@@ -320,7 +284,6 @@ class EmbeddingLauncher:
         logger.info("=== Starting Embedding Launcher (Local Mode) ===")
         logger.info(f"Dataset: {self.config.dataset.name}")
         logger.info(f"Mode: {self.mode}")
-        logger.info(f"Prepare only: {self.prepare_only}")
 
         # Get embedding configuration
         embedding_config = self._get_embedding_config()
@@ -347,10 +310,9 @@ class EmbeddingLauncher:
                 label=label,
                 input_dir=input_dir,
                 max_workers=max_workers,
-                prepare_only=self.prepare_only,
             )
 
-        logger.info("✓ Embedding launcher completed successfully")
+        logger.info("Embedding launcher completed successfully")
 
 
 def main():
@@ -372,9 +334,6 @@ def main():
         help="Processing mode (default: auto-detect from environment)",
     )
     parser.add_argument(
-        "--prepare-only", action="store_true", help="Run only preparation step"
-    )
-    parser.add_argument(
         "--backend",
         choices=["local"],
         default="local",
@@ -393,7 +352,6 @@ def main():
         launcher = EmbeddingLauncher(
             config_name=args.config_name,
             mode=args.mode,
-            prepare_only=args.prepare_only,
         )
         launcher.run()
 

@@ -29,14 +29,14 @@ other_bio_labels: ["organ_tissue", "cluster_label"]
 # =============================================================================
 # Download configuration
 download:
-  enabled: false
+  enabled: true
   preserve_proportions: true
   subset_size: null
 
 # Preprocessing overrides (both dataset-specific and execution parameters)
 preprocessing:
   # Dataset-specific parameters
-  enabled: false
+  enabled: true
   chunk_size: 100000
   n_chunks: 1
   split_dataset: false # Important for training datasets. Set to false for test datasets. (Similar parameters in dataset_creation)
@@ -44,36 +44,27 @@ preprocessing:
   random_chunking: true
 
 # Embedding overrides (both dataset-specific and execution parameters)
-embedding_preparation:
-  enabled: false
-  methods: ["geneformer", "geneformer-v1"] #, "scvi_fm", "gs", "gs10k"]
+#embedding_preparation:
+#  enabled: false
+#  methods: ["geneformer", "geneformer-v1"] #, "scvi_fm", "gs", "gs10k"]
 
 embedding_cpu:
-  enabled: false
-  overwrite: true
-  methods: ["pca"] #, "scvi_fm", "gs", "gs10k"]
+  enabled: true
+  methods: ["pca", "scvi_fm", "gs10k"] #, "scvi_fm", "gs", "gs10k"]
 
 embedding_gpu:
   enabled: true
-  methods: ["cw-geneformer"]
-  venv_path: "cw-geneformer"
+  execution_location: gpu
+  methods: ["geneformer", "geneformer-v1"]
 
 # Dataset creation overrides
 dataset_creation:
   enabled: true
   use_nextcloud: false
-  use_zenodo: true
+  use_zenodo: false
   # Dataset-specific parameters
   required_obsm_keys:
-    [
-      "X_pca",
-      "X_scvi_fm",
-      "X_geneformer",
-      "X_gs10k",
-      "X_geneformer-v1",
-      "X_cw-geneformer",
-    ]
+    ["X_pca", "X_scvi_fm", "X_geneformer", "X_gs10k", "X_geneformer-v1"]
   cs_length: 4096
   negatives_per_sample: 2
-  split_dataset: false # Important for training datasets. Set to false for test datasets.
   dataset_format: "single" # Important for training datasets. Set to "single" for test datasets.

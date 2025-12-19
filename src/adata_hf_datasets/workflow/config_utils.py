@@ -98,7 +98,6 @@ def generate_paths_from_config(cfg: DictConfig) -> Dict[str, str]:
         ]
 
     # Check if CPU embedding is enabled - this determines where GPU embedding reads from
-    # Note: embedding_preparation does NOT write to processed_with_emb/ (only runs prepare() step)
     cpu_embedding_enabled = (
         hasattr(cfg, "embedding_cpu")
         and cfg.embedding_cpu is not None
@@ -120,12 +119,6 @@ def generate_paths_from_config(cfg: DictConfig) -> Dict[str, str]:
             paths["embedding_gpu.input_files"] = input_files_from_embed
         else:
             paths["embedding_gpu.input_files"] = input_files_from_processed
-
-    if hasattr(cfg, "embedding_preparation") and cfg.embedding_preparation is not None:
-        # Preparation always reads from processed/ (preprocessing output)
-        # Note: preparation does NOT write output files - only runs prepare() step
-        paths["embedding_preparation.output_dir"] = f"{embed_base}/{dataset_name}"
-        paths["embedding_preparation.input_files"] = input_files_from_processed
 
     return paths
 
@@ -266,9 +259,6 @@ def apply_common_key_transformations(cfg: DictConfig) -> DictConfig:
             updated_cfg.embedding_cpu.batch_key = updated_cfg.batch_key
         if hasattr(updated_cfg, "embedding_gpu"):
             updated_cfg.embedding_gpu.batch_key = updated_cfg.batch_key
-        # Also apply to embedding_preparation
-        if hasattr(updated_cfg, "embedding_preparation"):
-            updated_cfg.embedding_preparation.batch_key = updated_cfg.batch_key
         # Fallback to old structure for backward compatibility
         if hasattr(updated_cfg, "embedding"):
             updated_cfg.embedding.batch_key = updated_cfg.batch_key

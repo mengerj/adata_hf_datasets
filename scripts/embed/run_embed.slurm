@@ -36,35 +36,23 @@ SLURM_JOB_ID="${SLURM_JOB_ID:-local_$(date +%Y%m%d_%H%M%S)}"
 # Required environment variables (should be set by workflow orchestrator)
 DATASET_CONFIG="${DATASET_CONFIG:?DATASET_CONFIG environment variable is required}"
 MODE="${MODE:-cpu}"
-PREPARE_ONLY="${PREPARE_ONLY:-false}"
 WORKFLOW_DIR="${WORKFLOW_DIR:-}"
 
 echo "=== Embedding Master Job Started ==="
 echo "Job ID: $SLURM_JOB_ID"
 echo "Dataset Config: $DATASET_CONFIG"
 echo "Mode: $MODE"
-echo "Prepare Only: $PREPARE_ONLY"
 echo "Workflow Dir: $WORKFLOW_DIR"
 echo "Start Time: $(date)"
 
 # Set up output directory and logging
 if [[ -n "$WORKFLOW_DIR" ]]; then
-    if [[ "$PREPARE_ONLY" == "true" ]]; then
-        BASE_OUT="${WORKFLOW_DIR}/embedding_prepare/job_${SLURM_JOB_ID}"
-        JOB_TYPE="embedding_prepare"
-    else
-        BASE_OUT="${WORKFLOW_DIR}/embedding/job_${SLURM_JOB_ID}"
-        JOB_TYPE="embedding"
-    fi
+    BASE_OUT="${WORKFLOW_DIR}/embedding/job_${SLURM_JOB_ID}"
+    JOB_TYPE="embedding"
 else
     # Fallback to default structure
-    if [[ "$PREPARE_ONLY" == "true" ]]; then
-        BASE_OUT="outputs/$(date +%Y-%m-%d)/embedding_prepare/${SLURM_JOB_ID}"
-        JOB_TYPE="embedding_prepare"
-    else
-        BASE_OUT="outputs/$(date +%Y-%m-%d)/embedding/${SLURM_JOB_ID}"
-        JOB_TYPE="embedding"
-    fi
+    BASE_OUT="outputs/$(date +%Y-%m-%d)/embedding/${SLURM_JOB_ID}"
+    JOB_TYPE="embedding"
 fi
 
 mkdir -p "$BASE_OUT"
@@ -79,7 +67,6 @@ echo "=== Embedding Master Job Started ==="
 echo "Job ID: $SLURM_JOB_ID"
 echo "Dataset Config: $DATASET_CONFIG"
 echo "Mode: $MODE"
-echo "Prepare Only: $PREPARE_ONLY"
 echo "Job Type: $JOB_TYPE"
 echo "Output Directory: $BASE_OUT"
 echo "Start Time: $(date)"
@@ -188,10 +175,9 @@ base_file_path = os.environ.get('BASE_FILE_PATH') or cfg.get('base_file_path', '
 # Check if CPU embedding is enabled (for GPU mode input selection)
 cpu_enabled = hasattr(cfg, 'embedding_cpu') and cfg.embedding_cpu is not None and cfg.embedding_cpu.get('enabled', True)
 mode = '$MODE'
-prepare_only = '$PREPARE_ONLY' == 'true'
 
 # Determine input subdirectory
-if mode == 'gpu' and not prepare_only and cpu_enabled:
+if mode == 'gpu' and cpu_enabled:
     input_subdir = 'processed_with_emb'
 else:
     input_subdir = 'processed'
@@ -271,9 +257,7 @@ for i in "${!INPUT_DIRS[@]}"; do
     fi
 
     # Determine embedding config section
-    if [[ "$PREPARE_ONLY" == "true" ]]; then
-        CONFIG_SECTION="embedding_preparation"
-    elif [[ "$MODE" == "cpu" ]]; then
+    if [[ "$MODE" == "cpu" ]]; then
         CONFIG_SECTION="embedding_cpu"
     else
         CONFIG_SECTION="embedding_gpu"
@@ -282,7 +266,6 @@ for i in "${!INPUT_DIRS[@]}"; do
     # Build environment variables
     ENV_VARS="INPUT_DIR=$INPUT_DIR"
     ENV_VARS+=",DATASET_CONFIG=$DATASET_CONFIG"
-    ENV_VARS+=",PREPARE_ONLY=$PREPARE_ONLY"
     ENV_VARS+=",WORKFLOW_DIR=$WORKFLOW_DIR"
     ENV_VARS+=",MODE=$MODE"
     ENV_VARS+=",BASE_FILE_PATH=$BASE_PATH"

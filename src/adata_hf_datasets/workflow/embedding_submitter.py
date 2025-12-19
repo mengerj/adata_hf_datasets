@@ -31,7 +31,6 @@ class ArrayJobInfo:
     input_dir: str
     task_count: int
     mode: str  # "cpu" or "gpu"
-    prepare_only: bool
 
 
 class EmbeddingArraySubmitter:
@@ -122,9 +121,7 @@ class EmbeddingArraySubmitter:
         except Exception as e:
             return -1, "", str(e)
 
-    def get_input_directories(
-        self, mode: str, prepare_only: bool = False
-    ) -> List[Tuple[str, str, int]]:
+    def get_input_directories(self, mode: str) -> List[Tuple[str, str, int]]:
         """
         Get list of input directories to process with file counts.
 
@@ -132,8 +129,6 @@ class EmbeddingArraySubmitter:
         ----------
         mode : str
             Processing mode: "cpu" or "gpu"
-        prepare_only : bool
-            Whether this is a prepare-only run
 
         Returns
         -------
@@ -149,7 +144,7 @@ class EmbeddingArraySubmitter:
             and self.dataset_config.embedding_cpu.get("enabled", True)
         )
 
-        if mode == "gpu" and not prepare_only and cpu_embedding_enabled:
+        if mode == "gpu" and cpu_embedding_enabled:
             input_subdir = "processed_with_emb"
             logger.info(
                 "GPU mode with CPU embedding enabled: looking for input in processed_with_emb/"
@@ -218,23 +213,8 @@ class EmbeddingArraySubmitter:
         except ValueError:
             return 0
 
-    def _get_embedding_methods(self, mode: str, prepare_only: bool) -> List[str]:
+    def _get_embedding_methods(self, mode: str) -> List[str]:
         """Get the list of embedding methods to run based on mode and config."""
-        if prepare_only:
-            # For preparation, use embedding_preparation config if available
-            if (
-                hasattr(self.dataset_config, "embedding_preparation")
-                and self.dataset_config.embedding_preparation is not None
-            ):
-                return list(
-                    self.dataset_config.embedding_preparation.get("methods", [])
-                )
-            elif (
-                hasattr(self.dataset_config, "embedding_cpu")
-                and self.dataset_config.embedding_cpu is not None
-            ):
-                return list(self.dataset_config.embedding_cpu.get("methods", []))
-
         if mode == "cpu":
             if (
                 hasattr(self.dataset_config, "embedding_cpu")
@@ -251,16 +231,8 @@ class EmbeddingArraySubmitter:
 
         return ["pca", "hvg"]  # Default fallback
 
-    def _get_embedding_config_section(self, mode: str, prepare_only: bool) -> str:
+    def _get_embedding_config_section(self, mode: str) -> str:
         """Get the embedding config section name to use."""
-        if prepare_only:
-            if (
-                hasattr(self.dataset_config, "embedding_preparation")
-                and self.dataset_config.embedding_preparation is not None
-            ):
-                return "embedding_preparation"
-            return "embedding_cpu"
-
         if mode == "cpu":
             return "embedding_cpu"
         elif mode == "gpu":
@@ -270,7 +242,6 @@ class EmbeddingArraySubmitter:
     def submit_array_jobs(
         self,
         mode: str,
-        prepare_only: bool = False,
         env: Optional[Dict[str, str]] = None,
     ) -> List[ArrayJobInfo]:
         """
@@ -280,8 +251,6 @@ class EmbeddingArraySubmitter:
         ----------
         mode : str
             Processing mode: "cpu" or "gpu"
-        prepare_only : bool
-            Whether to run only the prepare step
         env : Dict[str, str], optional
             Additional environment variables to pass to jobs
 
@@ -290,14 +259,14 @@ class EmbeddingArraySubmitter:
         List[ArrayJobInfo]
             Information about submitted jobs for tracking
         """
-        directories = self.get_input_directories(mode, prepare_only)
+        directories = self.get_input_directories(mode)
 
         if not directories:
             logger.warning("No input directories found, no jobs to submit")
             return []
 
-        methods = self._get_embedding_methods(mode, prepare_only)
-        config_section = self._get_embedding_config_section(mode, prepare_only)
+        methods = self._get_embedding_methods(mode)
+        config_section = self._get_embedding_config_section(mode)
 
         logger.info(f"Embedding methods: {methods}")
         logger.info(f"Config section: {config_section}")
@@ -318,7 +287,6 @@ class EmbeddingArraySubmitter:
                 input_dir=input_dir,
                 file_count=file_count,
                 mode=mode,
-                prepare_only=prepare_only,
                 methods=methods,
                 config_section=config_section,
                 env=env,
@@ -339,7 +307,6 @@ class EmbeddingArraySubmitter:
         input_dir: str,
         file_count: int,
         mode: str,
-        prepare_only: bool,
         methods: List[str],
         config_section: str,
         env: Optional[Dict[str, str]] = None,
@@ -361,8 +328,6 @@ class EmbeddingArraySubmitter:
 
         # Build job name
         job_name = f"embed_{label}"
-        if prepare_only:
-            job_name = f"prep_{label}"
 
         # Build environment variables string
         methods_str = " ".join(methods)
@@ -381,7 +346,7 @@ class EmbeddingArraySubmitter:
             "METHODS": methods_str,
             "BATCH_KEY": batch_key,
             "BATCH_SIZE": str(batch_size),
-            "PREPARE_ONLY": "true" if prepare_only else "false",
+            "PREPARE_ONLY": "false",  # No longer used, kept for backward compatibility
             "MODE": mode,
             "DATASET_CONFIG": self.dataset_config_name,
             "WORKFLOW_DIR": remote_workflow_dir,
@@ -446,5 +411,4 @@ class EmbeddingArraySubmitter:
             input_dir=input_dir,
             task_count=file_count,
             mode=mode,
-            prepare_only=prepare_only,
         )

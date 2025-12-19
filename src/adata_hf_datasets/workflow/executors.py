@@ -785,7 +785,6 @@ exit $exit_code
         dataset_config: "DictConfig",
         dataset_config_name: str,
         mode: str,
-        prepare_only: bool = False,
         env: Optional[Dict[str, str]] = None,
     ) -> ExecutionResult:
         """
@@ -804,8 +803,6 @@ exit $exit_code
             Name of the dataset config file
         mode : str
             Processing mode: "cpu" or "gpu"
-        prepare_only : bool
-            Whether to run only the prepare step
         env : Dict[str, str], optional
             Environment variables to pass to jobs
 
@@ -834,7 +831,6 @@ exit $exit_code
         try:
             submitted_jobs = submitter.submit_array_jobs(
                 mode=mode,
-                prepare_only=prepare_only,
                 env=env,
             )
         except Exception as e:

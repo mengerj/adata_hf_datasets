@@ -60,7 +60,6 @@ logger = logging.getLogger(__name__)
 STEP_TO_CONFIG_SECTION = {
     "download": "download",
     "preprocessing": "preprocessing",
-    "embedding_preparation": "embedding_preparation",
     "embedding_cpu": "embedding_cpu",
     "embedding_gpu": "embedding_gpu",
     "dataset_creation": "dataset_creation",
@@ -70,7 +69,6 @@ STEP_TO_CONFIG_SECTION = {
 WORKFLOW_STEPS = [
     "download",
     "preprocessing",
-    "embedding_preparation",
     "embedding_cpu",
     "embedding_gpu",
     "dataset_creation",
@@ -153,7 +151,7 @@ def get_step_output_paths(
         # Preprocessing outputs to processed directory
         return [f"{base_path}/processed/{split_subdir}/{dataset_name}"]
 
-    elif step_name in ["embedding_preparation", "embedding_cpu", "embedding_gpu"]:
+    elif step_name in ["embedding_cpu", "embedding_gpu"]:
         # Embedding outputs to processed_with_emb directory
         return [f"{base_path}/processed_with_emb/{split_subdir}/{dataset_name}"]
 
@@ -203,12 +201,8 @@ def get_step_input_paths(
         # Preprocessing needs raw data
         return [f"{base_path}/raw/{split_subdir}/{dataset_name}.h5ad"]
 
-    elif step_name == "embedding_preparation":
-        # Embedding prep needs processed data
-        return [f"{base_path}/processed/{split_subdir}/{dataset_name}"]
-
     elif step_name in ["embedding_cpu", "embedding_gpu"]:
-        # Embedding needs processed_with_emb (where prep step put data)
+        # Embedding needs processed data
         return [f"{base_path}/processed_with_emb/{split_subdir}/{dataset_name}"]
 
     elif step_name == "dataset_creation":
@@ -298,8 +292,8 @@ class WorkflowLogger:
         for step in [
             "download",
             "preprocessing",
-            "embedding_prepare",
-            "embedding",
+            "embedding_cpu",
+            "embedding_gpu",
             "dataset_creation",
         ]:
             (workflow_dir / step).mkdir(parents=True, exist_ok=True)
@@ -601,7 +595,7 @@ class WorkflowOrchestrator:
         dataset_config : DictConfig
             The loaded dataset configuration
         step_name : str
-            Name of the workflow step (e.g., "download", "preprocessing", "embedding_preparation")
+            Name of the workflow step (e.g., "download", "preprocessing", "embedding_cpu")
         workflow_config : DictConfig
             The workflow configuration
 
@@ -614,7 +608,6 @@ class WorkflowOrchestrator:
         step_to_section = {
             "download": "download",
             "preprocessing": "preprocessing",
-            "embedding_preparation": "embedding_preparation",
             "embedding_cpu": "embedding_cpu",
             "embedding_gpu": "embedding_gpu",
             "dataset_creation": "dataset_creation",
@@ -999,73 +992,6 @@ class WorkflowOrchestrator:
         )
         return job_id
 
-    def run_embedding_prepare_step(
-        self,
-        dataset_config_name_or_path: str,
-        workflow_config: DictConfig,
-        dependency_job_id: Optional[int] = None,
-    ) -> Optional[int]:
-        """Run the embedding preparation step using the new simplified structure."""
-        logger.info("=== Starting Embedding Preparation Step (New) ===")
-        script_path = Path("scripts/embed/run_embed.slurm")
-        dependencies = [dependency_job_id] if dependency_job_id else None
-
-        logger.info(f"Using dataset config: {dataset_config_name_or_path}")
-
-        # Load dataset config to extract base_file_path and memory settings
-        dataset_config = self._load_dataset_config(dataset_config_name_or_path)
-        # Use resolved base_file_path from workflow config
-        # base_file_path = dataset_config.get(
-        #    "base_file_path", workflow_config["base_file_path"]
-        # )
-
-        # Extract memory setting from embedding_preparation config (default: 60GB)
-        memory_gb = getattr(dataset_config.embedding_preparation, "memory_gb", 60)
-        logger.info(f"Using {memory_gb}GB memory for embedding preparation")
-
-        # Get venv_path for this step
-        venv_path = self._get_venv_path(
-            dataset_config, "embedding_preparation", workflow_config
-        )
-
-        # Get cpu_node from config (if set, all CPU jobs will run on this node)
-        cpu_node = workflow_config.get("cpu_node")
-
-        # Pass the dataset config name, workflow directory, and mode settings as environment variables
-        env_vars = {
-            "DATASET_CONFIG": dataset_config_name_or_path,
-            # Enforce base path from orchestrator (already resolved)
-            "BASE_FILE_PATH": workflow_config["base_file_path"],
-            "WORKFLOW_DIR": str(self.workflow_logger.workflow_dir)
-            if self.workflow_logger
-            else "",
-            "MODE": "cpu",  # Preparation typically runs on CPU
-            "PREPARE_ONLY": "true",  # This is preparation mode
-            "SLURM_PARTITION": workflow_config.cpu_partition,
-            "PROJECT_DIR": workflow_config.get(
-                "project_directory", "/home/menger/git/adata_hf_datasets"
-            ),
-            "VENV_PATH": venv_path,
-        }
-        # Pass cpu_node to embed_launcher if set
-        if cpu_node:
-            env_vars["CPU_NODE"] = cpu_node
-
-        # Get cpu_node from config (if set, all CPU jobs will run on this node)
-        cpu_node = workflow_config.get("cpu_node")
-
-        job_id = self._submit_slurm_job(
-            self.cpu_login["host"],  # Use CPU cluster for preparation
-            script_path,
-            partition=workflow_config.cpu_partition,  # Use CPU partition
-            dependencies=dependencies,
-            env_vars=env_vars,
-            step_name="Embedding Preparation",
-            memory_gb=memory_gb,
-            node=cpu_node,
-        )
-        return job_id
-
     def run_embedding_cpu_step(
         self,
         dataset_config_name_or_path: str,
@@ -1401,21 +1327,6 @@ class WorkflowOrchestrator:
                 f"✓ Preprocessing job {preprocessing_job_id} submitted to cluster ({self.cpu_login['host']})"
             )
 
-        # Step 3: Embedding Preparation (depends on preprocessing)
-        embedding_prepare_job_id = None
-        embedding_prepare_enabled = getattr(
-            dataset_config.embedding_preparation, "enabled", True
-        )
-        if embedding_prepare_enabled:
-            embedding_prepare_job_id = self.run_embedding_prepare_step(
-                dataset_config_name_or_path,
-                workflow_config,
-                dependency_job_id=preprocessing_job_id,
-            )
-            logger.info(
-                f"✓ Embedding preparation job {embedding_prepare_job_id} submitted to cluster ({self.cpu_login['host']})"
-            )
-
         # Check if GPU embedding is enabled to determine step dependencies
         embedding_gpu_enabled = getattr(dataset_config.embedding_gpu, "enabled", True)
         embedding_cpu_enabled = getattr(dataset_config.embedding_cpu, "enabled", True)
@@ -1423,26 +1334,24 @@ class WorkflowOrchestrator:
             dataset_config.dataset_creation, "enabled", True
         )
 
-        # Step 4a: CPU Embedding (depends on embedding preparation)
+        # Step 3: CPU Embedding (depends on preprocessing)
         embedding_cpu_job_id = None
         if embedding_cpu_enabled:
             embedding_cpu_job_id = self.run_embedding_cpu_step(
                 dataset_config_name_or_path,
                 workflow_config,
-                dependency_job_id=embedding_prepare_job_id,
+                dependency_job_id=preprocessing_job_id,
             )
             logger.info(
                 f"✓ CPU embedding job {embedding_cpu_job_id} submitted to cluster ({self.cpu_login['host']})"
             )
 
-        # Step 4b: GPU Embedding (depends on CPU embedding if enabled, otherwise embedding preparation)
+        # Step 4: GPU Embedding (depends on CPU embedding if enabled, otherwise preprocessing)
         embedding_gpu_job_id = None
         if embedding_gpu_enabled:
-            # Dependency logic: depend on CPU embedding if enabled, otherwise embedding preparation
+            # Dependency logic: depend on CPU embedding if enabled, otherwise preprocessing
             gpu_embedding_dependency = (
-                embedding_cpu_job_id
-                if embedding_cpu_enabled
-                else embedding_prepare_job_id
+                embedding_cpu_job_id if embedding_cpu_enabled else preprocessing_job_id
             )
 
             embedding_gpu_job_id = self.run_embedding_gpu_step(
@@ -1461,8 +1370,8 @@ class WorkflowOrchestrator:
             embedding_dependency = embedding_gpu_job_id
         elif embedding_cpu_job_id:
             embedding_dependency = embedding_cpu_job_id
-        elif embedding_prepare_job_id:
-            embedding_dependency = embedding_prepare_job_id
+        elif preprocessing_job_id:
+            embedding_dependency = preprocessing_job_id
 
         if dataset_creation_enabled:
             dataset_job_ids = self.run_dataset_creation_step(
@@ -1622,43 +1531,6 @@ class WorkflowOrchestrator:
             logger.info("=== Preprocessing Step Skipped (disabled) ===")
             self.workflow_logger.log_step_skipped("Preprocessing", "disabled in config")
 
-        # Step 3: Embedding Preparation (depends on preprocessing)
-        embedding_prepare_job_id = None
-        embedding_prepare_enabled = getattr(
-            dataset_config.embedding_preparation, "enabled", True
-        )
-        if embedding_prepare_enabled:
-            logger.info("=== Starting Embedding Preparation Step ===")
-            embedding_prepare_job_id = self.run_embedding_prepare_step(
-                dataset_config_name_or_path,
-                workflow_config,
-                dependency_job_id=preprocessing_job_id,
-            )
-            logger.info(
-                f"✓ Embedding preparation job {embedding_prepare_job_id} submitted to cluster ({self.cpu_login['host']})"
-            )
-
-            # Wait for embedding preparation job to complete
-            try:
-                self._wait_for_job_completion(
-                    self.cpu_login["host"],
-                    embedding_prepare_job_id,
-                    "Embedding Preparation",
-                )
-                self.workflow_logger.log_step_complete(
-                    "Embedding Preparation", embedding_prepare_job_id
-                )
-            except Exception as e:
-                error_msg = f"Embedding preparation step failed: {e}"
-                logger.error(error_msg)
-                self._log_error_to_consolidated_log(error_msg)
-                raise RuntimeError(error_msg) from e
-        else:
-            logger.info("=== Embedding Preparation Step Skipped (disabled) ===")
-            self.workflow_logger.log_step_skipped(
-                "Embedding Preparation", "disabled in config"
-            )
-
         # Check if GPU embedding is enabled to determine step dependencies
         embedding_gpu_enabled = getattr(dataset_config.embedding_gpu, "enabled", True)
         embedding_cpu_enabled = getattr(dataset_config.embedding_cpu, "enabled", True)
@@ -1666,14 +1538,14 @@ class WorkflowOrchestrator:
             dataset_config.dataset_creation, "enabled", True
         )
 
-        # Step 4a: CPU Embedding (depends on embedding preparation)
+        # Step 3: CPU Embedding (depends on preprocessing)
         embedding_cpu_job_id = None
         if embedding_cpu_enabled:
             logger.info("=== Starting CPU Embedding Step ===")
             embedding_cpu_job_id = self.run_embedding_cpu_step(
                 dataset_config_name_or_path,
                 workflow_config,
-                dependency_job_id=embedding_prepare_job_id,
+                dependency_job_id=preprocessing_job_id,
             )
             logger.info(
                 f"✓ CPU embedding job {embedding_cpu_job_id} submitted to cluster ({self.cpu_login['host']})"
@@ -1696,15 +1568,13 @@ class WorkflowOrchestrator:
             logger.info("=== CPU Embedding Step Skipped (disabled) ===")
             self.workflow_logger.log_step_skipped("CPU Embedding", "disabled in config")
 
-        # Step 4b: GPU Embedding (depends on CPU embedding if enabled, otherwise embedding preparation)
+        # Step 4: GPU Embedding (depends on CPU embedding if enabled, otherwise preprocessing)
         embedding_gpu_job_id = None
         if embedding_gpu_enabled:
             logger.info("=== Starting GPU Embedding Step ===")
-            # Dependency logic: depend on CPU embedding if enabled, otherwise embedding preparation
+            # Dependency logic: depend on CPU embedding if enabled, otherwise preprocessing
             gpu_embedding_dependency = (
-                embedding_cpu_job_id
-                if embedding_cpu_enabled
-                else embedding_prepare_job_id
+                embedding_cpu_job_id if embedding_cpu_enabled else preprocessing_job_id
             )
 
             embedding_gpu_job_id = self.run_embedding_gpu_step(
@@ -1740,8 +1610,8 @@ class WorkflowOrchestrator:
             embedding_dependency = embedding_gpu_job_id
         elif embedding_cpu_job_id:
             embedding_dependency = embedding_cpu_job_id
-        elif embedding_prepare_job_id:
-            embedding_dependency = embedding_prepare_job_id
+        elif preprocessing_job_id:
+            embedding_dependency = preprocessing_job_id
 
         if dataset_creation_enabled:
             logger.info("=== Starting Dataset Creation Step ===")
@@ -2894,42 +2764,6 @@ def run_workflow_localhost(
         previous_step_location = step_location
     else:
         workflow_logger.log_step_skipped("Preprocessing", "disabled in config")
-
-    # Step: Embedding Preparation
-    if getattr(dataset_config.embedding_preparation, "enabled", True):
-        step_location = get_step_execution_location(
-            "embedding_preparation", dataset_config, default_location
-        )
-        logger.info(f"Embedding Preparation step will run on: {step_location}")
-
-        # Transfer data if location changed
-        maybe_transfer_data("embedding_preparation", step_location)
-
-        env_prep = env_base.copy()
-        env_prep["MODE"] = "cpu"
-        cmd = [
-            sys.executable,
-            "scripts/embed/embed_launcher.py",
-            "--config-name",
-            dataset_config_name_or_path,
-            "--mode",
-            "cpu",
-            "--backend",
-            "local",
-            "--prepare-only",
-        ]
-        run_logged(cmd, "embedding_prepare", "master.out", "master.err", env=env_prep)
-        workflow_logger.log_step_complete("Embedding Preparation", master_job_id)
-
-        # Update location tracking
-        loc_config = get_location_config(step_location)
-        if loc_config:
-            previous_step_outputs = get_step_output_paths(
-                "embedding_preparation", dataset_config, loc_config
-            )
-        previous_step_location = step_location
-    else:
-        workflow_logger.log_step_skipped("Embedding Preparation", "disabled in config")
 
     # Step: CPU Embedding
     if getattr(dataset_config.embedding_cpu, "enabled", True):

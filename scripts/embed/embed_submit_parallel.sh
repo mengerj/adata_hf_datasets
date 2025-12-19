@@ -41,7 +41,7 @@ BATCH_SIZE="${BATCH_SIZE:-128}"
 METHODS="${METHODS:-geneformer scvi_fm pca hvg}" # space‐separated list - eg one string with spaces
 SCRIPT="scripts/embed/embed_chunks_parallel.slurm"
 MAX_PROCS="${MAX_PROCS:-2}"
-PREPARE_ONLY="${PREPARE_ONLY:-false}"  # Set to "true" for prepare-only mode, "false" for full pipeline
+# PREPARE_ONLY has been removed - embedding_preparation step is no longer supported
 TRAIN_OR_TEST="${TRAIN_OR_TEST:-train}"
 #DATA_BASE_DIR="/scratch/global/menger/data/RNA/processed"
 DATA_BASE_DIR="${DATA_BASE_DIR:-data/RNA/processed/}"
@@ -86,7 +86,6 @@ submit_array() {
 METHODS="${METHODS}",\
 BATCH_KEY="${BATCH_KEY}",\
 BATCH_SIZE="${BATCH_SIZE}",\
-PREPARE_ONLY="${PREPARE_ONLY}",\
 TRAIN_OR_TEST="${TRAIN_OR_TEST}",\
 WORKFLOW_DIR="${WORKFLOW_DIR:-}",\
 DATASET_CONFIG="${DATASET_CONFIG:-}" \
@@ -107,7 +106,7 @@ DATASET_CONFIG="${DATASET_CONFIG:-}" \
         echo "[LOCAL] Running all $n chunks for '$label' in parallel"
         INPUT_DIR="$dir" METHODS="$METHODS" MAX_PROCS="$MAX_PROCS" \
 BATCH_KEY="$BATCH_KEY" BATCH_SIZE="$BATCH_SIZE" \
-PREPARE_ONLY="$PREPARE_ONLY" TRAIN_OR_TEST="$TRAIN_OR_TEST" \
+TRAIN_OR_TEST="$TRAIN_OR_TEST" \
 source "$SCRIPT"
     fi
 }

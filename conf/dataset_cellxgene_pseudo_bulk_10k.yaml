@@ -43,10 +43,6 @@ preprocessing:
 
 # Embedding preparation overrides
 # Preparation runs on CPU cluster
-embedding_preparation:
-  enabled: false
-  execution_location: cpu # Prepare on CPU cluster
-  methods: ["geneformer-v1"] #run the prepare step on cpu to save gpu time
 
 # Embedding overrides (both dataset-specific and execution parameters)
 # CPU embeddings run on CPU cluster
