@@ -77,45 +77,48 @@ def generate_paths_from_config(cfg: DictConfig) -> Dict[str, str]:
     }
 
     # Generate input files for embedding based on preprocessing output
+    # Input files from preprocessing (in processed/ directory)
     if is_training:
         # Training datasets have train/val splits
-        input_files = [
+        input_files_from_processed = [
             f"{processed_base}/{dataset_name}/train/chunk_0.{output_format}",
             f"{processed_base}/{dataset_name}/val/chunk_0.{output_format}",
         ]
+        input_files_from_embed = [
+            f"{embed_base}/{dataset_name}/train/chunk_0.{output_format}",
+            f"{embed_base}/{dataset_name}/val/chunk_0.{output_format}",
+        ]
     else:
         # Test datasets have a single "all" split
-        input_files = [f"{processed_base}/{dataset_name}/all/chunk_0.{output_format}"]
+        input_files_from_processed = [
+            f"{processed_base}/{dataset_name}/all/chunk_0.{output_format}"
+        ]
+        input_files_from_embed = [
+            f"{embed_base}/{dataset_name}/all/chunk_0.{output_format}"
+        ]
 
-    # Determine which embedding structure to use
-    has_new_structure = (
-        hasattr(cfg, "embedding_cpu") and cfg.embedding_cpu is not None
-    ) or (hasattr(cfg, "embedding_gpu") and cfg.embedding_gpu is not None)
+    # Check if CPU embedding is enabled - this determines where GPU embedding reads from
+    cpu_embedding_enabled = (
+        hasattr(cfg, "embedding_cpu")
+        and cfg.embedding_cpu is not None
+        and cfg.embedding_cpu.get("enabled", True)
+    )
 
-    has_old_structure = hasattr(cfg, "embedding") and cfg.embedding is not None
+    # Add embedding paths
+    if hasattr(cfg, "embedding_cpu") and cfg.embedding_cpu is not None:
+        # CPU embedding always reads from processed/ (preprocessing output)
+        paths["embedding_cpu.output_dir"] = f"{embed_base}/{dataset_name}"
+        paths["embedding_cpu.input_files"] = input_files_from_processed
 
-    # Add embedding paths based on the structure present
-    if has_new_structure:
-        # New structure: embedding_cpu and/or embedding_gpu
-        if hasattr(cfg, "embedding_cpu") and cfg.embedding_cpu is not None:
-            paths["embedding_cpu.output_dir"] = f"{embed_base}/{dataset_name}"
-            paths["embedding_cpu.input_files"] = input_files
-
-        if hasattr(cfg, "embedding_gpu") and cfg.embedding_gpu is not None:
-            paths["embedding_gpu.output_dir"] = f"{embed_base}/{dataset_name}"
-            paths["embedding_gpu.input_files"] = input_files
-
-        if (
-            hasattr(cfg, "embedding_preparation")
-            and cfg.embedding_preparation is not None
-        ):
-            paths["embedding_preparation.output_dir"] = f"{embed_base}/{dataset_name}"
-            paths["embedding_preparation.input_files"] = input_files
-
-    elif has_old_structure:
-        # Old structure: single embedding section
-        paths["embedding.output_dir"] = f"{embed_base}/{dataset_name}"
-        paths["embedding.input_files"] = input_files
+    if hasattr(cfg, "embedding_gpu") and cfg.embedding_gpu is not None:
+        paths["embedding_gpu.output_dir"] = f"{embed_base}/{dataset_name}"
+        # GPU embedding reads from:
+        # - processed_with_emb/ if CPU embedding is enabled (CPU runs first, writes there)
+        # - processed/ if CPU embedding is disabled (GPU runs directly on preprocessing output)
+        if cpu_embedding_enabled:
+            paths["embedding_gpu.input_files"] = input_files_from_embed
+        else:
+            paths["embedding_gpu.input_files"] = input_files_from_processed
 
     return paths
 
@@ -256,9 +259,6 @@ def apply_common_key_transformations(cfg: DictConfig) -> DictConfig:
             updated_cfg.embedding_cpu.batch_key = updated_cfg.batch_key
         if hasattr(updated_cfg, "embedding_gpu"):
             updated_cfg.embedding_gpu.batch_key = updated_cfg.batch_key
-        # Also apply to embedding_preparation
-        if hasattr(updated_cfg, "embedding_preparation"):
-            updated_cfg.embedding_preparation.batch_key = updated_cfg.batch_key
         # Fallback to old structure for backward compatibility
         if hasattr(updated_cfg, "embedding"):
             updated_cfg.embedding.batch_key = updated_cfg.batch_key

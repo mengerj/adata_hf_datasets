@@ -1,6 +1,35 @@
 #!/usr/bin/env bash
+# ═══════════════════════════════════════════════════════════════════════════════
+# DEPRECATION NOTICE
+# ═══════════════════════════════════════════════════════════════════════════════
+# This script is DEPRECATED and kept only for standalone/legacy usage.
+#
+# For the new unified workflow, use:
+#   python scripts/workflow/submit_workflow.py --config-name <dataset_config>
+#
+# The new workflow uses EmbeddingArraySubmitter to directly submit array jobs
+# via SSH without needing this intermediate shell script.
+# ═══════════════════════════════════════════════════════════════════════════════
+
 set -euo pipefail
 
+
+# === Array job tracking for cleanup ===
+SPAWNED_JOBS=()
+
+# Trap function to cancel all spawned array jobs on termination
+cleanup_jobs() {
+    echo "Received termination signal, cancelling spawned array jobs..."
+    for jid in "${SPAWNED_JOBS[@]}"; do
+        if [[ -n "$jid" ]]; then
+            scancel "$jid" 2>/dev/null && echo "Cancelled job $jid" || true
+        fi
+    done
+    # Clean up temp file
+    rm -f "/tmp/embedding_array_jobs_${SLURM_JOB_ID:-$$}.txt" 2>/dev/null || true
+    exit 130
+}
+trap cleanup_jobs SIGTERM SIGINT SIGHUP
 
 # === User‐configurable section ===
 # Use environment variables if provided, otherwise use defaults
@@ -12,7 +41,7 @@ BATCH_SIZE="${BATCH_SIZE:-128}"
 METHODS="${METHODS:-geneformer scvi_fm pca hvg}" # space‐separated list - eg one string with spaces
 SCRIPT="scripts/embed/embed_chunks_parallel.slurm"
 MAX_PROCS="${MAX_PROCS:-2}"
-PREPARE_ONLY="${PREPARE_ONLY:-false}"  # Set to "true" for prepare-only mode, "false" for full pipeline
+# PREPARE_ONLY has been removed - embedding_preparation step is no longer supported
 TRAIN_OR_TEST="${TRAIN_OR_TEST:-train}"
 #DATA_BASE_DIR="/scratch/global/menger/data/RNA/processed"
 DATA_BASE_DIR="${DATA_BASE_DIR:-data/RNA/processed/}"
@@ -57,7 +86,6 @@ submit_array() {
 METHODS="${METHODS}",\
 BATCH_KEY="${BATCH_KEY}",\
 BATCH_SIZE="${BATCH_SIZE}",\
-PREPARE_ONLY="${PREPARE_ONLY}",\
 TRAIN_OR_TEST="${TRAIN_OR_TEST}",\
 WORKFLOW_DIR="${WORKFLOW_DIR:-}",\
 DATASET_CONFIG="${DATASET_CONFIG:-}" \
@@ -67,8 +95,10 @@ DATASET_CONFIG="${DATASET_CONFIG:-}" \
         job_id=$(echo "$job_output" | grep -o "Submitted batch job [0-9]*" | grep -o "[0-9]*")
         echo "Submitted batch job $job_id"
 
-        # Store job ID in a file for the main script to read
+        # Store job ID in array for cleanup on termination
         if [[ -n "$job_id" ]]; then
+            SPAWNED_JOBS+=("$job_id")
+            # Also write to file for external tracking
             echo "$job_id" >> /tmp/embedding_array_jobs_${SLURM_JOB_ID:-$$}.txt
         fi
     else
@@ -76,7 +106,7 @@ DATASET_CONFIG="${DATASET_CONFIG:-}" \
         echo "[LOCAL] Running all $n chunks for '$label' in parallel"
         INPUT_DIR="$dir" METHODS="$METHODS" MAX_PROCS="$MAX_PROCS" \
 BATCH_KEY="$BATCH_KEY" BATCH_SIZE="$BATCH_SIZE" \
-PREPARE_ONLY="$PREPARE_ONLY" TRAIN_OR_TEST="$TRAIN_OR_TEST" \
+TRAIN_OR_TEST="$TRAIN_OR_TEST" \
 source "$SCRIPT"
     fi
 }

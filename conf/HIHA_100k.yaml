@@ -43,10 +43,6 @@ preprocessing:
   random_chunking: true
   chunk_random_seed: 42
 
-embedding_preparation:
-  enabled: false
-  methods: ["geneformer-v1", "geneformer"]
-
 # Embedding overrides (both dataset-specific and execution parameters)
 embedding_cpu:
   # Dataset-specific parameters

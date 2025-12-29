@@ -50,11 +50,6 @@ preprocessing:
   sra_chunk_size: 10000
   sra_extra_cols: ["instrument_model", "library_layout"]
 
-# Embedding preparation overrides
-embedding_preparation:
-  enabled: false # Set to false to skip embedding preparation
-  methods: ["geneformer-v1", "geneformer"] #run the prepare step on cpu to save gpu time
-
 # Embedding overrides (both dataset-specific and execution parameters)
 embedding_cpu:
   enabled: false

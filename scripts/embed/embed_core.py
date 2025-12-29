@@ -2,24 +2,13 @@
 """
 Apply initial embeddings to preprocessed AnnData files.
 
-This script supports two modes of operation:
-
-1. Full Pipeline Mode (prepare_only=False, default):
-   - Reads one or more preprocessed .h5ad or .zarr files.
-   - For each file, loads it into memory once (or loads an existing combined output).
-   - Loops over cfg.methods, computing any missing embeddings.
-   - Stores each embedding in adata.obsm["X_<method>"].
-   - Writes out a single file with all embeddings attached.
-
-2. Prepare-Only Mode (prepare_only=True):
-   - Reads one or more preprocessed .h5ad or .zarr files.
-   - For each file, loads it into memory once.
-   - Loops over cfg.methods, calling only `InitialEmbedder.prepare` to do CPU-intensive setup.
-   - Does not write out any AnnData; cached results live internally in your embedder.
-   - Useful for GPU-dependent embedders where prepare step is more efficient on CPU.
-
-The prepare-only mode is especially useful for embedders that rely on GPU, as their prepare step
-is more efficient on the CPU and would otherwise block the precious GPU for a long time.
+This script:
+- Reads one or more preprocessed .h5ad or .zarr files.
+- For each file, loads it into memory once (or loads an existing combined output).
+- Loops over cfg.methods, computing any missing embeddings.
+- For each method, runs prepare() then embed().
+- Stores each embedding in adata.obsm["X_<method>"].
+- Writes out a single file with all embeddings attached.
 """
 
 import sys
@@ -301,13 +290,7 @@ def main(cfg: DictConfig):
     """
     Apply multiple embedding methods to one or more AnnData files.
 
-    This function supports two modes of operation:
-    1. prepare_only=True: Only run the prepare() step for each method without saving embeddings
-    2. prepare_only=False: Run the full pipeline (prepare + embed + save)
-
-    The prepare_only parameter can be set via command line:
-    - ++prepare_only=true  # Run only prepare step
-    - ++prepare_only=false # Run full pipeline (default)
+    This function runs the full pipeline (prepare + embed + save) for each method.
 
     This function now works with dataset-centric config structure where:
     - cfg.embedding contains all embedding parameters (selected by launcher)
@@ -379,14 +362,8 @@ def main(cfg: DictConfig):
             )
 
     # Now embedding_cfg points to the correct configuration
-    # Get prepare_only from command line override (defaults to False)
-    prepare_only = getattr(cfg, "prepare_only", False)
-
     # Log the configuration being used
     logger.info("Dataset: %s", cfg.dataset.name)
-    logger.info(
-        "Operation mode: %s", "prepare_only" if prepare_only else "full_pipeline"
-    )
     logger.info("Embedding methods: %s", embedding_cfg.methods)
     logger.info("Input files: %s", embedding_cfg.input_files)
     logger.info("Output directory: %s", embedding_cfg.output_dir)
@@ -445,277 +422,237 @@ def main(cfg: DictConfig):
             #    "Loaded AnnData with %d cells, %d vars", adata.n_obs, adata.n_vars
             # )
 
-            if prepare_only:
-                # PREPARE_ONLY MODE: Only run prepare() step
-                logger.info(
-                    "Running in prepare_only mode - no embeddings will be saved"
-                )
-                for method in embedding_cfg.methods:
-                    if method not in embedding_cfg.embedding_dim_map:
-                        raise KeyError(
-                            f"No embedding_dim for method '{method}' in config"
-                        )
-                    emb_dim = embedding_cfg.embedding_dim_map[method]
+            # FULL PIPELINE MODE: Run prepare + embed + save
+            logger.info("Running full embedding pipeline")
 
-                    # Extract init_kwargs for this method
-                    # General init_kwargs are passed to all embedders; unused kwargs are ignored
-                    # Optional: method-specific init_kwargs_<method> can override for specific methods
-                    init_kwargs = {}
-                    if (
-                        hasattr(embedding_cfg, "init_kwargs")
-                        and embedding_cfg.init_kwargs
-                    ):
-                        # Convert OmegaConf to dict if needed
-                        general_kwargs = OmegaConf.to_container(
-                            embedding_cfg.init_kwargs, resolve=True
-                        )
-                        if general_kwargs:
-                            init_kwargs.update(general_kwargs)
+            # Generate output path based on configuration
+            # get the split name from the input file and add it to the output dir
+            split_name = infile.parent.name
+            output_dir = Path(output_dir_base) / split_name
+            outfile = get_output_path(
+                infile, output_format, Path(output_dir) if output_dir else None
+            )
+            logger.info("Output file: %s", outfile)
 
-                    # Method-specific kwargs override general ones (optional, for method-specific overrides)
-                    method_specific_key = f"init_kwargs_{method.replace('-', '_')}"
-                    if hasattr(embedding_cfg, method_specific_key):
-                        method_kwargs = getattr(embedding_cfg, method_specific_key)
-                        if method_kwargs:
-                            # Convert OmegaConf to dict if needed
-                            method_kwargs_dict = OmegaConf.to_container(
-                                method_kwargs, resolve=True
-                            )
-                            if method_kwargs_dict:
-                                init_kwargs.update(method_kwargs_dict)
-                                logger.info(
-                                    f"Using method-specific init_kwargs for '{method}' (overrides general init_kwargs)"
-                                )
-
-                    # Resolve relative paths in init_kwargs (e.g., cw_model_path) relative to PROJECT_DIR
-                    if init_kwargs and "cw_model_path" in init_kwargs:
-                        cw_model_path = Path(init_kwargs["cw_model_path"])
-                        # If path is relative, resolve it relative to PROJECT_DIR
-                        if not cw_model_path.is_absolute():
-                            project_dir = os.environ.get("PROJECT_DIR")
-                            if project_dir:
-                                project_dir = Path(project_dir)
-                                resolved_path = (project_dir / cw_model_path).resolve()
-                                init_kwargs["cw_model_path"] = str(resolved_path)
-                                logger.info(
-                                    f"Resolved relative cw_model_path to: {resolved_path} "
-                                    f"(relative to PROJECT_DIR: {project_dir})"
-                                )
-                            else:
-                                # Fallback: try to infer project root from current working directory
-                                # or use current working directory
-                                cwd = Path.cwd()
-                                # Try to find project root by looking for conf/ directory
-                                project_root = cwd
-                                for parent in [cwd] + list(cwd.parents):
-                                    if (parent / "conf").exists():
-                                        project_root = parent
-                                        break
-                                resolved_path = (project_root / cw_model_path).resolve()
-                                init_kwargs["cw_model_path"] = str(resolved_path)
-                                logger.warning(
-                                    f"PROJECT_DIR not set, resolved relative cw_model_path to: {resolved_path} "
-                                    f"(inferred project root: {project_root})"
-                                )
-
-                    if init_kwargs:
-                        logger.debug(
-                            f"Passing init_kwargs to {method}: {list(init_kwargs.keys())}"
-                        )
-
-                    # monitor.log_event(f"Prepare {method}")
-                    embedder = InitialEmbedder(
-                        method=method, embedding_dim=emb_dim, **init_kwargs
-                    )
-                    embedder.prepare(
-                        adata_path=str(infile),
-                        batch_key=embedding_cfg.batch_key,
-                    )
-                    logger.info("Prepared embedding resources for '%s'", method)
-                    # monitor.log_event(f"Finished prepare {method}")
-
-                logger.info(
-                    "All preparations complete for %s; results cached internally.",
-                    infile,
-                )
-
+            # Load existing combined file if present (and not overwrite), else raw
+            if outfile.exists():
+                logger.info("Loading existing combined file %s", outfile)
+                file_to_check = outfile
+                format_to_check = output_format
             else:
-                # FULL PIPELINE MODE: Run prepare + embed + save
-                logger.info("Running full embedding pipeline")
+                file_to_check = infile
+                format_to_check = input_format
 
-                # Generate output path based on configuration
-                # get the split name from the input file and add it to the output dir
-                split_name = infile.parent.name
-                output_dir = Path(output_dir_base) / split_name
-                outfile = get_output_path(
-                    infile, output_format, Path(output_dir) if output_dir else None
-                )
-                logger.info("Output file: %s", outfile)
+            # Determine which methods still need to run
+            methods_to_run = []
+            existing_obsm_keys = check_existing_embeddings(
+                file_to_check, format_to_check
+            )
 
-                # Load existing combined file if present (and not overwrite), else raw
-                if outfile.exists():
-                    logger.info("Loading existing combined file %s", outfile)
-                    file_to_check = outfile
-                    format_to_check = output_format
+            for method in embedding_cfg.methods:
+                obsm_key = f"X_{method}"
+                if obsm_key in existing_obsm_keys and not embedding_cfg.overwrite:
+                    logger.info("Skipping existing embedding '%s'", obsm_key)
                 else:
-                    file_to_check = infile
-                    format_to_check = input_format
+                    methods_to_run.append(method)
 
-                # Determine which methods still need to run
-                methods_to_run = []
-                existing_obsm_keys = check_existing_embeddings(
-                    file_to_check, format_to_check
+            if not methods_to_run:
+                logger.info("All embeddings present for %s; skipping.", file_to_check)
+                continue
+
+            # Use the existing output file as input if it exists, otherwise use original input
+            input_for_processing = outfile if outfile.exists() else infile
+
+            # Compute missing embeddings
+            for method in methods_to_run:
+                if method not in embedding_cfg.embedding_dim_map:
+                    raise KeyError(f"No embedding_dim for method '{method}' in config")
+                emb_dim = embedding_cfg.embedding_dim_map[method]
+
+                # Extract init_kwargs for this method
+                # General init_kwargs are passed to all embedders; unused kwargs are ignored
+                # Optional: method-specific init_kwargs_<method> can override for specific methods
+                init_kwargs = {}
+
+                # Debug: Log init_kwargs extraction for troubleshooting
+                logger.info(
+                    f"[FULL PIPELINE] Extracting init_kwargs for method '{method}'..."
+                )
+                logger.info(
+                    f"  hasattr(embedding_cfg, 'init_kwargs'): {hasattr(embedding_cfg, 'init_kwargs')}"
+                )
+                if hasattr(embedding_cfg, "init_kwargs"):
+                    logger.info(
+                        f"  embedding_cfg.init_kwargs value: {embedding_cfg.init_kwargs}"
+                    )
+                logger.info(
+                    f"  PROJECT_DIR env: {os.environ.get('PROJECT_DIR', 'NOT SET')}"
                 )
 
-                for method in embedding_cfg.methods:
-                    obsm_key = f"X_{method}"
-                    if obsm_key in existing_obsm_keys and not embedding_cfg.overwrite:
-                        logger.info("Skipping existing embedding '%s'", obsm_key)
-                    else:
-                        methods_to_run.append(method)
-
-                if not methods_to_run:
-                    logger.info(
-                        "All embeddings present for %s; skipping.", file_to_check
+                if hasattr(embedding_cfg, "init_kwargs") and embedding_cfg.init_kwargs:
+                    # Convert OmegaConf to dict if needed
+                    general_kwargs = OmegaConf.to_container(
+                        embedding_cfg.init_kwargs, resolve=True
                     )
-                    continue
+                    logger.info(f"  Extracted general_kwargs: {general_kwargs}")
+                    if general_kwargs:
+                        init_kwargs.update(general_kwargs)
+                else:
+                    logger.warning(
+                        "  No init_kwargs found in embedding config! "
+                        "geneformer_root will use auto-detection fallback."
+                    )
 
-                # Use the existing output file as input if it exists, otherwise use original input
-                input_for_processing = outfile if outfile.exists() else infile
-
-                # Compute missing embeddings
-                for method in methods_to_run:
-                    if method not in embedding_cfg.embedding_dim_map:
-                        raise KeyError(
-                            f"No embedding_dim for method '{method}' in config"
-                        )
-                    emb_dim = embedding_cfg.embedding_dim_map[method]
-
-                    # Extract init_kwargs for this method
-                    # General init_kwargs are passed to all embedders; unused kwargs are ignored
-                    # Optional: method-specific init_kwargs_<method> can override for specific methods
-                    init_kwargs = {}
-                    if (
-                        hasattr(embedding_cfg, "init_kwargs")
-                        and embedding_cfg.init_kwargs
-                    ):
+                # Method-specific kwargs override general ones (optional, for method-specific overrides)
+                method_specific_key = f"init_kwargs_{method.replace('-', '_')}"
+                if hasattr(embedding_cfg, method_specific_key):
+                    method_kwargs = getattr(embedding_cfg, method_specific_key)
+                    if method_kwargs:
                         # Convert OmegaConf to dict if needed
-                        general_kwargs = OmegaConf.to_container(
-                            embedding_cfg.init_kwargs, resolve=True
+                        method_kwargs_dict = OmegaConf.to_container(
+                            method_kwargs, resolve=True
                         )
-                        if general_kwargs:
-                            init_kwargs.update(general_kwargs)
-
-                    # Method-specific kwargs override general ones (optional, for method-specific overrides)
-                    method_specific_key = f"init_kwargs_{method.replace('-', '_')}"
-                    if hasattr(embedding_cfg, method_specific_key):
-                        method_kwargs = getattr(embedding_cfg, method_specific_key)
-                        if method_kwargs:
-                            # Convert OmegaConf to dict if needed
-                            method_kwargs_dict = OmegaConf.to_container(
-                                method_kwargs, resolve=True
+                        if method_kwargs_dict:
+                            init_kwargs.update(method_kwargs_dict)
+                            logger.info(
+                                f"Using method-specific init_kwargs for '{method}' (overrides general init_kwargs)"
                             )
-                            if method_kwargs_dict:
-                                init_kwargs.update(method_kwargs_dict)
-                                logger.info(
-                                    f"Using method-specific init_kwargs for '{method}' (overrides general init_kwargs)"
-                                )
 
-                    if init_kwargs:
-                        logger.debug(
-                            f"Passing init_kwargs to {method}: {list(init_kwargs.keys())}"
+                # Resolve relative paths in init_kwargs relative to PROJECT_DIR
+                path_kwargs = [
+                    "cw_model_path",
+                    "geneformer_root",
+                    "geneformer_v1_root",
+                ]
+                if init_kwargs:
+                    for path_kwarg in path_kwargs:
+                        if path_kwarg in init_kwargs and init_kwargs[path_kwarg]:
+                            kwarg_path = Path(init_kwargs[path_kwarg])
+                            if not kwarg_path.is_absolute():
+                                project_dir = os.environ.get("PROJECT_DIR")
+                                if project_dir:
+                                    resolved_path = (
+                                        Path(project_dir) / kwarg_path
+                                    ).resolve()
+                                    init_kwargs[path_kwarg] = str(resolved_path)
+                                    logger.info(
+                                        f"Resolved relative {path_kwarg} to: {resolved_path}"
+                                    )
+                                else:
+                                    # Fallback to cwd-based resolution
+                                    cwd = Path.cwd()
+                                    project_root = cwd
+                                    for parent in [cwd] + list(cwd.parents):
+                                        if (parent / "conf").exists():
+                                            project_root = parent
+                                            break
+                                    resolved_path = (
+                                        project_root / kwarg_path
+                                    ).resolve()
+                                    init_kwargs[path_kwarg] = str(resolved_path)
+                                    logger.warning(
+                                        f"PROJECT_DIR not set, resolved {path_kwarg} to: {resolved_path}"
+                                    )
+
+                # Log final init_kwargs being passed to embedder
+                logger.info(f"  Final init_kwargs for {method}: {init_kwargs}")
+                if "geneformer_root" in init_kwargs:
+                    logger.info(
+                        f"  geneformer_root will be passed: {init_kwargs['geneformer_root']}"
+                    )
+                else:
+                    logger.warning(
+                        "  geneformer_root NOT in init_kwargs - embedder will use auto-detection!"
+                    )
+
+                # monitor.log_event(f"Prepare {method}")
+                embedder = InitialEmbedder(
+                    method=method, embedding_dim=emb_dim, **init_kwargs
+                )
+                embedder.prepare(
+                    adata_path=str(input_for_processing),
+                    batch_key=embedding_cfg.batch_key,
+                )
+
+                # monitor.log_event(f"Embed {method}")
+                obsm_key = f"X_{method}"
+
+                # Add robust retry logic for GPU-dependent methods
+                max_retries = 3
+                retry_delay = 30  # seconds
+
+                for attempt in range(max_retries):
+                    try:
+                        logger.info(
+                            f"Embedding attempt {attempt + 1}/{max_retries} for method '{method}'"
+                        )
+                        emb_matrix = embedder.embed(
+                            adata_path=str(input_for_processing),
+                            obsm_key=obsm_key,
+                            batch_key=embedding_cfg.batch_key,
+                            batch_size=embedding_cfg.batch_size,
+                        )
+                        logger.info(
+                            f"✓ Embedding successful for method '{method}' on attempt {attempt + 1}"
+                        )
+                        break
+
+                    except RuntimeError as e:
+                        error_msg = str(e).lower()
+                        is_cuda_error = any(
+                            cuda_keyword in error_msg
+                            for cuda_keyword in [
+                                "cuda",
+                                "gpu",
+                                "device",
+                                "driver initialization failed",
+                                "out of memory",
+                                "cudnn",
+                                "cublas",
+                            ]
                         )
 
-                    # monitor.log_event(f"Prepare {method}")
-                    embedder = InitialEmbedder(
-                        method=method, embedding_dim=emb_dim, **init_kwargs
-                    )
-                    embedder.prepare(
-                        adata_path=str(input_for_processing),
-                        batch_key=embedding_cfg.batch_key,
-                    )
-
-                    # monitor.log_event(f"Embed {method}")
-                    obsm_key = f"X_{method}"
-
-                    # Add robust retry logic for GPU-dependent methods
-                    max_retries = 3
-                    retry_delay = 30  # seconds
-
-                    for attempt in range(max_retries):
-                        try:
-                            logger.info(
-                                f"Embedding attempt {attempt + 1}/{max_retries} for method '{method}'"
+                        if is_cuda_error and attempt < max_retries - 1:
+                            logger.warning(
+                                f"CUDA-related error on attempt {attempt + 1}/{max_retries} for method '{method}': {e}"
                             )
-                            emb_matrix = embedder.embed(
-                                adata_path=str(input_for_processing),
-                                obsm_key=obsm_key,
-                                batch_key=embedding_cfg.batch_key,
-                                batch_size=embedding_cfg.batch_size,
-                            )
-                            logger.info(
-                                f"✓ Embedding successful for method '{method}' on attempt {attempt + 1}"
-                            )
-                            break
+                            logger.info(f"Retrying in {retry_delay} seconds...")
 
-                        except RuntimeError as e:
-                            error_msg = str(e).lower()
-                            is_cuda_error = any(
-                                cuda_keyword in error_msg
-                                for cuda_keyword in [
-                                    "cuda",
-                                    "gpu",
-                                    "device",
-                                    "driver initialization failed",
-                                    "out of memory",
-                                    "cudnn",
-                                    "cublas",
-                                ]
-                            )
+                            # Clear CUDA cache if available
+                            try:
+                                import torch
 
-                            if is_cuda_error and attempt < max_retries - 1:
-                                logger.warning(
-                                    f"CUDA-related error on attempt {attempt + 1}/{max_retries} for method '{method}': {e}"
-                                )
-                                logger.info(f"Retrying in {retry_delay} seconds...")
+                                if torch.cuda.is_available():
+                                    torch.cuda.empty_cache()
+                                    logger.info("Cleared CUDA cache")
+                            except ImportError:
+                                pass
 
-                                # Clear CUDA cache if available
-                                try:
-                                    import torch
+                            import time
 
-                                    if torch.cuda.is_available():
-                                        torch.cuda.empty_cache()
-                                        logger.info("Cleared CUDA cache")
-                                except ImportError:
-                                    pass
-
-                                import time
-
-                                time.sleep(retry_delay)
-                                retry_delay *= 2  # Exponential backoff
-                                continue
-                            else:
-                                # Non-CUDA error or final attempt - re-raise
-                                logger.error(
-                                    f"Final attempt failed for method '{method}': {e}"
-                                )
-                                raise
-
-                        except Exception as e:
-                            # Non-RuntimeError exceptions - don't retry
+                            time.sleep(retry_delay)
+                            retry_delay *= 2  # Exponential backoff
+                            continue
+                        else:
+                            # Non-CUDA error or final attempt - re-raise
                             logger.error(
-                                f"Non-retryable error for method '{method}': {e}"
+                                f"Final attempt failed for method '{method}': {e}"
                             )
                             raise
 
-                    # monitor.log_event(f"Finished {method}")
+                    except Exception as e:
+                        # Non-RuntimeError exceptions - don't retry
+                        logger.error(f"Non-retryable error for method '{method}': {e}")
+                        raise
 
-                    append_embedding(
-                        adata_path=str(input_for_processing),
-                        embedding=emb_matrix,
-                        outfile=str(outfile),
-                        obsm_key=obsm_key,
-                    )
+                # monitor.log_event(f"Finished {method}")
+
+                append_embedding(
+                    adata_path=str(input_for_processing),
+                    embedding=emb_matrix,
+                    outfile=str(outfile),
+                    obsm_key=obsm_key,
+                )
 
     except Exception as e:
         logger.exception("Embedding pipeline failed, with error: %s", e)

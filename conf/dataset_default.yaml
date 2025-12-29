@@ -40,6 +40,7 @@ split_dataset: true # true = training dataset with train/val split, false = test
 # =============================================================================
 download:
   enabled: false # Whether to download the dataset (set to true if download_url is provided)
+  execution_location: local # Execution location: local | cpu | gpu (where this step runs)
   subset_size: null # Number of observations to include in subset (null = no subsetting)
   seed: 42 # Random seed for reproducible subsetting
   stratify_keys: null # List of column names to stratify by (will be auto-generated from common keys)
@@ -53,6 +54,9 @@ download:
 # PREPROCESSING CONFIGURATION (dataset-specific overrides)
 # =============================================================================
 preprocessing:
+  enabled: true # Whether to run preprocessing step
+  # Execution location: local | cpu | gpu (where this step runs)
+  execution_location: local
   # Dataset-specific processing parameters
   memory_gb: 60
   n_chunks: null
@@ -98,51 +102,14 @@ preprocessing:
 
   # Virtual environment configuration
   venv_path: null # Virtual environment path (relative to project_directory). If null, uses workflow.venv_path or ".venv"
-
-# =============================================================================
-# EMBEDDING PREPARATION CONFIGURATION (dataset-specific overrides)
-# =============================================================================
-embedding_preparation:
-  # Whether to run embedding preparation step
-  enabled: true # Set to false to skip embedding preparation
-
-  # Preparation-specific parameters
-  prepare_only: true # Always true for preparation step
-  mode: "slurm" # Use CPU partition for preparation
-
-  # SLURM resource allocation
-  memory_gb: 60 # Memory allocation in GB (default: 60GB). Increase for larger datasets (e.g., 80, 120)
-
-  # Execution parameters (accessed by embedding preparation script)
-  input_format: "auto" # Input format detection
-  output_format: "zarr" # Output format preference
-  overwrite: false # Whether to overwrite existing preparation files
-  chunk_rows: 16384 # Number of cells written per chunk when streaming into Zarr
-  # Method-specific parameters
-  batch_size: 128 # Used by geneformer
-
-  init_kwargs: null
-
-  # Embedding dimensions (dataset-specific)
-  embedding_dim_map:
-    scvi_fm: 50 # Can't be changed as the pretrained scvi model is fixed.
-    geneformer: 768
-    pca: 50
-    hvg: 512
-    gs: 3936
-    gs10k: 10000
-    geneformer-v1: 512
-    cw-geneformer: 512
-
-  # Virtual environment configuration
-  venv_path: null # Virtual environment path (relative to project_directory). If null, uses workflow.venv_path or ".venv"
-
 # =============================================================================
 # CPU EMBEDDING CONFIGURATION (dataset-specific overrides)
 # =============================================================================
 embedding_cpu:
   # Whether to run CPU embedding step
   enabled: true # Set to false to skip CPU embedding
+  # Execution location: local | cpu | gpu (where this step runs)
+  execution_location: local
 
   # CPU embedding methods to apply
   methods: ["hvg", "pca", "scvi_fm"] # CPU-only methods: ["scvi_fm", "pca", "hvg"]
@@ -183,6 +150,8 @@ embedding_cpu:
 embedding_gpu:
   # Whether to run GPU embedding step
   enabled: true # Set to false to skip GPU embedding
+  # Execution location: local | cpu | gpu (where this step runs)
+  execution_location: local
 
   # GPU embedding methods to apply
   methods: ["geneformer"] # GPU-required methods: ["geneformer"]
@@ -195,8 +164,11 @@ embedding_gpu:
 
   # Initialization kwargs for embedders (optional)
   # These kwargs are passed to all embedders; unused kwargs are ignored by embedders that don't need them
-  # Example for cw-geneformer:
+  # Relative paths are resolved relative to PROJECT_DIR environment variable
   init_kwargs:
+    # For geneformer: root directory of the Geneformer repository
+    geneformer_root: "external/Geneformer" # Relative paths are resolved relative to PROJECT_DIR
+    # For cw-geneformer: path to the model directory
     cw_model_path: "external/Geneformer_v1/geneformer-12L-30M" # Relative paths are resolved relative to PROJECT_DIR
   #   # Or use absolute path: "/absolute/path/to/geneformer-12L-30M"
   #   processor_kwargs:
@@ -231,6 +203,9 @@ embedding_gpu:
 # DATASET CREATION CONFIGURATION (dataset-specific overrides)
 # =============================================================================
 dataset_creation:
+  enabled: true # Whether to run dataset creation step
+  # Execution location: local | cpu | gpu (where this step runs)
+  execution_location: local
   # Dataset structue
   dataset_name: ${dataset.name}
   raw_data_link: ${dataset.download_url}

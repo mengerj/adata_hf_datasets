@@ -37,8 +37,179 @@ from .config_utils import (
     apply_all_transformations,
     ensure_config_sync,
 )
+from .data_transfer import (
+    DataTransfer,
+    LocationConfig,
+    DataTransferError,
+    create_data_transfer_from_config,
+)
+
+# Import unified workflow runner for per-step execution locations
+from .workflow_runner import (
+    run_unified_workflow,
+)
 
 logger = logging.getLogger(__name__)
+
+
+# =============================================================================
+# STEP LOCATION HELPERS
+# =============================================================================
+
+# Mapping of step names to their config section names
+STEP_TO_CONFIG_SECTION = {
+    "download": "download",
+    "preprocessing": "preprocessing",
+    "embedding_cpu": "embedding_cpu",
+    "embedding_gpu": "embedding_gpu",
+    "dataset_creation": "dataset_creation",
+}
+
+# Workflow step order for determining data flow
+WORKFLOW_STEPS = [
+    "download",
+    "preprocessing",
+    "embedding_cpu",
+    "embedding_gpu",
+    "dataset_creation",
+]
+
+
+def get_step_execution_location(
+    step_name: str,
+    dataset_config: DictConfig,
+    default_location: str = "local",
+) -> str:
+    """
+    Get the execution location for a workflow step.
+
+    Priority:
+    1. Step-specific execution_location from dataset config
+    2. Default execution location
+
+    Parameters
+    ----------
+    step_name : str
+        Name of the workflow step
+    dataset_config : DictConfig
+        The dataset configuration
+    default_location : str
+        Default location if not specified
+
+    Returns
+    -------
+    str
+        Execution location: "local", "cpu", or "gpu"
+    """
+    section_name = STEP_TO_CONFIG_SECTION.get(step_name)
+    if section_name and hasattr(dataset_config, section_name):
+        section = getattr(dataset_config, section_name)
+        if hasattr(section, "execution_location") and section.execution_location:
+            return str(section.execution_location)
+    return default_location
+
+
+def get_step_output_paths(
+    step_name: str,
+    dataset_config: DictConfig,
+    location_config: LocationConfig,
+) -> List[str]:
+    """
+    Get the output paths for a workflow step.
+
+    These are the paths that need to be transferred to the next step
+    if it runs on a different location.
+
+    Parameters
+    ----------
+    step_name : str
+        Name of the workflow step
+    dataset_config : DictConfig
+        The dataset configuration
+    location_config : LocationConfig
+        Configuration for the step's execution location
+
+    Returns
+    -------
+    List[str]
+        List of output paths
+    """
+    base_path = location_config.base_file_path
+    dataset_name = dataset_config.dataset.name
+
+    # Determine split from preprocessing config (consistent with config_utils.py)
+    split_dataset = dataset_config.preprocessing.get(
+        "split_dataset", dataset_config.get("split_dataset", True)
+    )
+    split_subdir = "train" if split_dataset else "test"
+
+    if step_name == "download":
+        # Download outputs raw h5ad file
+        return [f"{base_path}/raw/{split_subdir}/{dataset_name}.h5ad"]
+
+    elif step_name == "preprocessing":
+        # Preprocessing outputs to processed directory
+        return [f"{base_path}/processed/{split_subdir}/{dataset_name}"]
+
+    elif step_name in ["embedding_cpu", "embedding_gpu"]:
+        # Embedding outputs to processed_with_emb directory
+        return [f"{base_path}/processed_with_emb/{split_subdir}/{dataset_name}"]
+
+    elif step_name == "dataset_creation":
+        # Dataset creation outputs to hf_datasets directory
+        return [f"{location_config.output_directory}/data/hf_datasets/{dataset_name}"]
+
+    return []
+
+
+def get_step_input_paths(
+    step_name: str,
+    dataset_config: DictConfig,
+    location_config: LocationConfig,
+) -> List[str]:
+    """
+    Get the input paths required for a workflow step.
+
+    Parameters
+    ----------
+    step_name : str
+        Name of the workflow step
+    dataset_config : DictConfig
+        The dataset configuration
+    location_config : LocationConfig
+        Configuration for the step's execution location
+
+    Returns
+    -------
+    List[str]
+        List of input paths
+    """
+    base_path = location_config.base_file_path
+    dataset_name = dataset_config.dataset.name
+
+    # Determine split from preprocessing config (consistent with config_utils.py)
+    split_dataset = dataset_config.preprocessing.get(
+        "split_dataset", dataset_config.get("split_dataset", True)
+    )
+    split_subdir = "train" if split_dataset else "test"
+
+    if step_name == "download":
+        # Download has no input dependencies (downloads from URL)
+        return []
+
+    elif step_name == "preprocessing":
+        # Preprocessing needs raw data
+        return [f"{base_path}/raw/{split_subdir}/{dataset_name}.h5ad"]
+
+    elif step_name in ["embedding_cpu", "embedding_gpu"]:
+        # Embedding needs processed data
+        return [f"{base_path}/processed_with_emb/{split_subdir}/{dataset_name}"]
+
+    elif step_name == "dataset_creation":
+        # Dataset creation needs embedded data
+        return [f"{base_path}/processed_with_emb/{split_subdir}/{dataset_name}"]
+
+    return []
 
 
 def _extract_config_name(dataset_config_name_or_path: str) -> str:
@@ -121,8 +292,8 @@ class WorkflowLogger:
         for step in [
             "download",
             "preprocessing",
-            "embedding_prepare",
-            "embedding",
+            "embedding_cpu",
+            "embedding_gpu",
             "dataset_creation",
         ]:
             (workflow_dir / step).mkdir(parents=True, exist_ok=True)
@@ -424,7 +595,7 @@ class WorkflowOrchestrator:
         dataset_config : DictConfig
             The loaded dataset configuration
         step_name : str
-            Name of the workflow step (e.g., "download", "preprocessing", "embedding_preparation")
+            Name of the workflow step (e.g., "download", "preprocessing", "embedding_cpu")
         workflow_config : DictConfig
             The workflow configuration
 
@@ -437,7 +608,6 @@ class WorkflowOrchestrator:
         step_to_section = {
             "download": "download",
             "preprocessing": "preprocessing",
-            "embedding_preparation": "embedding_preparation",
             "embedding_cpu": "embedding_cpu",
             "embedding_gpu": "embedding_gpu",
             "dataset_creation": "dataset_creation",
@@ -822,73 +992,6 @@ class WorkflowOrchestrator:
         )
         return job_id
 
-    def run_embedding_prepare_step(
-        self,
-        dataset_config_name_or_path: str,
-        workflow_config: DictConfig,
-        dependency_job_id: Optional[int] = None,
-    ) -> Optional[int]:
-        """Run the embedding preparation step using the new simplified structure."""
-        logger.info("=== Starting Embedding Preparation Step (New) ===")
-        script_path = Path("scripts/embed/run_embed.slurm")
-        dependencies = [dependency_job_id] if dependency_job_id else None
-
-        logger.info(f"Using dataset config: {dataset_config_name_or_path}")
-
-        # Load dataset config to extract base_file_path and memory settings
-        dataset_config = self._load_dataset_config(dataset_config_name_or_path)
-        # Use resolved base_file_path from workflow config
-        # base_file_path = dataset_config.get(
-        #    "base_file_path", workflow_config["base_file_path"]
-        # )
-
-        # Extract memory setting from embedding_preparation config (default: 60GB)
-        memory_gb = getattr(dataset_config.embedding_preparation, "memory_gb", 60)
-        logger.info(f"Using {memory_gb}GB memory for embedding preparation")
-
-        # Get venv_path for this step
-        venv_path = self._get_venv_path(
-            dataset_config, "embedding_preparation", workflow_config
-        )
-
-        # Get cpu_node from config (if set, all CPU jobs will run on this node)
-        cpu_node = workflow_config.get("cpu_node")
-
-        # Pass the dataset config name, workflow directory, and mode settings as environment variables
-        env_vars = {
-            "DATASET_CONFIG": dataset_config_name_or_path,
-            # Enforce base path from orchestrator (already resolved)
-            "BASE_FILE_PATH": workflow_config["base_file_path"],
-            "WORKFLOW_DIR": str(self.workflow_logger.workflow_dir)
-            if self.workflow_logger
-            else "",
-            "MODE": "cpu",  # Preparation typically runs on CPU
-            "PREPARE_ONLY": "true",  # This is preparation mode
-            "SLURM_PARTITION": workflow_config.cpu_partition,
-            "PROJECT_DIR": workflow_config.get(
-                "project_directory", "/home/menger/git/adata_hf_datasets"
-            ),
-            "VENV_PATH": venv_path,
-        }
-        # Pass cpu_node to embed_launcher if set
-        if cpu_node:
-            env_vars["CPU_NODE"] = cpu_node
-
-        # Get cpu_node from config (if set, all CPU jobs will run on this node)
-        cpu_node = workflow_config.get("cpu_node")
-
-        job_id = self._submit_slurm_job(
-            self.cpu_login["host"],  # Use CPU cluster for preparation
-            script_path,
-            partition=workflow_config.cpu_partition,  # Use CPU partition
-            dependencies=dependencies,
-            env_vars=env_vars,
-            step_name="Embedding Preparation",
-            memory_gb=memory_gb,
-            node=cpu_node,
-        )
-        return job_id
-
     def run_embedding_cpu_step(
         self,
         dataset_config_name_or_path: str,
@@ -1224,21 +1327,6 @@ class WorkflowOrchestrator:
                 f"✓ Preprocessing job {preprocessing_job_id} submitted to cluster ({self.cpu_login['host']})"
             )
 
-        # Step 3: Embedding Preparation (depends on preprocessing)
-        embedding_prepare_job_id = None
-        embedding_prepare_enabled = getattr(
-            dataset_config.embedding_preparation, "enabled", True
-        )
-        if embedding_prepare_enabled:
-            embedding_prepare_job_id = self.run_embedding_prepare_step(
-                dataset_config_name_or_path,
-                workflow_config,
-                dependency_job_id=preprocessing_job_id,
-            )
-            logger.info(
-                f"✓ Embedding preparation job {embedding_prepare_job_id} submitted to cluster ({self.cpu_login['host']})"
-            )
-
         # Check if GPU embedding is enabled to determine step dependencies
         embedding_gpu_enabled = getattr(dataset_config.embedding_gpu, "enabled", True)
         embedding_cpu_enabled = getattr(dataset_config.embedding_cpu, "enabled", True)
@@ -1246,26 +1334,24 @@ class WorkflowOrchestrator:
             dataset_config.dataset_creation, "enabled", True
         )
 
-        # Step 4a: CPU Embedding (depends on embedding preparation)
+        # Step 3: CPU Embedding (depends on preprocessing)
         embedding_cpu_job_id = None
         if embedding_cpu_enabled:
             embedding_cpu_job_id = self.run_embedding_cpu_step(
                 dataset_config_name_or_path,
                 workflow_config,
-                dependency_job_id=embedding_prepare_job_id,
+                dependency_job_id=preprocessing_job_id,
             )
             logger.info(
                 f"✓ CPU embedding job {embedding_cpu_job_id} submitted to cluster ({self.cpu_login['host']})"
             )
 
-        # Step 4b: GPU Embedding (depends on CPU embedding if enabled, otherwise embedding preparation)
+        # Step 4: GPU Embedding (depends on CPU embedding if enabled, otherwise preprocessing)
         embedding_gpu_job_id = None
         if embedding_gpu_enabled:
-            # Dependency logic: depend on CPU embedding if enabled, otherwise embedding preparation
+            # Dependency logic: depend on CPU embedding if enabled, otherwise preprocessing
             gpu_embedding_dependency = (
-                embedding_cpu_job_id
-                if embedding_cpu_enabled
-                else embedding_prepare_job_id
+                embedding_cpu_job_id if embedding_cpu_enabled else preprocessing_job_id
             )
 
             embedding_gpu_job_id = self.run_embedding_gpu_step(
@@ -1284,8 +1370,8 @@ class WorkflowOrchestrator:
             embedding_dependency = embedding_gpu_job_id
         elif embedding_cpu_job_id:
             embedding_dependency = embedding_cpu_job_id
-        elif embedding_prepare_job_id:
-            embedding_dependency = embedding_prepare_job_id
+        elif preprocessing_job_id:
+            embedding_dependency = preprocessing_job_id
 
         if dataset_creation_enabled:
             dataset_job_ids = self.run_dataset_creation_step(
@@ -1445,43 +1531,6 @@ class WorkflowOrchestrator:
             logger.info("=== Preprocessing Step Skipped (disabled) ===")
             self.workflow_logger.log_step_skipped("Preprocessing", "disabled in config")
 
-        # Step 3: Embedding Preparation (depends on preprocessing)
-        embedding_prepare_job_id = None
-        embedding_prepare_enabled = getattr(
-            dataset_config.embedding_preparation, "enabled", True
-        )
-        if embedding_prepare_enabled:
-            logger.info("=== Starting Embedding Preparation Step ===")
-            embedding_prepare_job_id = self.run_embedding_prepare_step(
-                dataset_config_name_or_path,
-                workflow_config,
-                dependency_job_id=preprocessing_job_id,
-            )
-            logger.info(
-                f"✓ Embedding preparation job {embedding_prepare_job_id} submitted to cluster ({self.cpu_login['host']})"
-            )
-
-            # Wait for embedding preparation job to complete
-            try:
-                self._wait_for_job_completion(
-                    self.cpu_login["host"],
-                    embedding_prepare_job_id,
-                    "Embedding Preparation",
-                )
-                self.workflow_logger.log_step_complete(
-                    "Embedding Preparation", embedding_prepare_job_id
-                )
-            except Exception as e:
-                error_msg = f"Embedding preparation step failed: {e}"
-                logger.error(error_msg)
-                self._log_error_to_consolidated_log(error_msg)
-                raise RuntimeError(error_msg) from e
-        else:
-            logger.info("=== Embedding Preparation Step Skipped (disabled) ===")
-            self.workflow_logger.log_step_skipped(
-                "Embedding Preparation", "disabled in config"
-            )
-
         # Check if GPU embedding is enabled to determine step dependencies
         embedding_gpu_enabled = getattr(dataset_config.embedding_gpu, "enabled", True)
         embedding_cpu_enabled = getattr(dataset_config.embedding_cpu, "enabled", True)
@@ -1489,14 +1538,14 @@ class WorkflowOrchestrator:
             dataset_config.dataset_creation, "enabled", True
         )
 
-        # Step 4a: CPU Embedding (depends on embedding preparation)
+        # Step 3: CPU Embedding (depends on preprocessing)
         embedding_cpu_job_id = None
         if embedding_cpu_enabled:
             logger.info("=== Starting CPU Embedding Step ===")
             embedding_cpu_job_id = self.run_embedding_cpu_step(
                 dataset_config_name_or_path,
                 workflow_config,
-                dependency_job_id=embedding_prepare_job_id,
+                dependency_job_id=preprocessing_job_id,
             )
             logger.info(
                 f"✓ CPU embedding job {embedding_cpu_job_id} submitted to cluster ({self.cpu_login['host']})"
@@ -1519,15 +1568,13 @@ class WorkflowOrchestrator:
             logger.info("=== CPU Embedding Step Skipped (disabled) ===")
             self.workflow_logger.log_step_skipped("CPU Embedding", "disabled in config")
 
-        # Step 4b: GPU Embedding (depends on CPU embedding if enabled, otherwise embedding preparation)
+        # Step 4: GPU Embedding (depends on CPU embedding if enabled, otherwise preprocessing)
         embedding_gpu_job_id = None
         if embedding_gpu_enabled:
             logger.info("=== Starting GPU Embedding Step ===")
-            # Dependency logic: depend on CPU embedding if enabled, otherwise embedding preparation
+            # Dependency logic: depend on CPU embedding if enabled, otherwise preprocessing
             gpu_embedding_dependency = (
-                embedding_cpu_job_id
-                if embedding_cpu_enabled
-                else embedding_prepare_job_id
+                embedding_cpu_job_id if embedding_cpu_enabled else preprocessing_job_id
             )
 
             embedding_gpu_job_id = self.run_embedding_gpu_step(
@@ -1563,8 +1610,8 @@ class WorkflowOrchestrator:
             embedding_dependency = embedding_gpu_job_id
         elif embedding_cpu_job_id:
             embedding_dependency = embedding_cpu_job_id
-        elif embedding_prepare_job_id:
-            embedding_dependency = embedding_prepare_job_id
+        elif preprocessing_job_id:
+            embedding_dependency = preprocessing_job_id
 
         if dataset_creation_enabled:
             logger.info("=== Starting Dataset Creation Step ===")
@@ -2281,65 +2328,127 @@ class WorkflowOrchestrator:
 
 
 def resolve_workflow_config(
-    workflow_config: DictConfig, execution_mode: str
+    workflow_config: DictConfig, execution_mode: Optional[str] = None
 ) -> DictConfig:
     """
-    Resolve workflow configuration values based on execution mode.
+    Resolve workflow configuration values based on the new location-based format.
 
-    This function extracts the appropriate paths and settings based on whether
-    execution_mode is "local" or "slurm", creating a resolved config dict that
-    can be passed to orchestrator methods.
+    This function processes the locations and transfer configuration to create
+    a resolved config dict that can be passed to orchestrator methods.
 
     Parameters
     ----------
     workflow_config : DictConfig
         The workflow configuration section from the config
-    execution_mode : str
-        Either "local" or "slurm"
+    execution_mode : Optional[str]
+        Deprecated. For backward compatibility only.
+        Use default_execution_location in config instead.
 
     Returns
     -------
     DictConfig
-        Resolved configuration with execution-mode-specific values
+        Resolved configuration with location-specific values
     """
     from omegaconf import OmegaConf
 
-    if execution_mode == "local":
-        output_directory = workflow_config.get(
-            "local_output_directory",
-            str(Path(__file__).resolve().parents[3] / "outputs"),
-        )
-        project_directory = workflow_config.get("local_project_directory", ".")
-        base_file_path = workflow_config.get("local_base_file_path", "./data/RNA")
-    else:  # slurm
-        output_directory = workflow_config.get(
-            "slurm_output_directory", "/home/menger/git/adata_hf_datasets/outputs"
-        )
-        project_directory = workflow_config.get(
-            "slurm_project_directory", "/home/menger/git/adata_hf_datasets"
-        )
-        base_file_path = workflow_config.get(
-            "slurm_base_file_path", "/scratch/global/menger/data/RNA"
-        )
+    # Check for new location-based config format
+    locations = workflow_config.get("locations", None)
 
-    # Create resolved config with all values
-    resolved = {
-        "output_directory": output_directory,
-        "project_directory": project_directory,
-        "base_file_path": base_file_path,
-        "execution_mode": execution_mode,
-        "cpu_partition": workflow_config.get("cpu_partition", "slurm"),
-        "gpu_partition": workflow_config.get("gpu_partition", "gpu"),
-        "cpu_node": workflow_config.get(
-            "cpu_node"
-        ),  # Optional node constraint for CPU jobs
-        "venv_path": workflow_config.get("venv_path", ".venv"),
-        "enable_transfers": workflow_config.get("enable_transfers", False),
-        "local_max_workers": workflow_config.get("local_max_workers", 4),
-        "local_enable_gpu": workflow_config.get("local_enable_gpu", False),
-        "cpu_login": workflow_config.get("cpu_login"),
-        "gpu_login": workflow_config.get("gpu_login"),
-    }
+    if locations is not None:
+        # New location-based config format
+        default_location = workflow_config.get("default_execution_location", "local")
+
+        # Extract local location config for backward compatibility
+        local_config = locations.get("local", {})
+        cpu_config = locations.get("cpu", {})
+        gpu_config = locations.get("gpu", {})
+
+        # Build resolved config
+        resolved = {
+            "default_execution_location": default_location,
+            # Locations config (pass through for DataTransfer)
+            "locations": OmegaConf.to_container(locations, resolve=True),
+            # Transfer config
+            "transfer": OmegaConf.to_container(
+                workflow_config.get("transfer", {}), resolve=True
+            ),
+            # Backward compatibility: use local location as default paths
+            "output_directory": local_config.get("output_directory", "./outputs"),
+            "project_directory": local_config.get("project_directory", "."),
+            "base_file_path": local_config.get("base_file_path", "./data/RNA"),
+            # CPU/GPU settings from location configs
+            "cpu_partition": cpu_config.get("slurm_partition", "slurm"),
+            "gpu_partition": gpu_config.get("slurm_partition", "gpu"),
+            "cpu_node": cpu_config.get("node"),
+            "gpu_node": gpu_config.get("node"),
+            # Local execution settings
+            "local_max_workers": local_config.get("max_workers", 4),
+            "local_enable_gpu": local_config.get("enable_gpu", False),
+            # SSH login info (reconstructed from location configs)
+            "cpu_login": {
+                "host": cpu_config.get("ssh_host"),
+                "user": cpu_config.get("ssh_user"),
+            }
+            if cpu_config.get("ssh_host")
+            else None,
+            "gpu_login": {
+                "host": gpu_config.get("ssh_host"),
+                "user": gpu_config.get("ssh_user"),
+            }
+            if gpu_config.get("ssh_host")
+            else None,
+            # Poll and timeout settings
+            "poll_interval": workflow_config.get("poll_interval", 120),
+            "job_timeout": workflow_config.get("job_timeout", 0),
+        }
+    else:
+        # Legacy config format - backward compatibility
+        if execution_mode is None:
+            execution_mode = workflow_config.get("execution_mode", "local")
+
+        if execution_mode == "local":
+            output_directory = workflow_config.get(
+                "local_output_directory",
+                str(Path(__file__).resolve().parents[3] / "outputs"),
+            )
+            project_directory = workflow_config.get("local_project_directory", ".")
+            base_file_path = workflow_config.get("local_base_file_path", "./data/RNA")
+        else:  # slurm
+            output_directory = workflow_config.get(
+                "slurm_output_directory", "/home/menger/git/adata_hf_datasets/outputs"
+            )
+            project_directory = workflow_config.get(
+                "slurm_project_directory", "/home/menger/git/adata_hf_datasets"
+            )
+            base_file_path = workflow_config.get(
+                "slurm_base_file_path", "/scratch/global/menger/data/RNA"
+            )
+
+        # Create legacy resolved config
+        resolved = {
+            "output_directory": output_directory,
+            "project_directory": project_directory,
+            "base_file_path": base_file_path,
+            "execution_mode": execution_mode,
+            "default_execution_location": "local"
+            if execution_mode == "local"
+            else "cpu",
+            "cpu_partition": workflow_config.get("cpu_partition", "slurm"),
+            "gpu_partition": workflow_config.get("gpu_partition", "gpu"),
+            "cpu_node": workflow_config.get("cpu_node"),
+            "gpu_node": workflow_config.get("gpu_node"),
+            "venv_path": workflow_config.get("venv_path", ".venv"),
+            "enable_transfers": workflow_config.get("enable_transfers", False),
+            "local_max_workers": workflow_config.get("local_max_workers", 4),
+            "local_enable_gpu": workflow_config.get("local_enable_gpu", False),
+            "cpu_login": workflow_config.get("cpu_login"),
+            "gpu_login": workflow_config.get("gpu_login"),
+            "poll_interval": workflow_config.get("poll_interval", 120),
+            "job_timeout": workflow_config.get("job_timeout", 0),
+            # Empty locations/transfer for legacy mode
+            "locations": None,
+            "transfer": {"enabled": False},
+        }
 
     return OmegaConf.create(resolved)
 
@@ -2493,12 +2602,92 @@ def run_workflow_localhost(
     # Log workflow start
     workflow_logger.log_workflow_start(dataset_config)
 
-    # Transfers unsupported
-    transfers_enabled = workflow_config.get("enable_transfers", True)
-    if transfers_enabled:
-        raise RuntimeError(
-            "Transfer mode is enabled but not supported in local backend"
+    # Initialize data transfer if locations are configured
+    data_transfer: Optional[DataTransfer] = None
+    transfer_enabled = False
+    locations_config = workflow_config.get("locations")
+    transfer_config = workflow_config.get("transfer", {})
+
+    if locations_config is not None and transfer_config.get("enabled", False):
+        try:
+            data_transfer = create_data_transfer_from_config(workflow_config)
+            transfer_enabled = True
+            logger.info(
+                "Data transfer enabled - will transfer data between locations as needed"
+            )
+
+            # Test connectivity to configured locations
+            connectivity = data_transfer.test_connectivity()
+            for loc, connected in connectivity.items():
+                if not connected:
+                    logger.warning(
+                        f"Cannot connect to {loc} - steps on this location may fail"
+                    )
+        except Exception as e:
+            logger.warning(f"Failed to initialize data transfer: {e}")
+            logger.warning("Continuing without automatic transfers")
+
+    # Track execution location for transfer decisions
+    default_location = workflow_config.get("default_execution_location", "local")
+    previous_step_location: Optional[str] = None
+    previous_step_outputs: List[str] = []
+
+    def maybe_transfer_data(
+        step_name: str,
+        step_location: str,
+    ) -> None:
+        """Transfer data if the step runs on a different location than the previous step."""
+        nonlocal previous_step_location, previous_step_outputs
+
+        if not transfer_enabled or data_transfer is None:
+            return
+
+        if previous_step_location is None or previous_step_location == step_location:
+            # No transfer needed
+            return
+
+        if not previous_step_outputs:
+            logger.info(
+                f"No data to transfer from {previous_step_location} to {step_location}"
+            )
+            return
+
+        logger.info(
+            f"Location changed: {previous_step_location} -> {step_location}, "
+            f"transferring {len(previous_step_outputs)} path(s)"
         )
+
+        for source_path in previous_step_outputs:
+            try:
+                target_path = data_transfer.translate_path(
+                    source_path, previous_step_location, step_location
+                )
+                logger.info(f"Transferring: {source_path} -> {target_path}")
+
+                stats = data_transfer.transfer(
+                    source_location=previous_step_location,
+                    target_location=step_location,
+                    source_path=source_path,
+                    target_path=target_path,
+                )
+
+                logger.info(
+                    f"Transfer completed in {stats.total_time_seconds:.2f}s "
+                    f"({stats.throughput_mbps:.2f} MB/s)"
+                )
+                if stats.errors:
+                    for err in stats.errors:
+                        logger.warning(f"Transfer warning: {err}")
+
+            except DataTransferError as e:
+                logger.error(f"Transfer failed for {source_path}: {e}")
+                raise RuntimeError(f"Data transfer failed: {e}") from e
+
+    def get_location_config(location_name: str) -> Optional[LocationConfig]:
+        """Get LocationConfig for a location name."""
+        if data_transfer is not None:
+            return data_transfer.locations.get(location_name)
+        return None
 
     env_base = os.environ.copy()
     env_base["DATASET_CONFIG"] = dataset_config_name_or_path
@@ -2512,9 +2701,18 @@ def run_workflow_localhost(
         dataset_config["base_file_path"] = workflow_config["base_file_path"]
 
     # Step: Download
-    if getattr(dataset_config, "download", None) is None or getattr(
+    download_enabled = getattr(dataset_config, "download", None) is None or getattr(
         dataset_config.download, "enabled", True
-    ):
+    )
+    if download_enabled:
+        step_location = get_step_execution_location(
+            "download", dataset_config, default_location
+        )
+        logger.info(f"Download step will run on: {step_location}")
+
+        # Transfer data if location changed (download typically has no inputs)
+        maybe_transfer_data("download", step_location)
+
         cmd = [
             sys.executable,
             "scripts/download/download_dataset.py",
@@ -2524,11 +2722,27 @@ def run_workflow_localhost(
         ]
         run_logged(cmd, "download", "download.out", "download.err", env=env_base)
         workflow_logger.log_step_complete("Download", master_job_id)
+
+        # Update location tracking
+        loc_config = get_location_config(step_location)
+        if loc_config:
+            previous_step_outputs = get_step_output_paths(
+                "download", dataset_config, loc_config
+            )
+        previous_step_location = step_location
     else:
         workflow_logger.log_step_skipped("Download", "disabled in config")
 
     # Step: Preprocessing
     if getattr(dataset_config.preprocessing, "enabled", True):
+        step_location = get_step_execution_location(
+            "preprocessing", dataset_config, default_location
+        )
+        logger.info(f"Preprocessing step will run on: {step_location}")
+
+        # Transfer data if location changed
+        maybe_transfer_data("preprocessing", step_location)
+
         cmd = [
             sys.executable,
             "scripts/preprocessing/preprocess.py",
@@ -2540,31 +2754,27 @@ def run_workflow_localhost(
             cmd, "preprocessing", "preprocessing.out", "preprocessing.err", env=env_base
         )
         workflow_logger.log_step_complete("Preprocessing", master_job_id)
+
+        # Update location tracking
+        loc_config = get_location_config(step_location)
+        if loc_config:
+            previous_step_outputs = get_step_output_paths(
+                "preprocessing", dataset_config, loc_config
+            )
+        previous_step_location = step_location
     else:
         workflow_logger.log_step_skipped("Preprocessing", "disabled in config")
 
-    # Step: Embedding Preparation
-    if getattr(dataset_config.embedding_preparation, "enabled", True):
-        env_prep = env_base.copy()
-        env_prep["MODE"] = "cpu"
-        cmd = [
-            sys.executable,
-            "scripts/embed/embed_launcher.py",
-            "--config-name",
-            dataset_config_name_or_path,
-            "--mode",
-            "cpu",
-            "--backend",
-            "local",
-            "--prepare-only",
-        ]
-        run_logged(cmd, "embedding_prepare", "master.out", "master.err", env=env_prep)
-        workflow_logger.log_step_complete("Embedding Preparation", master_job_id)
-    else:
-        workflow_logger.log_step_skipped("Embedding Preparation", "disabled in config")
-
     # Step: CPU Embedding
     if getattr(dataset_config.embedding_cpu, "enabled", True):
+        step_location = get_step_execution_location(
+            "embedding_cpu", dataset_config, default_location
+        )
+        logger.info(f"CPU Embedding step will run on: {step_location}")
+
+        # Transfer data if location changed
+        maybe_transfer_data("embedding_cpu", step_location)
+
         env_cpu = env_base.copy()
         env_cpu["MODE"] = "cpu"
         cmd = [
@@ -2579,13 +2789,39 @@ def run_workflow_localhost(
         ]
         run_logged(cmd, "embedding", "cpu_master.out", "cpu_master.err", env=env_cpu)
         workflow_logger.log_step_complete("CPU Embedding", master_job_id)
+
+        # Update location tracking
+        loc_config = get_location_config(step_location)
+        if loc_config:
+            previous_step_outputs = get_step_output_paths(
+                "embedding_cpu", dataset_config, loc_config
+            )
+        previous_step_location = step_location
     else:
         workflow_logger.log_step_skipped("CPU Embedding", "disabled in config")
 
     # Step: GPU Embedding (local backend)
     if getattr(dataset_config.embedding_gpu, "enabled", True):
-        # Controlled by workflow.local_enable_gpu to prevent OOM on laptops
-        if workflow_config.get("local_enable_gpu", False):
+        step_location = get_step_execution_location(
+            "embedding_gpu", dataset_config, default_location
+        )
+        logger.info(f"GPU Embedding step will run on: {step_location}")
+
+        # Check if GPU embedding is enabled for local backend
+        local_gpu_enabled = workflow_config.get("local_enable_gpu", False)
+        # If location is "local", respect the local_enable_gpu setting
+        # If location is "gpu" (remote), allow it to run on the GPU cluster
+        if step_location == "local" and not local_gpu_enabled:
+            logger.info(
+                "GPU embedding enabled in config but disabled for local backend (local_enable_gpu=false)"
+            )
+            workflow_logger.log_step_skipped(
+                "GPU Embedding", "disabled for local backend"
+            )
+        else:
+            # Transfer data if location changed
+            maybe_transfer_data("embedding_gpu", step_location)
+
             env_gpu = env_base.copy()
             env_gpu["MODE"] = "gpu"
             cmd = [
@@ -2602,17 +2838,28 @@ def run_workflow_localhost(
                 cmd, "embedding", "gpu_master.out", "gpu_master.err", env=env_gpu
             )
             workflow_logger.log_step_complete("GPU Embedding", master_job_id)
-        else:
-            logger.info(
-                "GPU embedding enabled in config but disabled for local backend (local_enable_gpu=false)"
-            )
-            workflow_logger.log_step_skipped(
-                "GPU Embedding", "disabled for local backend"
-            )
+
+            # Update location tracking
+            loc_config = get_location_config(step_location)
+            if loc_config:
+                previous_step_outputs = get_step_output_paths(
+                    "embedding_gpu", dataset_config, loc_config
+                )
+            previous_step_location = step_location
+    else:
+        workflow_logger.log_step_skipped("GPU Embedding", "disabled in config")
 
     # Step: Dataset Creation
     if getattr(dataset_config.dataset_creation, "enabled", True):
         from omegaconf import ListConfig
+
+        step_location = get_step_execution_location(
+            "dataset_creation", dataset_config, default_location
+        )
+        logger.info(f"Dataset Creation step will run on: {step_location}")
+
+        # Transfer data if location changed
+        maybe_transfer_data("dataset_creation", step_location)
 
         cs_lengths = dataset_config.dataset_creation.cs_length
         cs_values = (
@@ -2663,11 +2910,70 @@ def run_workflow_localhost(
                 f"create_ds_{idx}.err",
                 env=env_dc,
             )
+
         workflow_logger.log_step_complete("Dataset Creation", master_job_id)
+
+        # Update location tracking
+        loc_config = get_location_config(step_location)
+        if loc_config:
+            previous_step_outputs = get_step_output_paths(
+                "dataset_creation", dataset_config, loc_config
+            )
+        previous_step_location = step_location
     else:
         workflow_logger.log_step_skipped("Dataset Creation", "disabled in config")
 
     workflow_logger.log_workflow_complete()
+
+
+def run_workflow_unified(
+    dataset_config_name_or_path: str,
+    workflow_config: DictConfig,
+    force: bool = False,
+    workflow_id: Optional[str] = None,
+) -> bool:
+    """
+    Run a unified workflow that respects per-step execution locations.
+
+    This is a wrapper around the new WorkflowRunner that provides backward
+    compatibility while enabling per-step execution location support.
+
+    Unlike run_workflow_localhost (which runs all steps locally) or
+    WorkflowOrchestrator.run_workflow (which submits all steps to SLURM),
+    this function respects the execution_location setting in each step's
+    configuration and can mix local and remote execution.
+
+    Parameters
+    ----------
+    dataset_config_name_or_path : str
+        Name or path of the dataset configuration
+    workflow_config : DictConfig
+        The resolved workflow configuration (from resolve_workflow_config)
+    force : bool
+        Whether to skip certain validations
+    workflow_id : Optional[str]
+        Optional workflow ID for the output directory (if None, auto-generated)
+
+    Returns
+    -------
+    bool
+        True if workflow completed successfully
+
+    Examples
+    --------
+    >>> # Load and resolve config
+    >>> workflow_cfg = OmegaConf.load("conf/workflow_orchestrator.yaml")
+    >>> resolved = resolve_workflow_config(workflow_cfg.workflow)
+    >>>
+    >>> # Run workflow with per-step execution locations
+    >>> success = run_workflow_unified("my_dataset", resolved)
+    """
+    return run_unified_workflow(
+        dataset_config_name_or_path,
+        workflow_config,
+        force=force,
+        workflow_id=workflow_id,
+    )
 
 
 @hydra.main(

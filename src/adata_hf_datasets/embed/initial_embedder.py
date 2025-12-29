@@ -11,7 +11,6 @@ from adata_hf_datasets.pp.utils import (
     consolidate_low_frequency_categories,
 )
 from adata_hf_datasets.pp.pybiomart_utils import add_ensembl_ids, ensure_ensembl_index
-from adata_hf_datasets.file_utils import get_zarr_store_class
 import shutil
 import tempfile
 import uuid
@@ -1023,11 +1022,19 @@ class GeneformerEmbedder(BaseEmbedder):
             import zarr
 
             logger.debug("Trying to open zarr store from %s", file_path)
-            ZarrStore = get_zarr_store_class()
-            store = ZarrStore(file_path)
-            logger.debug("Opened zarr store from %s", file_path)
-            root = zarr.group(store=store)
-            logger.debug("Opened zarr group from %s", file_path)
+            # Try to open with consolidated metadata first (anndata uses this)
+            # Fall back to regular open_group if consolidated metadata doesn't exist
+            try:
+                root = zarr.open_consolidated(str(file_path), mode="r")
+                logger.debug(
+                    "Opened zarr with consolidated metadata from %s", file_path
+                )
+            except KeyError:
+                # No consolidated metadata, fall back to regular open
+                root = zarr.open_group(str(file_path), mode="r")
+                logger.debug(
+                    "Opened zarr group (no consolidated metadata) from %s", file_path
+                )
             if "obs" not in root or "sample_index" not in root["obs"]:
                 raise ValueError("sample_index not found in obs")
             return root["obs/sample_index"][:]
@@ -1085,9 +1092,18 @@ class GeneformerEmbedder(BaseEmbedder):
             # For zarr, we can read groups directly
             import zarr
 
-            ZarrStore = get_zarr_store_class()
-            store = ZarrStore(file_path)
-            root = zarr.group(store=store)
+            # Try to open with consolidated metadata first (anndata uses this)
+            # Fall back to regular open_group if consolidated metadata doesn't exist
+            try:
+                logger.info(
+                    f"Trying to open zarr with consolidated metadata from {file_path}"
+                )
+                root = zarr.open_consolidated(str(file_path), mode="r")
+            except KeyError:
+                logger.info(
+                    f"Trying to open zarr with regular open_group from {file_path}"
+                )
+                root = zarr.open_group(str(file_path), mode="r")
 
             # Check var columns
             if "var" in root:
@@ -1177,9 +1193,11 @@ class GeneformerEmbedder(BaseEmbedder):
         if file_format == "zarr":
             import zarr
 
-            ZarrStore = get_zarr_store_class()
-            store = ZarrStore(file_path)
-            root = zarr.group(store=store)
+            # Try to open with consolidated metadata first (anndata uses this)
+            try:
+                root = zarr.open_consolidated(str(file_path), mode="r")
+            except KeyError:
+                root = zarr.open_group(str(file_path), mode="r")
             return "layers" in root and "counts" in root["layers"]
         elif file_format == "h5ad":
             import h5py
@@ -1218,10 +1236,12 @@ class GeneformerEmbedder(BaseEmbedder):
         if file_format == "zarr":
             import zarr
 
-            # Open zarr store in read-write mode
-            ZarrStore = get_zarr_store_class()
-            store = ZarrStore(file_path)
-            root = zarr.group(store=store, mode="r+")
+            # Try to open with consolidated metadata first (anndata uses this)
+            # Fall back to regular open_group if consolidated metadata doesn't exist
+            try:
+                root = zarr.open_consolidated(str(file_path), mode="r+")
+            except KeyError:
+                root = zarr.open_group(str(file_path), mode="r+")
 
             # Get counts array
             counts_array = root["layers/counts"]
@@ -1234,7 +1254,6 @@ class GeneformerEmbedder(BaseEmbedder):
             # This preserves chunks, compression, and other metadata
             zarr.copy(counts_array, root, name="X")
 
-            store.close()
             logger.info("Successfully set X to counts in zarr store")
 
         elif file_format == "h5ad":
@@ -1376,10 +1395,6 @@ class GeneformerEmbedder(BaseEmbedder):
 
         if adata_path is None:
             raise ValueError("Either adata or adata_path must be provided.")
-
-        # quick fix: Always use "processed" dir and not "processed_with_emb" to avoid retokenization
-        if "processed_with_emb" in adata_path:
-            adata_path = adata_path.replace("processed_with_emb", "processed")
 
         self.in_adata_path = Path(adata_path)
         adata_name = self.in_adata_path.stem

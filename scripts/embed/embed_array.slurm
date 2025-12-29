@@ -14,7 +14,6 @@ set -euo pipefail
 INPUT_DIR="${INPUT_DIR:?INPUT_DIR environment variable is required}"
 DATASET_CONFIG="${DATASET_CONFIG:?DATASET_CONFIG environment variable is required}"
 EMBEDDING_CONFIG_SECTION="${EMBEDDING_CONFIG_SECTION:?EMBEDDING_CONFIG_SECTION environment variable is required}"
-PREPARE_ONLY="${PREPARE_ONLY:-false}"
 WORKFLOW_DIR="${WORKFLOW_DIR:-}"
 
 # Get array job information
@@ -23,22 +22,12 @@ TASK_ID="${SLURM_ARRAY_TASK_ID:?SLURM_ARRAY_TASK_ID not set}"
 
 # Set up logging directory
 if [[ -n "$WORKFLOW_DIR" ]]; then
-    if [[ "$PREPARE_ONLY" == "true" ]]; then
-        LOG_DIR="${WORKFLOW_DIR}/embedding_prepare/array_${ARRAY_JOB_ID}"
-        OUTPUT_DIR="${WORKFLOW_DIR}/embedding_prepare/array_${ARRAY_JOB_ID}/${TASK_ID}"
-    else
-        LOG_DIR="${WORKFLOW_DIR}/embedding/array_${ARRAY_JOB_ID}"
-        OUTPUT_DIR="${WORKFLOW_DIR}/embedding/array_${ARRAY_JOB_ID}/${TASK_ID}"
-    fi
+    LOG_DIR="${WORKFLOW_DIR}/embedding/array_${ARRAY_JOB_ID}"
+    OUTPUT_DIR="${WORKFLOW_DIR}/embedding/array_${ARRAY_JOB_ID}/${TASK_ID}"
 else
     # Fallback to default structure
-    if [[ "$PREPARE_ONLY" == "true" ]]; then
-        LOG_DIR="logs/embed_prepare/${ARRAY_JOB_ID}"
-        OUTPUT_DIR="outputs/$(date +%Y-%m-%d)/embedding_prepare/${ARRAY_JOB_ID}/${TASK_ID}"
-    else
-        LOG_DIR="logs/embed/${ARRAY_JOB_ID}"
-        OUTPUT_DIR="outputs/$(date +%Y-%m-%d)/embed/${ARRAY_JOB_ID}/${TASK_ID}"
-    fi
+    LOG_DIR="logs/embed/${ARRAY_JOB_ID}"
+    OUTPUT_DIR="outputs/$(date +%Y-%m-%d)/embed/${ARRAY_JOB_ID}/${TASK_ID}"
 fi
 
 # Create directories
@@ -58,7 +47,6 @@ echo "Task ID: $TASK_ID"
 echo "Input Directory: $INPUT_DIR"
 echo "Dataset Config: $DATASET_CONFIG"
 echo "Embedding Config Section: $EMBEDDING_CONFIG_SECTION"
-echo "Prepare Only: $PREPARE_ONLY"
 echo "Output Directory: $OUTPUT_DIR"
 echo "Start Time: $(date)"
 echo "================================="
@@ -105,7 +93,6 @@ source "$VENV_PATH"/bin/activate
 
 echo "Using dataset config: $DATASET_CONFIG"
 echo "Using embedding section: $EMBEDDING_CONFIG_SECTION"
-echo "Prepare only: $PREPARE_ONLY"
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Run Embedding Core
@@ -116,7 +103,6 @@ echo "Starting embedding processing..."
 # Pass the config selection to embed_core.py via environment variables
 # No temporary files needed!
 export EMBEDDING_CONFIG_SECTION
-export PREPARE_ONLY
 #path always is read relative to the script by hydra
 # If "gpu" is in the embedding config section, run GPU diagnostics and checks
 if [[ "$EMBEDDING_CONFIG_SECTION" == *"gpu"* ]]; then
@@ -187,7 +173,7 @@ fi
 
 echo "Overriding input_files for section: $EMBEDDING_CONFIG_SECTION"
 
-CMD="python3 scripts/embed/embed_core.py --config-path=\"../../conf\" --config-name=\"$DATASET_CONFIG\" ++${EMBEDDING_CONFIG_SECTION}.input_files=\"[\"$target_file\"]\" ++prepare_only=\"$PREPARE_ONLY\" ++hydra.run.dir=\"$OUTPUT_DIR\" ++embedding_config_section=\"$EMBEDDING_CONFIG_SECTION\""
+CMD="python3 scripts/embed/embed_core.py --config-path=\"../../conf\" --config-name=\"$DATASET_CONFIG\" ++${EMBEDDING_CONFIG_SECTION}.input_files=\"[\"$target_file\"]\" ++hydra.run.dir=\"$OUTPUT_DIR\" ++embedding_config_section=\"$EMBEDDING_CONFIG_SECTION\""
 
 if [[ -n "${BASE_FILE_PATH:-}" ]]; then
   echo "Using base_file_path override: $BASE_FILE_PATH"

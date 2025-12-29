@@ -45,11 +45,6 @@ preprocessing:
   chunk_size: 100000 # If larger than the dataset, there will be one chunk.
   count_layer_key: "counts" # Key in adata.layers with raw counts. If not present, adata.raw.X is checked.
 
-# Embedding preparation overrides
-embedding_preparation:
-  enabled: false # Set to false to skip embedding preparation
-  methods: ["geneformer-v1"] #run the prepare step on cpu to save gpu time
-
 # Embedding overrides (both dataset-specific and execution parameters)
 embedding_cpu:
   enabled: true
