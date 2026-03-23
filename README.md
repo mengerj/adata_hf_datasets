@@ -141,7 +141,7 @@ Some embedding methods require additional packages that are not installed by def
   git submodule update --init --recursive
   pip install external/Geneformer
   ```
-  **Note:** Geneformer can only be installed on Linux machines with CUDA support.
+  **Note:** Geneformer can only be installed on Linux machines with CUDA support. Also it requires git-lfs to be installed on the machine.
 
 If you try to use these methods without the required packages, you'll see helpful error messages with installation instructions.
 
