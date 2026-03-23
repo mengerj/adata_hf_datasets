@@ -114,7 +114,7 @@ curl -LsSf https://astral.sh/uv/install.sh | sh
 Then install the package:
 
 ```bash
-uv sync --all-extras
+uv sync
 source .venv/bin/activate
 ```
 
