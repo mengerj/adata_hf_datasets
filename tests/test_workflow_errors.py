@@ -233,8 +233,8 @@ class TestWorkflowLogger:
         for step in [
             "download",
             "preprocessing",
-            "embedding_prepare",
-            "embedding",
+            "embedding_cpu",
+            "embedding_gpu",
             "dataset_creation",
         ]:
             assert (logger.workflow_dir / step).exists()
